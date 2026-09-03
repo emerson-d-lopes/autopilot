@@ -22,6 +22,7 @@
     "browser": "node tools/browser.js --detach",
     "test:live": "node --test test/live.test.js",
     "test:resilience": "node --test test/resilience.test.js",
+    "bench": "node tools/bench.js",
     "test:fast": "node --test --test-concurrency=1 --test-skip-pattern=\"survives|recovers when|resume a session|stale request\" \"test/*.test.js\""
   },
   "dependencies": {

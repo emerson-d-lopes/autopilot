@@ -5,3 +5,4 @@ host/native-host.sh
 host/com.chromemcp.host.json
 *.log
 .browsers/
+.bench/
