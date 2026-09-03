@@ -10,19 +10,26 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync, chmodSync, realpath
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { extensionIdFromDer } from './gen-key.js';
 import os from 'node:os';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HOST_NAME = 'com.chromemcp.host';
 const UNINSTALL = process.argv.includes('--uninstall');
 
+/**
+ * The extension id is fixed by the public key committed in the manifest, so a
+ * fresh clone has it without generating anything. A private key under .keys
+ * only exists for whoever re-keys the extension with `npm run keygen`.
+ */
 function extensionId() {
+  const manifestPath = join(ROOT, 'extension', 'manifest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  if (manifest.key) return extensionIdFromDer(Buffer.from(manifest.key, 'base64'));
   const idPath = join(ROOT, '.keys', 'extension-id.txt');
-  if (!existsSync(idPath)) {
-    console.error('Extension id not found. Run `npm run keygen` first.');
-    process.exit(1);
-  }
-  return readFileSync(idPath, 'utf8').trim();
+  if (existsSync(idPath)) return readFileSync(idPath, 'utf8').trim();
+  console.error('The manifest carries no key and no id was generated. Run `npm run keygen`.');
+  process.exit(1);
 }
 
 /** Browser profile roots that read native messaging host manifests. */

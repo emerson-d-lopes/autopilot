@@ -9,6 +9,7 @@ import os from 'node:os';
 import { connect } from '../host/ipc.js';
 import { listBrowsers } from '../host/registry.js';
 import { TOOL_NAMES } from '../host/schemas.js';
+import { extensionIdFromDer } from './gen-key.js';
 import { JOURNAL_DIR } from '../host/journal.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -22,19 +23,14 @@ function check(label, ok, detail) {
 
 console.log('chrome-mcp doctor\n');
 
-// 1. Extension identity
-const idPath = join(ROOT, '.keys', 'extension-id.txt');
-const hasId = existsSync(idPath);
-const extId = hasId ? readFileSync(idPath, 'utf8').trim() : null;
-check('extension key generated', hasId, hasId ? 'id ' + extId : 'run: npm run keygen');
-
+// 1. Extension identity: fixed by the public key in the committed manifest.
 const manifestPath = join(ROOT, 'extension', 'manifest.json');
-let manifestHasKey = false;
+let extId = null;
 if (existsSync(manifestPath)) {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-  manifestHasKey = Boolean(manifest.key);
+  if (manifest.key) extId = extensionIdFromDer(Buffer.from(manifest.key, 'base64'));
 }
-check('manifest carries the pinned key', manifestHasKey, manifestHasKey ? null : 'run: npm run keygen');
+check('manifest carries the pinned key', Boolean(extId), extId ? 'id ' + extId : 'run: npm run keygen');
 
 // 2. Native messaging host manifest
 const hostManifestPath = join(ROOT, 'host', HOST_NAME + '.json');

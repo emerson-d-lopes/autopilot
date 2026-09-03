@@ -179,8 +179,7 @@ The installer resolves the real path to the node binary with `realpath` before w
 
 ```bash
 npm install
-npm run keygen          # pins the extension id, run once
-npm run install-host    # registers the native messaging host
+npm run install-host    # registers the native messaging host, id comes from the committed manifest key
 npm run doctor          # checks every link in the chain
 ```
 

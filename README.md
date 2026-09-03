@@ -24,9 +24,10 @@ It works against the browser you are already signed into, so it can act on Gmail
 ## Install
 
 ```bash
+git clone https://github.com/emerson-d-lopes/chrome-mcp.git
+cd chrome-mcp
 npm install
-npm run keygen          # pins the extension id, run once
-npm run install-host    # registers the native messaging host
+npm run install-host    # registers the native messaging host for Chrome, Edge, Brave, Vivaldi
 ```
 
 Then load the extension:
@@ -36,13 +37,51 @@ Then load the extension:
 3. Click **Load unpacked** and select the `extension` folder in this repo
 4. Restart Chrome so it picks up the native messaging host registration
 
-Chrome 137 and later ignore the `--load-extension` command line flag, so this step cannot be scripted against a stock Chrome install. It is a one-time click-through. The extension id is pinned by `npm run keygen`, so it stays `giagijohigincdlpkfolgcljkhmjdiaa` across machines and the host registration keeps matching it.
+Chrome 137 and later ignore the `--load-extension` command line flag, so this step cannot be scripted against a stock Chrome install. It is a one-time click-through. The extension id is `giagijohigincdlpkfolgcljkhmjdiaa` on every machine, because the manifest carries the public key, and the host registration is written for that id. `npm run keygen` exists only to re-key the extension with an identity of your own; it rewrites the manifest key and the host registration together.
 
-Register the server with Claude Code:
+Then point your MCP client at the server. It speaks MCP over stdio, so any client that can run a command works. The command is `node` and the one argument is the absolute path to `host/mcp-server.js` in this repo. Examples, with `<repo>` standing for that path:
+
+**Claude Code**
 
 ```bash
 claude mcp add chrome-mcp -- node "<repo>/host/mcp-server.js"
 ```
+
+**Claude Desktop**: `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`)
+
+```json
+{ "mcpServers": { "chrome-mcp": { "command": "node", "args": ["<repo>/host/mcp-server.js"] } } }
+```
+
+**Cursor**: `.cursor/mcp.json` in the project or `~/.cursor/mcp.json`, same `mcpServers` shape as above.
+
+**VS Code (Copilot agent mode)**: `.vscode/mcp.json`
+
+```json
+{ "servers": { "chrome-mcp": { "type": "stdio", "command": "node", "args": ["<repo>/host/mcp-server.js"] } } }
+```
+
+**OpenCode**: `opencode.json`
+
+```json
+{ "mcp": { "chrome-mcp": { "type": "local", "command": ["node", "<repo>/host/mcp-server.js"], "enabled": true } } }
+```
+
+**Codex CLI**: `~/.codex/config.toml`
+
+```toml
+[mcp_servers.chrome-mcp]
+command = "node"
+args = ["<repo>/host/mcp-server.js"]
+```
+
+**Gemini CLI**: `~/.gemini/settings.json`, an `mcpServers` entry with the same `command` and `args`.
+
+**Windsurf, Zed, pi, and others**: every one of them takes a stdio server as a command plus arguments. Use `node` and the path above. If a client asks for a single command line, `node "<repo>/host/mcp-server.js"` is it.
+
+On Windows, give the path with forward slashes or doubled backslashes inside JSON. The server finds the browser through a registry directory the native host writes, so no port or URL is configured anywhere. With one browser connected it is used automatically; with several, the session calls `select_browser`.
+
+Two environment variables are read by the server: `CHROME_MCP_BROWSER_ID` pins a browser for the session, and `CHROME_MCP_LOG_DIR` moves the action journal.
 
 Check everything at once:
 

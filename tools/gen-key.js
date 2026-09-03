@@ -9,7 +9,7 @@
 import { generateKeyPairSync, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const KEY_PATH = join(ROOT, '.keys', 'extension.pem');
@@ -62,7 +62,11 @@ async function main() {
   console.log('private key at .keys/extension.pem (git-ignored, do not share)');
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run when invoked directly, so install.js and doctor.js can import
+// extensionIdFromDer without generating anything.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
