@@ -4,6 +4,8 @@
 // Synthetic DOM events are rejected by file inputs, native drag and drop, and
 // most bot detection, so there is no synthetic fallback path.
 
+import { ToolError } from './errors.js';
+
 const PROTOCOL_VERSION = '1.3';
 
 /** @type {Map<number, {attached: boolean, refs: number}>} */
@@ -59,36 +61,346 @@ for (let d = 0; d <= 9; d++) {
 
 export class CdpError extends Error {}
 
+/** A command that did not answer within its timeout, before the wake and retry. */
+class CdpTimeout extends CdpError {}
+
 function lastError() {
   const err = chrome.runtime.lastError;
   return err ? new CdpError(err.message) : null;
 }
 
-export function attach(tabId) {
-  installDetachListener();
+// ---------------------------------------------------------------------------
+// Notes raised outside the tool result
+// ---------------------------------------------------------------------------
+
+/**
+ * Things that happened underneath a tool call and belong in its result: a
+ * dialog that was handled, an attach that only succeeded after a recovery.
+ *
+ * The call that triggers them is several layers above this module and does not
+ * return through here, so they are collected per call instead. A note raised
+ * with no call in flight (a dialog opened by a page timer, say) is carried into
+ * the next call's warnings rather than dropped.
+ */
+let callNotes = null;
+const orphanNotes = [];
+const MAX_ORPHAN_NOTES = 10;
+
+export function beginCall() {
+  callNotes = orphanNotes.splice(0, orphanNotes.length);
+}
+
+/** Ends the current call and returns everything noted during it. */
+export function endCall() {
+  const notes = callNotes || [];
+  callNotes = null;
+  return notes;
+}
+
+function note(entry) {
+  if (callNotes) {
+    callNotes.push(entry);
+    return;
+  }
+  orphanNotes.push(entry);
+  while (orphanNotes.length > MAX_ORPHAN_NOTES) orphanNotes.shift();
+}
+
+// ---------------------------------------------------------------------------
+// Attach
+// ---------------------------------------------------------------------------
+
+const ATTACH_RECOVERY_KEY = 'attachRecovery';
+const RECOVERY_RETRIES = 4;
+const RECOVERY_SETTLE_MS = 75;
+const REATTACH_WAIT_MS = 250;
+
+/** Chrome's refusal when another extension holds a frame in the tab. */
+const FOREIGN_FRAME = /Cannot access a chrome-extension/i;
+
+function isForeignFrameError(err) {
+  return FOREIGN_FRAME.test((err && err.message) || '');
+}
+
+function rawAttach(tabId) {
   return new Promise((resolve, reject) => {
-    const state = attachments.get(tabId);
-    if (state && state.attached) {
-      state.refs++;
-      return resolve();
-    }
     chrome.debugger.attach({ tabId }, PROTOCOL_VERSION, () => {
       const err = lastError();
-      if (err) {
-        // Another client (an open DevTools window) already owns this tab.
-        if (/already attached/i.test(err.message)) {
-          attachments.set(tabId, { attached: true, refs: 1, foreign: true });
-          return resolve();
-        }
-        if (/chrome-extension/i.test(err.message)) {
-          return describeFrames(tabId).then((detail) => reject(new CdpError(err.message + detail)));
-        }
-        return reject(err);
-      }
-      attachments.set(tabId, { attached: true, refs: 1 });
+      if (err) return reject(err);
       resolve();
     });
   });
+}
+
+function rawDetach(tabId) {
+  return new Promise((resolve) => {
+    chrome.debugger.detach({ tabId }, () => {
+      lastError();
+      attachments.delete(tabId);
+      awake.delete(tabId);
+      resolve();
+    });
+  });
+}
+
+/**
+ * Replaces a tab whose debugger cannot be attached. Registered by the service
+ * worker so this module does not have to import the tab bookkeeping it would
+ * then be imported by in turn.
+ * @type {null | ((tabId: number) => Promise<null | {oldTabId: number, newTabId: number, url: string}>)}
+ */
+let sessionReplacer = null;
+
+export function setSessionReplacer(fn) {
+  sessionReplacer = fn;
+}
+
+async function recoveryEnabled() {
+  try {
+    const stored = await chrome.storage.local.get(ATTACH_RECOVERY_KEY);
+    return stored[ATTACH_RECOVERY_KEY] !== false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Counts the iframes a frame holds, piercing open and closed shadow roots.
+ *
+ * Runs in the page. A frame holding more iframes than the frame tree says it
+ * has children is holding one Chrome does not consider navigable, which is what
+ * an extension's injected iframe looks like from here.
+ */
+function countIframesInFrame() {
+  const shadowOf = (el) => {
+    try {
+      if (chrome && chrome.dom && chrome.dom.openOrClosedShadowRoot) return chrome.dom.openOrClosedShadowRoot(el);
+    } catch {
+      /* not an element that can hold one */
+    }
+    return el.shadowRoot || null;
+  };
+  let count = 0;
+  const walk = (root, depth) => {
+    if (depth > 20) return;
+    let iframes = [];
+    let all = [];
+    try {
+      iframes = root.querySelectorAll('iframe');
+      all = root.querySelectorAll('*');
+    } catch {
+      return;
+    }
+    count += iframes.length;
+    for (const el of all) {
+      const shadow = shadowOf(el);
+      if (shadow) walk(shadow, depth + 1);
+    }
+  };
+  walk(document, 0);
+  return { count, url: location.href };
+}
+
+/** Removes iframes belonging to another extension. Runs in the page. */
+function removeForeignIframes(ownId) {
+  const PREFIX = 'chrome-extension://';
+  const mine = PREFIX + ownId;
+  const removed = [];
+  const shadowOf = (el) => {
+    try {
+      if (chrome && chrome.dom && chrome.dom.openOrClosedShadowRoot) return chrome.dom.openOrClosedShadowRoot(el);
+    } catch {
+      /* not an element that can hold one */
+    }
+    return el.shadowRoot || null;
+  };
+  const walk = (root, depth) => {
+    if (depth > 20) return;
+    let iframes = [];
+    let all = [];
+    try {
+      iframes = root.querySelectorAll('iframe');
+      all = root.querySelectorAll('*');
+    } catch {
+      return;
+    }
+    for (const frame of iframes) {
+      const src = frame.src || frame.getAttribute('src') || '';
+      if (src.indexOf(PREFIX) === 0 && src.indexOf(mine) !== 0) {
+        removed.push(src);
+        frame.remove();
+      }
+    }
+    for (const el of all) {
+      const shadow = shadowOf(el);
+      if (shadow) walk(shadow, depth + 1);
+    }
+  };
+  walk(document, 0);
+  return removed;
+}
+
+/**
+ * One pass of the recovery: find the frames holding an iframe Chrome does not
+ * know about, and remove the ones pointing at another extension.
+ */
+async function stripExtensionInterference(tabId) {
+  if (!chrome.scripting || !chrome.scripting.executeScript) return [];
+  const knownChildren = new Map();
+  try {
+    const frames = (await chrome.webNavigation.getAllFrames({ tabId })) || [];
+    for (const frame of frames) {
+      if (frame.parentFrameId === undefined || frame.parentFrameId === -1) continue;
+      knownChildren.set(frame.parentFrameId, (knownChildren.get(frame.parentFrameId) || 0) + 1);
+    }
+  } catch {
+    /* without the frame tree every frame is a candidate */
+  }
+
+  let counted = [];
+  try {
+    counted = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: countIframesInFrame,
+    });
+  } catch {
+    return [];
+  }
+
+  const suspects = (counted || [])
+    .filter((entry) => entry && entry.result && entry.result.count > (knownChildren.get(entry.frameId) || 0))
+    .map((entry) => entry.frameId);
+  if (!suspects.length) return [];
+
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: suspects },
+      func: removeForeignIframes,
+      args: [chrome.runtime.id],
+    });
+    return (results || []).flatMap((entry) => (entry && entry.result) || []);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Attaches the debugger, recovering from the two refusals that otherwise take a
+ * tab out of service.
+ *
+ * A tab carrying an iframe from another extension is refused outright, and the
+ * campaign lost a tab to it on every x.com run. Removing that iframe and
+ * retrying gets the tab back. When it does not, the session tab is replaced by
+ * a fresh one on the same URL so the caller is never left holding a tab it
+ * cannot drive.
+ */
+export async function attach(tabId, { recover = true } = {}) {
+  installDetachListener();
+
+  const state = attachments.get(tabId);
+  if (state && state.attached) {
+    state.refs++;
+    return { attached: true, recovered: false };
+  }
+
+  try {
+    await rawAttach(tabId);
+    attachments.set(tabId, { attached: true, refs: 1 });
+    return { attached: true, recovered: false };
+  } catch (err) {
+    // Chrome allows one debugger client per target, so this is DevTools or
+    // another extension holding the tab. Recording it as ours made the next
+    // command fail with a message that named nothing.
+    if (/already attached/i.test(err.message)) {
+      throw new ToolError(
+        'attach_refused',
+        'chrome.debugger.attach refused on tab ' + tabId + ': another debugger is attached. Close DevTools on that tab.',
+        { cause: err.message, effects: 'none', retryable: false }
+      );
+    }
+    if (!recover || !isForeignFrameError(err)) {
+      if (isForeignFrameError(err)) throw new CdpError(err.message + (await describeFrames(tabId)));
+      throw err;
+    }
+    return attachAfterRefusal(tabId, err);
+  }
+}
+
+/** The recovery ladder for a refused attach. Each rung is tried once, in order. */
+async function attachAfterRefusal(tabId, firstError) {
+  const removed = [];
+  let attempts = 0;
+
+  if (await recoveryEnabled()) {
+    for (let attempt = 1; attempt <= RECOVERY_RETRIES; attempt++) {
+      attempts = attempt;
+      removed.push(...(await stripExtensionInterference(tabId)));
+      await workerSleep(RECOVERY_SETTLE_MS);
+      try {
+        await rawAttach(tabId);
+        attachments.set(tabId, { attached: true, refs: 1 });
+        const detail =
+          (removed.length ? 'removed ' + removed.length + ' extension iframe' + (removed.length === 1 ? '' : 's') + ' and ' : '') +
+          're-attached after ' + attempt + ' attempt' + (attempt === 1 ? '' : 's');
+        note({
+          kind: 'warning',
+          code: 'attach_recovered',
+          message: 'attach_recovered: tab ' + tabId + ' refused the debugger, ' + detail + '.',
+        });
+        return { attached: true, recovered: true, attempts: attempt, removed };
+      } catch (err) {
+        if (!isForeignFrameError(err)) throw err;
+      }
+    }
+  }
+
+  // A session bound to a target the tab no longer shows is refused the same
+  // way, and dropping it costs one round trip to find out.
+  await rawDetach(tabId);
+  await workerSleep(REATTACH_WAIT_MS);
+  try {
+    await rawAttach(tabId);
+    attachments.set(tabId, { attached: true, refs: 1 });
+    note({
+      kind: 'warning',
+      code: 'attach_recovered',
+      message: 'attach_recovered: tab ' + tabId + ' attached after a detach and a ' + REATTACH_WAIT_MS + 'ms wait.',
+    });
+    return { attached: true, recovered: true, attempts: attempts + 1, removed };
+  } catch (err) {
+    if (!isForeignFrameError(err)) throw err;
+  }
+
+  const replacement = sessionReplacer ? await sessionReplacer(tabId).catch(() => null) : null;
+  if (replacement) {
+    throw new ToolError(
+      'tab_replaced',
+      'Tab ' + tabId + ' could not be driven and was replaced by tab ' + replacement.newTabId + ' on the same URL.',
+      {
+        cause: firstError.message,
+        hint: 'Retry on tab ' + replacement.newTabId + '. Page state such as form input and scroll position is gone.',
+        effects: 'none',
+        retryable: true,
+        details: { oldTabId: tabId, newTabId: replacement.newTabId, url: replacement.url },
+        warnings: ['page state such as form input and scroll position is gone'],
+      }
+    );
+  }
+
+  throw new ToolError('attach_refused', firstError.message + (await describeFrames(tabId)), {
+    cause: firstError.message,
+    effects: 'none',
+    retryable: false,
+  });
+}
+
+/** Drops every record of a tab. Used when a tab is replaced or closed. */
+export function forgetTab(tabId) {
+  attachments.delete(tabId);
+  awake.delete(tabId);
+  throttledTabs.delete(tabId);
+  beforeunloadPolicy.delete(tabId);
+  lastDialog.delete(tabId);
 }
 
 export function detach(tabId, { force = false } = {}) {
@@ -117,10 +429,58 @@ export function isAttached(tabId) {
   return Boolean(state && state.attached);
 }
 
-function rawSend(tabId, method, params) {
+/**
+ * How long a command may take before the renderer is assumed frozen.
+ *
+ * A frozen renderer answers nothing at all, and chrome.debugger.sendCommand has
+ * no timeout of its own, so without this a single hung page holds the call for
+ * the host's full two minutes. Navigation and evaluation are given more room
+ * because a slow site and a slow script are both ordinary.
+ */
+const DEFAULT_COMMAND_TIMEOUT = 20000;
+const METHOD_TIMEOUT = {
+  'Page.navigate': 60000,
+  'Page.captureScreenshot': 30000,
+  'Page.startScreencast': 10000,
+};
+
+function timeoutFor(method) {
+  return METHOD_TIMEOUT[method] || DEFAULT_COMMAND_TIMEOUT;
+}
+
+/**
+ * A repeated input event would land twice if the first one was only slow rather
+ * than lost, so input is woken and reported rather than re-dispatched.
+ */
+function safeToRepeat(method) {
+  return !/^Input\./.test(method);
+}
+
+function frozenError(tabId, method, ms) {
+  return new ToolError('timeout', 'CDP ' + method + ' did not answer within ' + ms + 'ms on tab ' + tabId + '.', {
+    cause: 'the renderer produced no reply',
+    hint: 'the renderer did not respond, reload the tab with navigate',
+    effects: 'unknown',
+    retryable: false,
+  });
+}
+
+function rawSend(tabId, method, params, timeout = timeoutFor(method)) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer =
+      timeout > 0
+        ? setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            reject(new CdpTimeout(method + ': no reply within ' + timeout + 'ms'));
+          }, timeout)
+        : null;
     chrome.debugger.sendCommand({ tabId }, method, params, (result) => {
       const err = lastError();
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
       if (err) return reject(new CdpError(method + ': ' + err.message));
       resolve(result);
     });
@@ -186,11 +546,101 @@ function installDetachListener() {
   detachListenerOn = chrome.debugger;
 }
 
-export async function send(tabId, method, params = {}, { retry = true } = {}) {
+// ---------------------------------------------------------------------------
+// JavaScript dialogs
+// ---------------------------------------------------------------------------
+
+/** @type {Map<number, 'accept'|'dismiss'>} beforeunload policy per tab, dismiss by default. */
+const beforeunloadPolicy = new Map();
+/** @type {Map<number, {type: string, message: string, handled: string, at: number}>} */
+const lastDialog = new Map();
+
+export function setBeforeunloadPolicy(tabId, policy) {
+  beforeunloadPolicy.set(tabId, policy === 'accept' ? 'accept' : 'dismiss');
+}
+
+/** Reads and clears the last beforeunload dialog seen on a tab. */
+export function takeBeforeunloadDialog(tabId) {
+  const dialog = lastDialog.get(tabId);
+  if (!dialog || dialog.type !== 'beforeunload') return null;
+  lastDialog.delete(tabId);
+  return dialog;
+}
+
+/** The error a navigation cancelled by a beforeunload dialog returns. */
+export function dialogOpenError(tabId, url, dialog) {
+  return new ToolError(
+    'dialog_open',
+    'Navigation to ' + url + ' was cancelled by the page: ' +
+      JSON.stringify(dialog.message || '') + ' was shown as a beforeunload dialog and dismissed, so the tab stayed put.',
+    {
+      hint: 'Call navigate again with force: true to leave the page and lose unsaved input.',
+      effects: 'none',
+      retryable: false,
+      details: { tabId, url, dialog: { type: dialog.type, message: dialog.message, handled: dialog.handled } },
+    }
+  );
+}
+
+let dialogListenerOn = null;
+
+/**
+ * Answers modal dialogs instead of letting them hold the renderer.
+ *
+ * Page.enable is already on for every session tab, so a dialog suspends the
+ * renderer and every later call on the tab blocks until a human dismisses it.
+ * An alert has nothing to decide, so it is accepted. A confirm or a prompt is
+ * dismissed, which is the answer that changes nothing. beforeunload follows a
+ * per-tab policy that defaults to staying on the page, which navigate raises
+ * with force: true. The text is reported either way, since it is often the only
+ * thing the page said about what it was asking.
+ */
+export function installDialogListener() {
+  if (!chrome.debugger || !chrome.debugger.onEvent || dialogListenerOn === chrome.debugger) return;
+  chrome.debugger.onEvent.addListener((source, method, params) => {
+    if (method !== 'Page.javascriptDialogOpening' || !source || source.tabId === undefined) return;
+    const tabId = source.tabId;
+    const type = (params && params.type) || 'alert';
+    const message = (params && params.message) || '';
+    const accept = type === 'alert' ? true : type === 'beforeunload' ? beforeunloadPolicy.get(tabId) === 'accept' : false;
+    const record = { type, message, handled: accept ? 'accepted' : 'dismissed', at: Date.now() };
+    lastDialog.set(tabId, record);
+    note({ kind: 'dialog', dialog: { type, message, handled: record.handled } });
+    try {
+      chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', { accept, promptText: '' }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch {
+      /* the tab went away with the dialog on it */
+    }
+  });
+  dialogListenerOn = chrome.debugger;
+}
+
+// Installed once, when the worker loads. A dialog can open without a call in
+// flight, and a listener added per attach would land on whichever debugger
+// object was current at the time.
+installDialogListener();
+
+export async function send(tabId, method, params = {}, options = {}) {
+  const { retry = true, timeout = timeoutFor(method), wakeOnTimeout = true } = options;
   installDetachListener();
   try {
-    return await rawSend(tabId, method, params);
+    return await rawSend(tabId, method, params, timeout);
   } catch (err) {
+    // A renderer that stopped answering is woken the way a hidden tab is, and
+    // the command is sent once more before the call is given up on.
+    if (err instanceof CdpTimeout) {
+      if (!wakeOnTimeout) throw frozenError(tabId, method, timeout);
+      await wake(tabId, { force: true }).catch(() => {});
+      if (!safeToRepeat(method)) throw frozenError(tabId, method, timeout);
+      try {
+        return await rawSend(tabId, method, params, timeout);
+      } catch (again) {
+        if (again instanceof CdpTimeout) throw frozenError(tabId, method, timeout);
+        throw again;
+      }
+    }
     if (!retry || !STALE_ATTACHMENT.test((err && err.message) || '')) throw err;
 
     await detach(tabId, { force: true });
@@ -254,7 +704,9 @@ export function clearThrottleFlag(tabId) {
 
 export async function sendInput(tabId, params, ackTimeout = 400) {
   let settled = false;
-  const command = send(tabId, 'Input.dispatchMouseEvent', params).then(
+  // No command timeout here: the missing acknowledgement is the expected case
+  // on a hidden tab, and it is already handled by the race below.
+  const command = send(tabId, 'Input.dispatchMouseEvent', params, { timeout: 0 }).then(
     () => {
       settled = true;
     },
@@ -611,14 +1063,19 @@ export async function getLayoutMetrics(tabId) {
   return send(tabId, 'Page.getLayoutMetrics');
 }
 
-export async function evaluate(tabId, expression, { awaitPromise = true, returnByValue = true } = {}) {
-  const result = await send(tabId, 'Runtime.evaluate', {
-    expression,
-    awaitPromise,
-    returnByValue,
-    userGesture: true,
-    replMode: true,
-  });
+export async function evaluate(tabId, expression, { awaitPromise = true, returnByValue = true, timeout = 60000 } = {}) {
+  const result = await send(
+    tabId,
+    'Runtime.evaluate',
+    {
+      expression,
+      awaitPromise,
+      returnByValue,
+      userGesture: true,
+      replMode: true,
+    },
+    { timeout }
+  );
   if (result.exceptionDetails) {
     const ex = result.exceptionDetails;
     const message =
@@ -644,13 +1101,15 @@ const awake = new Set();
 
 export async function wake(tabId, { force = false } = {}) {
   if (!force && awake.has(tabId)) return;
+  // wakeOnTimeout is off on both: waking is what the timeout path calls, and it
+  // must not call itself.
   try {
-    await send(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: true }, { retry: false });
+    await send(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: true }, { retry: false, timeout: 5000, wakeOnTimeout: false });
   } catch {
     /* an older Chrome without the method still gets the lifecycle state */
   }
   try {
-    await send(tabId, 'Page.setWebLifecycleState', { state: 'active' }, { retry: false });
+    await send(tabId, 'Page.setWebLifecycleState', { state: 'active' }, { retry: false, timeout: 5000, wakeOnTimeout: false });
   } catch {
     /* not supported on this target */
   }

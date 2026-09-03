@@ -12,6 +12,7 @@
     "storage",
     "alarms",
     "nativeMessaging",
+    "offscreen",
     "windows",
     "webNavigation"
   ],

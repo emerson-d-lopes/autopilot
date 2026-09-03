@@ -6,12 +6,21 @@ import { normalizeCall } from './lib/aliases.js';
 import * as shortcuts from './lib/shortcuts.js';
 import * as tabsLib from './lib/tabs.js';
 import * as recorder from './lib/recorder.js';
-import { detachAll } from './lib/cdp.js';
+import * as cdp from './lib/cdp.js';
 import { PermissionDenied } from './lib/permissions.js';
+import { ToolError, isToolError } from './lib/errors.js';
+
+const { detachAll } = cdp;
 
 const HOST_NAME = 'com.chromemcp.host';
 const BROWSER_ID_KEY = 'browserId';
 const KEEPALIVE_ALARM = 'chrome-mcp-keepalive';
+const OFFSCREEN_PATH = 'offscreen.html';
+
+// A tab that cannot be attached is replaced rather than lost. The tab
+// bookkeeping is wired in here so cdp.js does not have to import the module
+// that imports it.
+cdp.setSessionReplacer(tabsLib.replaceSessionTab);
 
 // A single native message is capped at 1MB. Screenshots exceed that, so large
 // payloads are split and reassembled on the host side.
@@ -20,6 +29,11 @@ const CHUNK_SIZE = 384 * 1024;
 let port = null;
 let connecting = false;
 let reconnectDelay = 500;
+
+// Bumped every time the port drops. A tool that finishes after a reconnect
+// belongs to a session that no longer exists, and delivering its result into
+// the new one would answer a request nobody made.
+let generation = 0;
 
 // ---------------------------------------------------------------------------
 // Transport
@@ -96,6 +110,7 @@ function connect() {
   port.onDisconnect.addListener(() => {
     const err = chrome.runtime.lastError;
     port = null;
+    generation++;
     console.log('[chrome-mcp] native port disconnected', err ? err.message : '');
     scheduleReconnect();
   });
@@ -139,7 +154,78 @@ function serializeError(err) {
   if (err instanceof PermissionDenied) {
     return { message: err.message, kind: 'permission_denied', details: err.details };
   }
+  // A catalogue error carries everything the result contract asks for, so it is
+  // passed through rather than flattened to a string.
+  if (isToolError(err)) {
+    return { kind: 'tool_error', ...err.toJSON() };
+  }
   return { message: String((err && err.message) || err), kind: 'error' };
+}
+
+/**
+ * Folds what happened underneath a call into its result: a dialog that was
+ * answered, an attach that only worked after a recovery. Both happen below the
+ * tool, so neither can return through it.
+ */
+function applyNotes(result, notes) {
+  if (!notes.length) return result;
+  const out = result && typeof result === 'object' && !Array.isArray(result) ? { ...result } : { value: result };
+  const warnings = [...(Array.isArray(out.warnings) ? out.warnings : [])];
+  const dialogs = [];
+  for (const entry of notes) {
+    if (entry.kind === 'dialog') {
+      dialogs.push(entry.dialog);
+      warnings.push(
+        'a ' + entry.dialog.type + ' dialog was ' + entry.dialog.handled + ': ' + JSON.stringify(entry.dialog.message || '')
+      );
+    } else if (entry.message) {
+      warnings.push(entry.message);
+    }
+  }
+  if (dialogs.length) {
+    out.dialog = dialogs[0];
+    if (dialogs.length > 1) out.dialogs = dialogs;
+  }
+  if (warnings.length) out.warnings = warnings;
+  return out;
+}
+
+/** The same notes, for a call that ended in an error. */
+function notesForError(notes) {
+  const carrier = applyNotes({}, notes);
+  const extra = {};
+  if (carrier.warnings) extra.warnings = carrier.warnings;
+  if (carrier.dialog) extra.dialog = carrier.dialog;
+  return extra;
+}
+
+/**
+ * Answers a request, unless the port it arrived on has since dropped.
+ *
+ * A tool that finishes after a reconnect belongs to a session that no longer
+ * exists. Delivering its result would answer a request the current host never
+ * made, so the result is dropped and the drop is recorded, since a silently
+ * missing reply is the thing this guards against.
+ */
+function respond(message, bornAt, tool) {
+  if (bornAt !== generation) {
+    try {
+      post({
+        type: 'journal_note',
+        event: 'stale_response_dropped',
+        tool,
+        id: message.id,
+        callId: message.callId,
+        detail: 'the native port reconnected while this call was running, so its result was dropped',
+      });
+    } catch {
+      /* the replacement port is not up yet either */
+    }
+    console.log('[chrome-mcp] dropped a stale tool_response for', tool);
+    return false;
+  }
+  post(message);
+  return true;
 }
 
 async function runTool(name, input, ctx) {
@@ -148,11 +234,117 @@ async function runTool(name, input, ctx) {
   return { ...(result && typeof result === 'object' ? result : { value: result }), durationMs: Date.now() - started };
 }
 
+// ---------------------------------------------------------------------------
+// Batch pre-validation
+// ---------------------------------------------------------------------------
+
+/** Arguments a tool cannot run without. Checked before the batch starts. */
+const REQUIRED_ARGS = {
+  navigate: ['tabId', 'url'],
+  read_page: ['tabId'],
+  get_page_text: ['tabId'],
+  find: ['tabId', 'query'],
+  form_input: ['tabId', 'ref', 'value'],
+  computer: ['tabId', 'action'],
+  file_upload: ['tabId', 'paths'],
+  gif_creator: ['tabId', 'action'],
+  javascript: ['tabId', 'code'],
+  read_console_messages: ['tabId'],
+  read_network_requests: ['tabId'],
+  page_state: ['tabId'],
+  wait_for_page: ['tabId'],
+  resize_window: ['tabId', 'width', 'height'],
+  tabs_close: ['tabId'],
+  shortcuts_execute: ['shortcutId'],
+};
+
+const COMPUTER_ACTIONS = new Set([
+  'screenshot', 'zoom', 'wait', 'scroll_to', 'hover',
+  'left_click', 'right_click', 'double_click', 'triple_click',
+  'left_click_drag', 'type', 'key', 'scroll',
+]);
+
+function describeItem(index, action) {
+  const where = action && action.lineNo !== undefined ? 'line ' + action.lineNo : 'item ' + (index + 1);
+  return where + ' (' + ((action && action.name) || 'no tool named') + ')';
+}
+
+/**
+ * Checks every item before the first one runs.
+ *
+ * Validating as the batch went meant a typo in item five cost the side effects
+ * of items one to four, with no way to undo them. Everything knowable up front
+ * (the tool name, the arguments it cannot run without, and whether the tab
+ * belongs to this session) is checked here instead. Quick already parses a whole
+ * script before running it, so this brings browser_batch to the same standard.
+ */
+export async function validateBatch(actions, ctx) {
+  if (!Array.isArray(actions) || !actions.length) {
+    return new ToolError('batch_invalid', 'browser_batch needs a non-empty actions array. Nothing ran.', {
+      effects: 'none',
+    });
+  }
+
+  const checkedTabs = new Set();
+  let createsTab = false;
+
+  for (let i = 0; i < actions.length; i++) {
+    const raw = actions[i] || {};
+    const fail = (reason, hint) =>
+      new ToolError('batch_invalid', 'Batch not run: ' + describeItem(i, raw) + ' ' + reason, {
+        effects: 'none',
+        hint: hint || 'Fix that item and send the batch again. Nothing ran.',
+        details: { index: i, lineNo: raw.lineNo, name: raw.name },
+      });
+
+    const { name, input } = normalizeCall(raw.name, raw.input);
+    if (!name || !TOOL_NAMES.includes(name)) {
+      return fail('names no known tool.', 'Known tools: ' + TOOL_NAMES.join(', ') + '.');
+    }
+    if (input !== undefined && (typeof input !== 'object' || Array.isArray(input))) {
+      return fail('has arguments that are not an object.');
+    }
+    if (name === 'tabs_create') createsTab = true;
+
+    for (const key of REQUIRED_ARGS[name] || []) {
+      if (input[key] === undefined || input[key] === null) {
+        // A tabId can arrive from a tab created earlier in the same batch.
+        if (key === 'tabId' && createsTab) continue;
+        return fail('is missing ' + key + '.');
+      }
+    }
+    if (name === 'computer' && !COMPUTER_ACTIONS.has(input.action)) {
+      return fail(
+        'asks for the unknown computer action ' + JSON.stringify(String(input.action)) + '.',
+        'Actions: ' + [...COMPUTER_ACTIONS].join(', ') + '.'
+      );
+    }
+    if (name === 'file_upload' && (!Array.isArray(input.paths) || !input.paths.length)) {
+      return fail('needs a non-empty paths array.');
+    }
+
+    const tabId = input.tabId;
+    if (tabId === undefined || tabId === null || tabId === '$last') continue;
+    if (typeof tabId !== 'number') return fail('has a tabId that is not a number.');
+    if (checkedTabs.has(tabId)) continue;
+    try {
+      await tabsLib.assertTabInSession(ctx.clientId, tabId);
+      checkedTabs.add(tabId);
+    } catch (err) {
+      return fail('targets tab ' + tabId + ' which this session cannot drive. ' + String((err && err.message) || err));
+    }
+  }
+  return null;
+}
+
 /**
  * Runs a sequence in one round trip. Stops at the first error so a batch cannot
  * keep acting on a page after a step failed to land.
  */
-async function runBatch(actions, ctx) {
+export async function runBatch(actions, ctx) {
+  const invalid = await validateBatch(actions, ctx);
+  if (invalid) throw invalid;
+
   const results = [];
   let lastCreatedTab = null;
   for (let i = 0; i < actions.length; i++) {
@@ -234,8 +426,14 @@ async function handleMessage(message) {
 
     case 'tool_request': {
       const { id, clientId, toolUseId } = message;
+      // The host stamps callId on the envelope. It travels back on every
+      // response, including a failure, so one line in the journal, one result
+      // and one error all name the same call. An older host that sends no
+      // callId falls back to the transport id.
+      const callId = message.callId ?? id;
+      const bornAt = generation;
       const { name: tool, input: args } = normalizeCall(message.tool, message.args);
-      const ctx = { clientId: clientId || 'default', toolUseId };
+      const ctx = { clientId: clientId || 'default', toolUseId, callId };
       // The page a call acted on, for the host's action journal. Read after
       // the call so a navigation is reported by where it landed.
       const tabMeta = async (tabId) => {
@@ -255,22 +453,25 @@ async function handleMessage(message) {
       const mark = (status) => (marks ? tabsLib.setGroupStatus(ctx.clientId, status).catch(() => {}) : Promise.resolve());
       mark('working');
       inFlight++;
+      cdp.beginCall();
       try {
         let result;
         if (tool === 'browser_batch') result = await runBatch(args.actions || [], ctx);
         else if (tool === 'quick') result = await runQuick(args, ctx);
         else if (tool === 'shortcuts_execute') result = await runShortcut(args, ctx);
         else result = await runTool(tool, args, ctx);
+        result = applyNotes(result, cdp.endCall());
         const tab = await tabMeta(args && args.tabId !== undefined ? args.tabId : result && result.tabId);
         const failedStep = result && result.results && result.results.some((s) => !s.ok);
         await mark(failedStep ? 'error' : 'done');
         remember(tool, args, !failedStep, failedStep ? (result.results.find((s) => !s.ok) || {}).error : null, tab);
-        post({ type: 'tool_response', id, result, tab });
+        respond({ type: 'tool_response', id, callId, result: { ...result, id: callId }, tab }, bornAt, tool);
       } catch (err) {
+        const error = { ...serializeError(err), ...notesForError(cdp.endCall()) };
         const tab = await tabMeta(args && args.tabId);
         await mark('error');
         remember(tool, args, false, err, tab);
-        post({ type: 'tool_response', id, error: serializeError(err), tab });
+        respond({ type: 'tool_response', id, callId, error, tab }, bornAt, tool);
       } finally {
         inFlight--;
       }
@@ -302,9 +503,40 @@ async function handleMessage(message) {
 // that timer, so the host's periodic ping keeps the worker alive while a client
 // is attached. The alarm is the backstop for the window where the worker died
 // before the host reconnected: alarms restart the worker, which reconnects.
+// The port ping is subject to the same background throttling it is meant to
+// beat. An offscreen document is not: it is exempt from the 30s idle kill, and
+// a message from it every 20s resets the worker's idle timer even while the
+// browser is throttled or frozen.
+let offscreenPending = null;
+
+async function ensureOffscreen() {
+  if (!chrome.offscreen || !chrome.offscreen.createDocument) return false;
+  if (offscreenPending) return offscreenPending;
+  offscreenPending = (async () => {
+    try {
+      if (chrome.offscreen.hasDocument && (await chrome.offscreen.hasDocument())) return true;
+      await chrome.offscreen.createDocument({
+        url: OFFSCREEN_PATH,
+        reasons: ['BLOBS'],
+        justification: 'Keeps the service worker alive so a queued tool call is answered without waiting for a restart.',
+      });
+      return true;
+    } catch (err) {
+      // Two creates can race after a restart, and the loser is told a document
+      // already exists, which is the state we wanted.
+      return /already/i.test(String((err && err.message) || err));
+    } finally {
+      offscreenPending = null;
+    }
+  })();
+  return offscreenPending;
+}
+
 chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === KEEPALIVE_ALARM && !port) connect();
+  if (alarm.name !== KEEPALIVE_ALARM) return;
+  if (!port) connect();
+  ensureOffscreen();
 });
 
 chrome.runtime.onStartup.addListener(connect);
@@ -335,6 +567,11 @@ function remember(tool, args, ok, error, tab) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== 'object') return false;
+  // Receiving it is the whole point: the message resets the idle timer.
+  if (message.type === 'SW_KEEPALIVE') {
+    if (!port) connect();
+    return false;
+  }
   if (message.type === 'popup_state') {
     tabsLib.listSessions().then(
       (sessions) =>
@@ -392,3 +629,4 @@ self.addEventListener('beforeunload', () => {
 
 recorder.installListener();
 connect();
+ensureOffscreen();

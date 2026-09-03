@@ -94,6 +94,18 @@ export const CODES = {
     retryable: false,
     effects: 'none',
   },
+  element_readonly: {
+    message: 'The target element is read-only, so its value cannot be set.',
+    hint: 'Whatever makes it read-only has to change first. Act on the control that unlocks it.',
+    retryable: false,
+    effects: 'none',
+  },
+  not_a_form_control: {
+    message: 'The target is not a form control, so its value cannot be set directly.',
+    hint: 'Use computer type on this element instead, or target the control itself.',
+    retryable: false,
+    effects: 'none',
+  },
   no_effect: {
     message: 'The action ran and nothing observable changed.',
     hint: 'Read the page again to see the real state before deciding the action failed.',
@@ -156,15 +168,27 @@ export const CODES = {
     retryable: false,
     effects: 'none',
   },
+  // Added by the debugger and lifecycle track: a browser_batch that fails its
+  // pre-flight check, before any item has run.
+  batch_invalid: {
+    message: 'The batch was rejected before any item ran.',
+    hint: 'Fix the item named in the message and send the batch again. Nothing ran.',
+    retryable: false,
+    effects: 'none',
+  },
   // Added by the host track. Not in the Phase 1 list, needed because tools
   // reject bad arguments before they reach the page and because an unmatched
-  // failure still has to carry a code.
+  // failure still has to carry a code. `bad_request` also covers what the
+  // content track first called `invalid_argument`.
   bad_request: {
     message: 'The call was rejected before it reached the page.',
     hint: 'Fix the arguments named in the message and call again.',
     retryable: false,
     effects: 'none',
   },
+  // `internal` also covers what the content track first called
+  // `unknown_failure`: a throw the tool could not classify, with an effect it
+  // cannot vouch for.
   internal: {
     message: 'The call failed for a reason the contract does not classify yet.',
     hint: 'Read the message. If it repeats, read the page again before acting on it.',
@@ -174,6 +198,9 @@ export const CODES = {
 };
 
 export const CODE_NAMES = Object.keys(CODES);
+
+/** The name the extension track used for the same table. */
+export const ERROR_CODES = CODES;
 
 /** Tools that only read. They never change the page, so a retry costs nothing. */
 export const READ_TOOLS = new Set([
@@ -254,6 +281,8 @@ export function toError(code, extra = {}) {
 export const MATCHERS = [
   [/is no longer on the page|ref [\w-]+ is stale|refs? .{0,20}did not resolve/i, 'ref_stale'],
   [/is covered by .* at the point a click would land|occluded by/i, 'ref_covered'],
+  [/is read-only\b/i, 'element_readonly'],
+  [/is not a form control|has no value to set/i, 'not_a_form_control'],
   [/is disabled, so (a click on it does nothing|its value cannot be set)|\bis disabled\b/i, 'element_disabled'],
   [/is not in this session's tab group|is not in this session/i, 'tab_foreign'],
   [/No tab with id|may have been closed|No target with given id|Target closed|tab .{0,12}was closed/i, 'tab_gone'],
@@ -285,14 +314,108 @@ export function classifyMessage(text) {
   return null;
 }
 
-/** Turns anything a handler threw into one contract error. */
+/** The name the extension track used for classifyMessage. */
+export const codeForMessage = classifyMessage;
+
+// ---------------------------------------------------------------------------
+// Raising a coded failure from a handler
+// ---------------------------------------------------------------------------
+
+/**
+ * A failure carrying its catalogue entry.
+ *
+ * It extends Error so existing throw and catch paths keep working and the
+ * message alone still reads correctly in a client that ignores the fields.
+ * `details` carries the ids a caller needs to act on the failure, such as the
+ * replacement tab after a tab_replaced. `evidence` carries what the tool
+ * observed before it gave up.
+ */
+export class ToolError extends Error {
+  constructor(code, message, options = {}) {
+    const spec = CODES[code] || CODES.internal;
+    super(message || spec.message);
+    this.name = 'ToolError';
+    this.code = CODES[code] ? code : 'internal';
+    if (!CODES[code]) this.unknownCode = code;
+    this.cause = options.cause ?? null;
+    this.hint = options.hint ?? spec.hint ?? null;
+    this.effects = options.effects ?? spec.effects ?? 'unknown';
+    this.retryable = options.retryable ?? spec.retryable ?? false;
+    this.details = options.details ?? null;
+    if (options.evidence) this.evidence = options.evidence;
+    if (options.warnings) this.warnings = options.warnings;
+  }
+
+  /** The wire shape the result contract specifies. */
+  toJSON() {
+    return {
+      code: this.code,
+      message: this.message,
+      cause: this.cause,
+      hint: this.hint,
+      effects: this.effects,
+      retryable: this.retryable,
+      ...(this.details ? { details: this.details } : {}),
+      ...(this.evidence ? { evidence: this.evidence } : {}),
+      ...(this.warnings ? { warnings: this.warnings } : {}),
+    };
+  }
+
+  /** The failure body, for a caller that reports `{ok: false, error}`. */
+  get error() {
+    return this.toJSON();
+  }
+}
+
+/**
+ * The name the profile track used. It is the same class, so an
+ * `instanceof ToolError` check catches both.
+ */
+export const ToolFailure = ToolError;
+
+/** Builds a ToolError without the `new`. */
+export function toolError(code, message, options) {
+  return new ToolError(code, message, options);
+}
+
+/** True when the value carries a code from this catalogue. */
+export function isToolError(err) {
+  if (!err || typeof err !== 'object') return false;
+  if (err instanceof ToolError) return true;
+  return Boolean(err.code && Object.prototype.hasOwnProperty.call(CODES, err.code));
+}
+
+/**
+ * Attaches a code to an error that does not carry one.
+ *
+ * A ToolError passes through unchanged. Anything else is classified from its
+ * message, falling back to the code the caller named.
+ */
+export function withCode(err, fallbackCode, options = {}) {
+  if (err instanceof ToolError) return err;
+  const message = String((err && err.message) || err);
+  const code = classifyMessage(message) || fallbackCode || 'internal';
+  const wrapped = new ToolError(code, message, options);
+  wrapped.stack = (err && err.stack) || wrapped.stack;
+  return wrapped;
+}
+
+/**
+ * Turns anything a handler threw into one contract error.
+ *
+ * A failure that already carries a catalogue code passes through with its
+ * message, cause, hint, effects, retryable, details, evidence and warnings
+ * intact. Only an unclassified throw is matched against the message patterns.
+ */
 export function fromThrown(thrown, context = {}) {
-  const raw = thrown && typeof thrown === 'object' ? thrown : { message: String(thrown) };
+  const source = thrown instanceof ToolError ? thrown.toJSON() : thrown;
+  const raw = source && typeof source === 'object' ? source : { message: String(thrown) };
   if (raw.error && raw.error.code && CODES[raw.error.code]) {
     return { ...raw.error, id: context.id || raw.error.id };
   }
   if (raw.code && CODES[raw.code]) {
-    return toError(raw.code, { ...raw, id: context.id });
+    const { kind, stack, name, ...fields } = raw;
+    return toError(raw.code, { ...fields, message: raw.message || CODES[raw.code].message, id: context.id });
   }
   const message = raw.message ? String(raw.message) : String(thrown);
   const byKind = { disconnected: 'host_lost', not_connected: 'host_lost', transport: 'host_lost', timeout: 'timeout' };
