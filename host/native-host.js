@@ -12,7 +12,7 @@ import { NativeMessaging } from './protocol.js';
 import { socketPathFor, listen } from './ipc.js';
 import { writeEntry, removeEntry } from './registry.js';
 import { detectProfile } from './profile.js';
-import { record as journal, makeEntry, pruneJournal, JOURNAL_DIR } from './journal.js';
+import { record as journal, makeEntry, noteEntry, pruneJournal, JOURNAL_DIR } from './journal.js';
 import { ResponseQueue } from './response-queue.js';
 
 const LOG_PATH = path.join(os.tmpdir(), 'chrome-mcp-host.log');
@@ -107,6 +107,14 @@ chrome.on('message', (message) => {
       return;
 
     case 'pong':
+      return;
+
+    // Something the extension reports outside a call: a stale response it
+    // dropped, a tab it replaced. It has no pending entry to attach to, so it
+    // becomes a journal line of its own.
+    case 'journal_note':
+      log('journal note:', message.event || 'note', message.tool || '', message.callId || message.id || '');
+      journal(browser.id, noteEntry(message));
       return;
 
     case 'tool_response':

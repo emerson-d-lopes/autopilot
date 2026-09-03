@@ -10,6 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPage } from './page-harness.js';
 import { parseTree } from '../extension/src/lib/find.js';
+import { makeEntry } from '../host/journal.js';
 
 // ---------------------------------------------------------------------------
 // F1: what counts as sensitive
@@ -86,6 +87,36 @@ test('FORM_INPUT returns [redacted] and a sensitive flag instead of the value', 
   assert.equal(result.value, '[redacted]');
   assert.equal(result.sensitive, true);
   assert.equal(JSON.stringify(result).includes('correct horse'), false, 'the value is not echoed anywhere');
+});
+
+test('the marker the page sets is the one the journal denylist reads', async () => {
+  // The extension marks the result `sensitive`. host/journal.js reads the same
+  // field off the result to decide whether to record the argument. If the two
+  // names ever drift, a typed password lands on disk.
+  const { call } = loadPage(SENSITIVE_PAGE);
+  const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);
+  const password = nodes.find((n) => n.name === 'Password');
+  const email = nodes.find((n) => n.name === 'Email');
+
+  const secret = await call({ type: 'FORM_INPUT', ref: password.ref, value: 'correct horse battery' });
+  const plain = await call({ type: 'FORM_INPUT', ref: email.ref, value: 'other@example.com' });
+
+  const secretEntry = makeEntry({
+    request: { tool: 'form_input', args: { tabId: 1, ref: password.ref, value: 'correct horse battery' } },
+    response: { result: { sensitive: secret.sensitive } },
+    startedAt: 0,
+    finishedAt: 5,
+  });
+  assert.equal(secretEntry.args.value, '[value redacted]');
+  assert.equal(JSON.stringify(secretEntry).includes('correct horse'), false);
+
+  const plainEntry = makeEntry({
+    request: { tool: 'form_input', args: { tabId: 1, ref: email.ref, value: 'other@example.com' } },
+    response: { result: { sensitive: plain.sensitive === undefined ? false : plain.sensitive } },
+    startedAt: 0,
+    finishedAt: 5,
+  });
+  assert.equal(plainEntry.args.value, 'other@example.com', 'an ordinary field is still recorded');
 });
 
 test('FORM_INPUT on an ordinary field still confirms the value it set', async () => {

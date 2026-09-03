@@ -819,50 +819,14 @@ export async function mouseHover(tabId, x, y, modifiers = 0, onMove) {
   await sleep(120, tabId);
 }
 
+/**
+ * A drag. Kept as the name callers reach for, implemented by mouseDragDwell.
+ *
+ * The original payload pressed and moved in the same frame, so the browser
+ * never started a drag (R15). There is one implementation now.
+ */
 export async function mouseDrag(tabId, from, to, modifiers = 0, hooks = {}) {
-  const { onMove, onPress, onRelease } = hooks;
-  const [x1, y1] = from;
-  const [x2, y2] = to;
-  if (onMove) onMove(x1, y1);
-  await sendInput(tabId, { type: 'mouseMoved', x: x1, y: y1, buttons: 0, modifiers });
-  await sleep(50, tabId);
-  if (onPress) onPress(x1, y1);
-  await send(tabId, 'Input.dispatchMouseEvent', {
-    type: 'mousePressed',
-    x: x1,
-    y: y1,
-    button: 'left',
-    buttons: 1,
-    clickCount: 1,
-    modifiers,
-  });
-  // Intermediate moves, because drag targets commonly require movement deltas
-  // rather than a single jump to the destination.
-  const steps = 10;
-  for (let i = 1; i <= steps; i++) {
-    const stepX = Math.round(x1 + ((x2 - x1) * i) / steps);
-    const stepY = Math.round(y1 + ((y2 - y1) * i) / steps);
-    if (onMove) onMove(stepX, stepY);
-    await sendInput(tabId, {
-      type: 'mouseMoved',
-      x: stepX,
-      y: stepY,
-      button: 'left',
-      buttons: 1,
-      modifiers,
-    });
-    await sleep(16, tabId);
-  }
-  await send(tabId, 'Input.dispatchMouseEvent', {
-    type: 'mouseReleased',
-    x: x2,
-    y: y2,
-    button: 'left',
-    buttons: 0,
-    clickCount: 1,
-    modifiers,
-  });
-  if (onRelease) onRelease(x2, y2);
+  return mouseDragDwell(tabId, from, to, modifiers, hooks);
 }
 
 export async function mouseScroll(tabId, x, y, direction, amount = 3, modifiers = 0) {
@@ -890,22 +854,12 @@ export async function insertText(tabId, text) {
  * Types character by character with real key events. Slower than insertText but
  * required by inputs that listen for keydown, such as autocomplete fields that
  * only query on keystroke.
+ *
+ * Kept as the name callers reach for, implemented by typeKeysReal, whose
+ * events carry the virtual key code an autocomplete listener needs (R5).
  */
 export async function typeKeys(tabId, text, delay = 12) {
-  for (const ch of String(text)) {
-    if (ch === '\n') {
-      await pressKey(tabId, 'enter');
-      continue;
-    }
-    await send(tabId, 'Input.dispatchKeyEvent', {
-      type: 'keyDown',
-      text: ch,
-      unmodifiedText: ch,
-      key: ch,
-    });
-    await send(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: ch });
-    if (delay) await sleep(delay, tabId);
-  }
+  return typeKeysReal(tabId, text, delay);
 }
 
 /**

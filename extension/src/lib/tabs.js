@@ -298,6 +298,70 @@ export async function adoptTab(clientId, tabId) {
   return { tabId, tabGroupId: groupId };
 }
 
+// ---------------------------------------------------------------------------
+// R7. Tabs a click opened
+// ---------------------------------------------------------------------------
+
+/** @type {Map<number, number[]>} openerTabId -> tabs adopted since the last read */
+const adoptedByOpener = new Map();
+
+/**
+ * Takes a tab that a session tab opened into the same session.
+ *
+ * A click on target="_blank" opens a tab the caller never asked for and cannot
+ * name. Left alone it sits outside the group, so assertTabInSession refuses it
+ * and the page the click produced is unreachable. It joins the opener's group
+ * instead, unselected, and its id is held for the click result to report.
+ *
+ * Nothing here activates the tab or focuses its window.
+ *
+ * @returns {Promise<{openerTabId: number, tabId: number, tabGroupId: number}|null>}
+ */
+export async function adoptOpenedTab(tab) {
+  const openerTabId = tab && tab.openerTabId;
+  if (typeof openerTabId !== 'number' || typeof (tab && tab.id) !== 'number') return null;
+
+  const found = await sessionForTab(openerTabId);
+  if (!found) return null;
+
+  if (tab.groupId !== found.groupId) {
+    try {
+      await chrome.tabs.group({ tabIds: [tab.id], groupId: found.groupId });
+    } catch {
+      // The tab went away before it could be grouped, which is the same as
+      // never having been opened.
+      return null;
+    }
+  }
+
+  const seen = adoptedByOpener.get(openerTabId) || [];
+  if (!seen.includes(tab.id)) seen.push(tab.id);
+  adoptedByOpener.set(openerTabId, seen);
+  return { openerTabId, tabId: tab.id, tabGroupId: found.groupId };
+}
+
+/**
+ * The ids adopted for one opener since this was last called, and clears them.
+ *
+ * Reading is destructive so the next click reports only the tabs it opened,
+ * rather than every tab the session has ever spawned from that page.
+ */
+export function adopted(openerTabId) {
+  const ids = adoptedByOpener.get(openerTabId) || [];
+  adoptedByOpener.delete(openerTabId);
+  return ids;
+}
+
+/** Drops a closed tab from the adoption bookkeeping. */
+export function forgetAdopted(tabId) {
+  adoptedByOpener.delete(tabId);
+  for (const [opener, ids] of adoptedByOpener) {
+    const left = ids.filter((id) => id !== tabId);
+    if (left.length) adoptedByOpener.set(opener, left);
+    else adoptedByOpener.delete(opener);
+  }
+}
+
 /** The session whose group holds a tab, or null when no session owns it. */
 export async function sessionForTab(tabId) {
   await loadGroups();

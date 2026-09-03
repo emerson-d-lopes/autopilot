@@ -154,3 +154,43 @@ test('sessionForTab names the session holding a tab', async () => {
   assert.equal(found.groupId, 43);
   assert.equal(await tabs.sessionForTab(404), null);
 });
+
+// ---------------------------------------------------------------------------
+// R7. Tabs a click opened
+// ---------------------------------------------------------------------------
+
+test('a tab opened by a session tab joins that session group, unselected', async () => {
+  const { log } = scriptSession();
+
+  const adopted = await tabs.adoptOpenedTab({ id: 77, openerTabId: 11, groupId: -1, windowId: 3 });
+
+  assert.deepEqual(adopted, { openerTabId: 11, tabId: 77, tabGroupId: 43 });
+  assert.deepEqual(log.grouped, { tabIds: [77], groupId: 43 });
+  assert.equal(log.activated, undefined, 'the new tab is never activated');
+  assert.deepEqual(tabs.adopted(11), [77]);
+  assert.deepEqual(tabs.adopted(11), [], 'reading clears, so the next click reports only its own tabs');
+});
+
+test('a tab opened by a tab no session owns is left alone', async () => {
+  scriptSession({ groupId: 43, tab: { id: 11, url: 'https://x.test/', groupId: 99, windowId: 3, index: 0 } });
+  assert.equal(await tabs.adoptOpenedTab({ id: 78, openerTabId: 11, groupId: -1 }), null);
+  assert.deepEqual(tabs.adopted(11), []);
+});
+
+test('a tab with no opener is not adopted', async () => {
+  scriptSession();
+  assert.equal(await tabs.adoptOpenedTab({ id: 79, groupId: -1 }), null);
+  assert.equal(await tabs.adoptOpenedTab(null), null);
+});
+
+test('two tabs from one click are both reported, and a closed one is forgotten', async () => {
+  scriptSession();
+  await tabs.adoptOpenedTab({ id: 81, openerTabId: 11, groupId: -1 });
+  await tabs.adoptOpenedTab({ id: 82, openerTabId: 11, groupId: -1 });
+  await tabs.adoptOpenedTab({ id: 82, openerTabId: 11, groupId: -1 });
+  assert.deepEqual(tabs.adopted(11), [81, 82], 'the same tab is not counted twice');
+
+  await tabs.adoptOpenedTab({ id: 83, openerTabId: 11, groupId: -1 });
+  tabs.forgetAdopted(83);
+  assert.deepEqual(tabs.adopted(11), []);
+});

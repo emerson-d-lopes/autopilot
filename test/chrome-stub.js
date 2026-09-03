@@ -48,6 +48,7 @@ export const chromeStub = {
       return {};
     },
     onUpdated: { addListener() {} },
+    onCreated: { addListener() {} },
     onRemoved: { addListener() {} },
   },
   tabGroups: {

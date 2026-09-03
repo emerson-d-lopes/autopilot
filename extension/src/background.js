@@ -660,8 +660,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // a call this worker made.
 tabsLib.resetGroupStatuses().catch(() => {});
 
+// R7. A tab a session tab opened joins that session's group, so the click that
+// opened it can name it and the caller can act on it. Unselected, never
+// activated.
+chrome.tabs.onCreated.addListener((tab) => {
+  tabsLib.adoptOpenedTab(tab).catch(() => {});
+});
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   recorder.clearTab(tabId);
+  tabsLib.forgetAdopted(tabId);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, info) => {

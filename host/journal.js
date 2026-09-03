@@ -139,6 +139,28 @@ export function makeEntry({ request, response, startedAt, finishedAt }) {
   return { ...entry, ...summarizeResult(tool, response || {}) };
 }
 
+/**
+ * Builds the journal entry for something the extension reports outside a call.
+ *
+ * A dropped stale response and a replaced tab both happen underneath the tool,
+ * so neither can return through it. They still belong in the journal, since a
+ * result that never arrived is exactly what the journal is read for.
+ */
+export function noteEntry(note = {}, at = Date.now()) {
+  const entry = {
+    at: new Date(at).toISOString(),
+    ms: 0,
+    client: note.clientId || 'default',
+    tool: note.tool || 'unknown',
+    note: note.event || 'note',
+    ok: true,
+  };
+  if (note.callId) entry.callId = note.callId;
+  if (note.id) entry.messageId = note.id;
+  if (note.detail) entry.detail = clip(note.detail, 300);
+  return entry;
+}
+
 const OUTCOME_SKIP = ['at', 'ms', 'client', 'tool', 'tab', 'args', 'ok', 'callId', 'redacted'];
 
 /** One Markdown line per call, readable without tooling. */

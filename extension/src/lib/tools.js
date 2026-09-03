@@ -109,19 +109,22 @@ function cursorHooks(tabId) {
 // changed nothing says so instead of reporting a bare success.
 
 /**
- * The tab a click opened, when the attach agent's hook is wired up (R7).
+ * The tabs a click opened (R7).
  *
- * `tabs.adopted(tabId)` is expected to return the id of a tab created with this
- * one as its opener since the last call. Until it exists this returns null and
- * the click result simply carries no note.
+ * `tabs.adopted(tabId)` returns the ids of tabs created with this one as their
+ * opener since it was last called, and clears them, so a click reports only
+ * the tabs it opened.
  */
-function adoptedTab(openerTabId) {
+function adoptedTabs(openerTabId) {
   try {
-    if (typeof tabsLib.adopted === 'function') return tabsLib.adopted(openerTabId) || null;
+    if (typeof tabsLib.adopted !== 'function') return [];
+    const ids = tabsLib.adopted(openerTabId);
+    if (Array.isArray(ids)) return ids.filter((id) => typeof id === 'number');
+    return typeof ids === 'number' ? [ids] : [];
   } catch {
     /* the hook is not wired up on this build */
   }
-  return null;
+  return [];
 }
 
 async function armVerify(tabId, point) {
@@ -167,7 +170,8 @@ async function readVerify(tabId, armed, { window = VERIFY_WINDOW_MS } = {}) {
     }
   }
 
-  const newTabId = adoptedTab(tabId);
+  const newTabIds = adoptedTabs(tabId);
+  const newTabId = newTabIds.length ? newTabIds[0] : null;
   const watched = Boolean(report && report.ok);
   const evidence = {
     windowMs,
@@ -180,6 +184,7 @@ async function readVerify(tabId, armed, { window = VERIFY_WINDOW_MS } = {}) {
     scrollDelta: watched ? report.scroll.delta : undefined,
     navigation: navigation || undefined,
     newTabId: newTabId || undefined,
+    newTabIds: newTabIds.length > 1 ? newTabIds : undefined,
   };
 
   const changed = Boolean((watched && report.changed) || navigation || newTabId);

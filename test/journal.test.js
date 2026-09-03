@@ -249,3 +249,36 @@ test('journalSize reports the files on disk', () => {
   assert.equal(size.bytes, 500);
   rmSync(dir, { recursive: true, force: true });
 });
+
+// --- notes the extension sends outside a call -------------------------------
+
+test('a journal_note from the extension becomes a journal line', () => {
+  const entry = journal.noteEntry(
+    {
+      type: 'journal_note',
+      event: 'stale_response_dropped',
+      tool: 'computer',
+      id: 'mcp_7',
+      callId: 'call_31_ab12cd',
+      detail: 'the native port reconnected while this call was running, so its result was dropped',
+    },
+    Date.UTC(2026, 8, 3, 10, 0, 0)
+  );
+
+  assert.equal(entry.tool, 'computer');
+  assert.equal(entry.note, 'stale_response_dropped');
+  assert.equal(entry.callId, 'call_31_ab12cd');
+  assert.equal(entry.messageId, 'mcp_7');
+  assert.equal(entry.ok, true);
+  assert.match(entry.detail, /result was dropped/);
+  assert.match(journal.formatMarkdown(entry), /\*\*computer\*\*/);
+  assert.match(journal.formatMarkdown(entry), /id=call_31_ab12cd/);
+});
+
+test('a note with nothing in it still records something readable', () => {
+  const entry = journal.noteEntry({});
+  assert.equal(entry.tool, 'unknown');
+  assert.equal(entry.note, 'note');
+  assert.equal(entry.callId, undefined);
+  assert.equal(typeof entry.at, 'string');
+});

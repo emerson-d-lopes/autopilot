@@ -21,6 +21,13 @@ import {
   contractLine,
   formatError,
   MAX_ATTEMPTS,
+  ERROR_CODES,
+  ToolError,
+  ToolFailure,
+  toolError,
+  isToolError,
+  withCode,
+  codeForMessage,
 } from '../host/errors.js';
 import { TOOLS } from '../host/schemas.js';
 
@@ -269,6 +276,111 @@ test('every tool description says what the result looks like', () => {
   const net = TOOLS.find((t) => t.name === 'read_network_requests');
   assert.match(net.description, /300 characters/);
   assert.match(net.description, /total alongside returned/);
+});
+
+// --- the merged catalogue ----------------------------------------------------
+
+test('the codes the three tracks added are in the catalogue, with no duplicates', () => {
+  for (const code of ['batch_invalid', 'element_readonly', 'not_a_form_control', 'tab_foreign', 'bad_request', 'internal']) {
+    assert.ok(CODE_NAMES.includes(code), code + ' is missing');
+  }
+  // invalid_argument folded into bad_request, unknown_failure into internal.
+  assert.ok(!CODE_NAMES.includes('invalid_argument'));
+  assert.ok(!CODE_NAMES.includes('unknown_failure'));
+  assert.equal(new Set(CODE_NAMES).size, CODE_NAMES.length, 'a code is listed twice');
+  assert.equal(ERROR_CODES, CODES, 'ERROR_CODES is the same table under the extension track name');
+});
+
+test('ToolError carries the contract fields and ToolFailure is the same class', () => {
+  const err = new ToolError('tab_replaced', 'The tab was replaced.', {
+    cause: 'four attach attempts were refused',
+    details: { oldTabId: 4, newTabId: 9 },
+    warnings: ['form input is gone'],
+  });
+  assert.ok(err instanceof Error);
+  assert.ok(isToolError(err));
+  assert.equal(ToolFailure, ToolError);
+  assert.ok(new ToolFailure('browser_unknown', 'none connected') instanceof ToolError);
+
+  const body = err.toJSON();
+  assert.deepEqual(body, {
+    code: 'tab_replaced',
+    message: 'The tab was replaced.',
+    cause: 'four attach attempts were refused',
+    hint: CODES.tab_replaced.hint,
+    effects: 'unknown',
+    retryable: false,
+    details: { oldTabId: 4, newTabId: 9 },
+    warnings: ['form input is gone'],
+  });
+  // The profile track reads err.error, so the getter returns the same body.
+  assert.deepEqual(err.error, body);
+  assert.equal(toolError('ref_stale', 'gone').code, 'ref_stale');
+});
+
+test('withCode leaves a coded failure alone and classifies a bare one', () => {
+  const coded = new ToolError('ref_covered', 'ref_2 is covered.');
+  assert.equal(withCode(coded, 'internal'), coded);
+
+  const bare = withCode(new Error('Element ref_3 is read-only, so its value cannot be set.'), 'internal');
+  assert.equal(bare.code, 'element_readonly');
+  assert.equal(codeForMessage('button ref_9 is disabled'), 'element_disabled');
+
+  const unmatched = withCode(new Error('nothing in the table matches this'), 'internal', { effects: 'unknown' });
+  assert.equal(unmatched.code, 'internal');
+  assert.equal(unmatched.effects, 'unknown');
+});
+
+test('a coded failure passes through fromThrown without being re-classified', () => {
+  // The extension raises a ToolError, background.js serializes it, and the
+  // host must not read the message back through the matcher table.
+  const thrown = new ToolError('no_effect', 'The click landed on a tab that may have been closed.', {
+    cause: 'the watch saw nothing move',
+    hint: 'Read the page again before deciding the click failed.',
+    details: { windowMs: 250 },
+    warnings: ['no observable change within 250ms'],
+  });
+  // tab_gone is what the message alone would match, which is the wrong answer.
+  assert.equal(classifyMessage(thrown.message), 'tab_gone');
+
+  const direct = fromThrown(thrown, { id: 'call_1', tool: 'computer' });
+  assert.equal(direct.code, 'no_effect');
+  assert.equal(direct.message, thrown.message);
+  assert.equal(direct.cause, 'the watch saw nothing move');
+  assert.equal(direct.hint, 'Read the page again before deciding the click failed.');
+  assert.deepEqual(direct.details, { windowMs: 250 });
+  assert.deepEqual(direct.warnings, ['no observable change within 250ms']);
+  assert.equal(direct.id, 'call_1');
+
+  // The same failure after a round trip through the native port.
+  const wire = { kind: 'tool_error', ...thrown.toJSON() };
+  const overWire = fromThrown(wire, { id: 'call_2', tool: 'computer' });
+  assert.equal(overWire.code, 'no_effect');
+  assert.equal(overWire.message, thrown.message);
+  assert.equal(overWire.effects, 'none');
+  assert.deepEqual(overWire.details, { windowMs: 250 });
+  assert.equal(overWire.kind, undefined, 'the transport kind does not leak into the contract error');
+});
+
+test('effects and evidence a handler supplied survive wrapResult', () => {
+  const result = wrapResult(
+    {
+      effects: 'applied',
+      evidence: { mutations: 3, navigation: { started: true } },
+      warnings: ['the composer was empty'],
+      value: 'ok',
+    },
+    { tool: 'computer', args: { tabId: 1, action: 'left_click' }, id: 'call_3' }
+  );
+  assert.equal(result.effects, 'applied', 'an input tool that verified its work is not downgraded to unknown');
+  assert.deepEqual(result.evidence, { mutations: 3, navigation: { started: true } });
+  assert.deepEqual(result.warnings, ['the composer was empty']);
+  assert.equal(result.value, 'ok');
+  assert.equal(result.id, 'call_3');
+
+  // The default only fills in for a handler that said nothing.
+  assert.equal(wrapResult({}, { tool: 'computer', args: { action: 'left_click' } }).effects, 'unknown');
+  assert.equal(wrapResult({ effects: 'none' }, { tool: 'form_input', args: {} }).effects, 'none');
 });
 
 // --- the copy the extension imports -----------------------------------------
