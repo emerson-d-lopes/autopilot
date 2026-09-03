@@ -477,4 +477,52 @@ export const TOOLS = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// C1. Every description says what the result looks like
+// ---------------------------------------------------------------------------
+//
+// The shape is the same for every tool, so it is appended once rather than
+// written out 25 times. A tool with its own cap or its own side-effect story
+// gets an extra sentence from RESULT_NOTES.
+
+const READ_SHAPE =
+  'Result: ok true with effects "none", evidence, warnings and a correlation id, or ok false with ' +
+  'error {code, message, cause, hint, effects, retryable}.';
+
+const INPUT_SHAPE =
+  'Result: ok true with effects "applied" when the change was verified, "none" when nothing observably changed, ' +
+  'or "unknown" when the tool could not tell, plus evidence, warnings and a correlation id. On failure, ok false ' +
+  'with error {code, message, cause, hint, effects, retryable}. Re-read the page before retrying an "unknown".';
+
+/** Tools whose result is a read of the page and never changes it. */
+const READ_ONLY = new Set([
+  'read_page', 'get_page_text', 'find', 'page_state', 'read_console_messages', 'read_network_requests',
+  'tabs_context', 'wait_for_page', 'shortcuts_list', 'list_connected_browsers',
+]);
+
+const RESULT_NOTES = {
+  read_console_messages:
+    'Each message is clipped to 500 characters and the result reports total alongside returned, so a filtered ' +
+    'read tells you how much was captured.',
+  read_network_requests:
+    'Each URL is clipped to 300 characters and the result reports total alongside returned, so a filtered read ' +
+    'tells you how much was captured.',
+  javascript:
+    'The value is redacted by shape before it is returned: keys named password, secret, api_key, cookie and the ' +
+    'like are blanked, and JWT, long hex, long base64 and cookie-shaped strings are replaced, each with a warning ' +
+    'naming what was hit. A plain URL is never touched. Strings are capped at 10 KB, arrays at 1000 items, and the ' +
+    'serialized value at 50 KB with an output_truncated warning stating the real size.',
+  computer:
+    'A screenshot is treated as a read. Every other action is an input, so read the effects flag before assuming ' +
+    'the page changed.',
+  select_browser: 'Ambiguity between connected browsers is reported as the profile_ambiguous code.',
+  switch_browser: 'Ambiguity between connected browsers is reported as the profile_ambiguous code.',
+};
+
+for (const tool of TOOLS) {
+  const shape = READ_ONLY.has(tool.name) ? READ_SHAPE : INPUT_SHAPE;
+  const note = RESULT_NOTES[tool.name];
+  tool.description = [tool.description, shape, note].filter(Boolean).join(' ');
+}
+
 export const TOOL_NAMES = TOOLS.map((t) => t.name);
