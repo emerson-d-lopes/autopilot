@@ -203,3 +203,48 @@ With more than one browser connected the browser-driven files pick, in order, `C
 - A JavaScript modal dialog blocks all further extension calls until a human dismisses it, which is a Chrome constraint
 - The CDP debugger banner is visible on tabs the session has attached
 - Completely covering the browser window can stall input until the extension raises it again
+- `wait_for_page` cannot catch an update driven by a bare timer with no DOM or network activity, because it has nothing to wait on. `test/campaign.test.js` uses a retry loop for that case
+
+## Plan phases 0 to 3 integrated, 2026-09-03
+
+Five branches off `main`, merged onto `plan/integration` in the order harness, host-contract, attach-recovery, content-verify, profiles. Extension version 0.1.11.
+
+What each branch landed:
+
+- `plan/harness` (Phase 0): the campaign fixture and its Node server (`/slow`, `/big`, `/redirect`, `/spa`, `/dialog`, `/api/*`, plus `/sensitive.html`, `/unload.html`, `/scroll.html`, `/composer.html`), `test/campaign.test.js` as the "already ahead" table, and `tools/bench.js` behind `npm run bench`.
+- `plan/host-contract` (Phase 1, host half): `host/errors.js` as the one result shape and error catalogue, contract marshalling with retries and correlation ids in `host/mcp-server.js`, output caps and credential-shaped redaction on the read path, a parked response queue with a generation stamp, journal rotation and the `CHROME_MCP_JOURNAL_REDACT` switch.
+- `plan/attach-recovery` (C2, C5, C6 extension half, R14): the attach recovery ladder with tab replacement, dialogs answered and reported in the result, a bounded frozen renderer, an offscreen document keeping the worker alive, stale results dropped after a reconnect, and batch pre-validation.
+- `plan/content-verify` (C3, R2, R3, R5, R7, S4, S7, P5, P9, F1): every input arms a watch in the page and reports `effects` and `evidence`, `get_page_text` falls back to `body` and names the container, per-key typing carries real key codes, drags dwell either side of the movement, `read_page interactive` fits a news page inline, sensitive fields are redacted at the source.
+- `plan/profiles` (M1 to M5): profile directory, name and account per connected browser, a user-set label from the options page, signed-in site detection, `select_browser` by label, profile, account or site, a per-call `browser` argument, and the profile row in `npm run doctor`.
+
+Cross-track work done at the merge: one catalogue of 25 codes with `invalid_argument` folded into `bad_request` and `unknown_failure` into `internal`, `callId` as the single correlation id, `journal_note` messages written as journal lines, the `tabs.adopted` hook implemented so a click reports the tab it opened, `mouseDrag` and `typeKeys` redirected to the helpers that replaced them, and the manifest permissions merged.
+
+Test counts on 2026-09-03, `node --test` per file, no browser running:
+
+| File | Tests | Pass |
+|---|---|---|
+| a11y.test.js | 44 | 44 |
+| aliases.test.js | 6 | 6 |
+| batch.test.js | 8 | 8 |
+| campaign-server.test.js | 14 | 14 |
+| cdp.test.js | 22 | 22 |
+| errors.test.js | 33 | 33 |
+| find.test.js | 28 | 28 |
+| ipc.test.js | 17 | 17 |
+| journal.test.js | 18 | 18 |
+| parity.test.js | 8 | 8 |
+| permissions.test.js | 16 | 16 |
+| profile.test.js | 20 | 20 |
+| protocol.test.js | 14 | 14 |
+| redact.test.js | 19 | 19 |
+| registry.test.js | 20 | 20 |
+| screenshot.test.js | 15 | 15 |
+| sensitive.test.js | 16 | 16 |
+| sessions.test.js | 14 | 14 |
+| tabs.test.js | 12 | 12 |
+| verify.test.js | 21 | 21 |
+| **Total** | **365** | **365** |
+
+`node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 29 files under `extension/src` and `host`.
+
+The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run, and neither was the live verification pass. Nothing in this merge has been driven against a browser.
