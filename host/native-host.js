@@ -11,7 +11,8 @@ import path from 'node:path';
 import { NativeMessaging } from './protocol.js';
 import { socketPathFor, listen } from './ipc.js';
 import { writeEntry, removeEntry } from './registry.js';
-import { record as journal, makeEntry, JOURNAL_DIR } from './journal.js';
+import { record as journal, makeEntry, pruneJournal, JOURNAL_DIR } from './journal.js';
+import { ResponseQueue } from './response-queue.js';
 
 const LOG_PATH = path.join(os.tmpdir(), 'chrome-mcp-host.log');
 const PING_INTERVAL = 20000;
@@ -39,6 +40,33 @@ let requestSeq = 0;
 let browser = { id: 'default', name: 'Chrome', version: 'unknown' };
 let extensionVersion = 'unknown';
 
+/**
+ * R11. Responses whose requesting socket closed before they arrived, replayed
+ * on the next connection presenting the same session id.
+ */
+const parked = new ResponseQueue();
+
+/**
+ * The envelope generation. Every message sent to the extension carries it, and
+ * the extension refuses to answer a request whose generation is behind its own,
+ * which is what stops a slow tool from delivering into a session that has
+ * already been replaced. The extension owns the number and reports it in
+ * `hello`. A build that does not report one gets a locally incremented value.
+ */
+let generation = 0;
+
+function noteDropped(dropped) {
+  for (const entry of dropped) {
+    log('parked response dropped:', entry.reason, 'session', entry.sessionId, 'tool', entry.tool || '?');
+    journal(browser.id, makeEntry({
+      request: { tool: entry.tool || 'unknown', args: {}, clientId: entry.sessionId },
+      response: { error: { message: 'parked response dropped: ' + entry.reason, code: 'host_lost' } },
+      startedAt: entry.parkedAt,
+      finishedAt: Date.now(),
+    }));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Extension side
 // ---------------------------------------------------------------------------
@@ -52,11 +80,16 @@ chrome.on('message', (message) => {
       extensionTools = message.tools || [];
       extensionVersion = message.version || 'unknown';
       browser = message.browser || { id: 'default', name: 'Chrome', version: 'unknown' };
-      log('extension connected:', browser.name, browser.version, 'id', browser.id, 'tools', extensionTools.length, 'journal', JOURNAL_DIR);
+      // The extension bumps its own counter on every port disconnect. Taking
+      // its number keeps both sides on one sequence. A build that does not send
+      // one gets a locally incremented value so the field is always present.
+      generation = Number.isFinite(message.generation) ? message.generation : generation + 1;
+      log('extension connected:', browser.name, browser.version, 'id', browser.id, 'tools', extensionTools.length, 'generation', generation, 'journal', JOURNAL_DIR);
       // The pipe name depends on which browser this is, so listening only starts
       // once the extension has said who it is.
       startListening();
-      broadcast({ type: 'browser_status', connected: true, tools: extensionTools, browser, extensionVersion });
+      pruneJournalOnce();
+      broadcast({ type: 'browser_status', connected: true, tools: extensionTools, browser, extensionVersion, generation });
       return;
 
     case 'pong':
@@ -72,7 +105,7 @@ chrome.on('message', (message) => {
       if (entry.request && message.type === 'tool_response') {
         journal(browser.id, makeEntry({ request: entry.request, response: message, startedAt: entry.startedAt, finishedAt: Date.now() }));
       }
-      entry.client.send(message);
+      deliver(entry, message);
       return;
     }
 
@@ -113,13 +146,57 @@ function broadcast(message) {
   }
 }
 
+/**
+ * Sends one response back to the socket that asked for it.
+ *
+ * A closed socket does not mean the work is gone. The response is parked under
+ * the session id and replayed on the next connection presenting it, which is
+ * what turns an MCP server restart mid-call into a late result instead of a
+ * lost one.
+ */
+function deliver(entry, message) {
+  const payload = { ...message, id: entry.outgoingId, generation };
+  if (entry.socket && entry.socket.alive && entry.socket.send(payload)) return true;
+
+  const { parked: stored, dropped } = parked.park(entry.clientId, payload, {
+    tool: entry.request ? entry.request.tool : null,
+  });
+  noteDropped(dropped);
+  if (stored) {
+    log('parked', payload.type, 'for session', entry.clientId, 'queue', parked.size);
+  } else {
+    log('dropped', payload.type, 'with no session id to park it under');
+  }
+  return false;
+}
+
+/** Hands a reconnecting session anything that arrived while it was away. */
+function replayFor(client, sessionId) {
+  const { messages, dropped } = parked.takeFor(sessionId);
+  noteDropped(dropped);
+  for (const message of messages) {
+    log('replaying parked', message.type, 'to session', sessionId);
+    client.send({ ...message, replayed: true, generation });
+  }
+  return messages.length;
+}
+
 function onConnection(client) {
   clients.add(client);
   log('mcp client connected, total', clients.size);
-  client.send({ type: 'browser_status', connected: extensionReady, tools: extensionTools, browser, extensionVersion });
+  client.send({ type: 'browser_status', connected: extensionReady, tools: extensionTools, browser, extensionVersion, generation });
+
+  // The session id only arrives with the first message, so a replay cannot
+  // happen before then.
+  let replayed = false;
 
   client.on('message', (message) => {
     if (!message || typeof message !== 'object') return;
+
+    if (message.clientId && !replayed) {
+      replayed = true;
+      replayFor(client, message.clientId);
+    }
 
     if (message.type === 'ping') {
       client.send({ type: 'pong', id: message.id });
@@ -148,24 +225,31 @@ function onConnection(client) {
           finishedAt: Date.now(),
         }));
       }
-      client.send({
-        type: message.type === 'tool_request' ? 'tool_response' : message.type,
-        id: message.id,
-        error: { message: 'Browser did not respond within ' + REQUEST_TIMEOUT / 1000 + 's.', kind: 'timeout' },
-      });
+      deliver(
+        stale || { socket: client, outgoingId: message.id, clientId: message.clientId || null, request: null },
+        {
+          type: message.type === 'tool_request' ? 'tool_response' : message.type,
+          error: { message: 'Browser did not respond within ' + REQUEST_TIMEOUT / 1000 + 's.', kind: 'timeout' },
+        }
+      );
     }, REQUEST_TIMEOUT);
 
     pending.set(id, {
-      client: {
-        send: (response) => client.send({ ...response, id: message.id }),
-      },
+      socket: client,
+      outgoingId: message.id,
+      clientId: message.clientId || null,
       timer,
       startedAt,
-      request: message.type === 'tool_request' ? { tool: message.tool, args: message.args, clientId: message.clientId } : null,
+      request:
+        message.type === 'tool_request'
+          ? { tool: message.tool, args: message.args, clientId: message.clientId, callId: message.callId }
+          : null,
     });
 
     try {
-      chrome.send({ ...message, id });
+      // The generation rides on every envelope so the extension can refuse to
+      // answer a request issued before its port was replaced.
+      chrome.send({ ...message, id, generation });
     } catch (err) {
       clearTimeout(timer);
       pending.delete(id);
@@ -183,6 +267,25 @@ function onConnection(client) {
   });
   client.on('error', (err) => log('mcp client error:', err.message));
 }
+
+let pruned = false;
+
+/** F3. Deletes journal files past the retention window, once per host process. */
+function pruneJournalOnce() {
+  if (pruned) return;
+  pruned = true;
+  try {
+    const { removed, days } = pruneJournal();
+    log('journal retention', days, 'days,', removed.length, 'file(s) removed');
+  } catch (err) {
+    log('journal prune failed:', err.message);
+  }
+}
+
+// A parked response that nobody comes back for has to leave the queue on its
+// own, otherwise it expires only when the next call happens to arrive.
+const sweep = setInterval(() => noteDropped(parked.prune()), 30000);
+if (typeof sweep.unref === 'function') sweep.unref();
 
 let listening = false;
 
@@ -234,7 +337,10 @@ process.on('SIGINT', () => {
 // With an explicit socket the path does not depend on which browser this is, so
 // listening can start at once. That keeps "host up, extension not attached" a
 // state a client can see and report, which is what the tests exercise.
-if (process.env.CHROME_MCP_SOCKET) startListening();
+if (process.env.CHROME_MCP_SOCKET) {
+  startListening();
+  pruneJournalOnce();
+}
 
 process.on('uncaughtException', (err) => {
   log('uncaught:', err.stack || err.message);

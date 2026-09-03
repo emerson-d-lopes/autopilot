@@ -37,6 +37,10 @@ export class JsonSocket extends EventEmitter {
     super();
     this.socket = socket;
     this.buffer = '';
+    // Set once the peer is gone, so a caller holding this socket can tell a
+    // failed write from a write it must not attempt. The native host uses it to
+    // decide whether a tool response has anywhere to go.
+    this.closed = false;
     socket.setEncoding('utf8');
     socket.on('data', (chunk) => {
       this.buffer += chunk;
@@ -52,13 +56,26 @@ export class JsonSocket extends EventEmitter {
         }
       }
     });
-    socket.on('close', () => this.emit('close'));
+    socket.on('close', () => {
+      this.closed = true;
+      this.emit('close');
+    });
     socket.on('error', (err) => this.emit('error', err));
   }
 
+  /** True while a write can still reach the peer. */
+  get alive() {
+    return !this.closed && !this.socket.destroyed && this.socket.writable;
+  }
+
   send(message) {
-    if (this.socket.destroyed) return false;
-    return this.socket.write(JSON.stringify(message) + '\n');
+    if (!this.alive) return false;
+    try {
+      this.socket.write(JSON.stringify(message) + '\n');
+    } catch {
+      return false;
+    }
+    return true;
   }
 
   end() {

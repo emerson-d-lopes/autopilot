@@ -373,3 +373,200 @@ test('tools/list works with no bridge running at all', async (t) => {
   assert.equal(response.result.isError, true);
   assert.match(response.result.content[0].text, /bridge is not running/);
 });
+
+// --- C1, C4, C7 and the output caps, through the real server -----------------
+
+test('a read result carries the contract line with ok, effects and an id', async (t) => {
+  const stack = await startStack('contract-read', (extension, message) => {
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      result: { url: 'https://example.com/', title: 'Example', text: 'button "Send" [ref_1]', nodes: 1 },
+    });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'read_page',
+    arguments: { tabId: 1, filter: 'interactive' },
+  });
+  const text = response.result.content.map((b) => b.text).join('\n');
+  assert.match(text, /ok=true/);
+  assert.match(text, /effects=none/, 'a read reports no side effect');
+  assert.match(text, /id=call_/);
+  assert.match(text, /button "Send"/, 'the existing rendering is untouched');
+
+  const request = stack.seen.find((m) => m.type === 'tool_request');
+  const id = /id=(call_\w+)/.exec(text)[1];
+  assert.equal(request.callId, id, 'the id in the result is the one the extension was given');
+});
+
+test('an input result reports unknown effects until the extension supplies one', async (t) => {
+  const stack = await startStack('contract-input', (extension, message) => {
+    extension.send({ type: 'tool_response', id: message.id, result: { durationMs: 12 } });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'computer',
+    arguments: { tabId: 1, action: 'left_click', coordinate: [5, 5] },
+  });
+  const body = JSON.parse(response.result.content[0].text);
+  assert.equal(body.ok, true);
+  assert.equal(body.effects, 'unknown');
+  assert.deepEqual(body.evidence, {});
+  assert.deepEqual(body.warnings, []);
+  assert.match(body.id, /^call_/);
+  assert.equal(body.durationMs, 12, 'existing fields survive');
+});
+
+test('an extension that supplies effects and evidence keeps them', async (t) => {
+  const stack = await startStack('contract-evidence', (extension, message) => {
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      result: { effects: 'applied', evidence: { mutations: 3 }, warnings: ['took 900ms'] },
+    });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'form_input',
+    arguments: { tabId: 1, ref: 'ref_1', value: 'x' },
+  });
+  const body = JSON.parse(response.result.content[0].text);
+  assert.equal(body.effects, 'applied');
+  assert.equal(body.evidence.mutations, 3);
+  assert.deepEqual(body.warnings, ['took 900ms']);
+});
+
+test('a failure carries a code, a hint and the side-effect flag', async (t) => {
+  const stack = await startStack('contract-error', (extension, message) => {
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      error: { message: 'ref ref_9 is no longer on the page. Re-read the page.', kind: 'error' },
+    });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'form_input',
+    arguments: { tabId: 1, ref: 'ref_9', value: 'x' },
+  });
+  assert.equal(response.result.isError, true);
+  const text = response.result.content[0].text;
+  assert.match(text, /code=ref_stale/);
+  assert.match(text, /effects=none/);
+  assert.match(text, /retryable=false/);
+  assert.match(text, /id=call_/);
+  assert.match(text, /hint: /);
+  assert.match(text, /no longer on the page/, 'the original message is kept');
+});
+
+test('a read retries a throttled renderer and succeeds on the third attempt', async (t) => {
+  let attempts = 0;
+  const stack = await startStack('retry-read', (extension, message) => {
+    attempts += 1;
+    if (attempts < 3) {
+      extension.send({
+        type: 'tool_response',
+        id: message.id,
+        error: { message: 'the renderer did not respond in time', kind: 'error' },
+      });
+      return;
+    }
+    extension.send({ type: 'tool_response', id: message.id, result: { url: 'https://a/', text: 'ok', nodes: 1 } });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', { name: 'read_page', arguments: { tabId: 1 } });
+  assert.equal(attempts, 3, 'three attempts, which is the read limit');
+  assert.notEqual(response.result.isError, true);
+  const text = response.result.content.map((b) => b.text).join('\n');
+  assert.match(text, /renderer_throttled, retrying/);
+});
+
+test('an input whose failure reports unknown effects is never retried', async (t) => {
+  let attempts = 0;
+  const stack = await startStack('retry-input', (extension, message) => {
+    attempts += 1;
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      error: { message: 'Browser did not respond within 120s.', kind: 'timeout' },
+    });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'computer',
+    arguments: { tabId: 1, action: 'left_click', coordinate: [1, 1] },
+  });
+  assert.equal(attempts, 1, 'a click that may have landed is not repeated');
+  assert.equal(response.result.isError, true);
+  assert.match(response.result.content[0].text, /code=timeout/);
+});
+
+test('a call carrying confirm is never retried', async (t) => {
+  let attempts = 0;
+  const stack = await startStack('retry-confirm', (extension, message) => {
+    attempts += 1;
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      error: { message: 'the renderer did not respond in time', kind: 'error' },
+    });
+  });
+  t.after(stack.stop);
+
+  await stack.mcp.request('tools/call', {
+    name: 'computer',
+    arguments: { tabId: 1, action: 'left_click', ref: 'ref_1', confirm: 'tok_abc' },
+  });
+  assert.equal(attempts, 1);
+});
+
+test('a javascript result is redacted by shape and capped', async (t) => {
+  const stack = await startStack('js-caps', (extension, message) => {
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      result: { result: { cookie: 'a=1; b=2', href: 'https://x.test/?q=1&r=2', big: 'x'.repeat(200000) }, type: 'object' },
+    });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'javascript',
+    arguments: { tabId: 1, code: '({})' },
+  });
+  const body = JSON.parse(response.result.content[0].text);
+  assert.equal(body.result.cookie, '[redacted]');
+  assert.equal(body.result.href, 'https://x.test/?q=1&r=2', 'a plain URL is untouched');
+  assert.ok(body.result.big.startsWith('xxxx'), 'the repeated letter is truncated, not blocked');
+  assert.ok(body.result.big.length < 200000);
+  assert.ok(body.warnings.some((w) => w.includes('200000')));
+  assert.ok(body.warnings.some((w) => w.includes('cookie')));
+});
+
+test('network URLs are clipped and the total is reported', async (t) => {
+  const long = 'https://cdn.example.com/' + 'p'.repeat(600);
+  const stack = await startStack('net-caps', (extension, message) => {
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      result: { requests: [{ url: long, status: 200, method: 'GET' }], total: 500, returned: 1 },
+    });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'read_network_requests',
+    arguments: { tabId: 1 },
+  });
+  const text = response.result.content.map((b) => b.text).join('\n');
+  assert.ok(!text.includes('p'.repeat(400)), 'the URL was clipped');
+  assert.match(text, /showing 1 of 500 requests/);
+  assert.match(text, /clipped to 300 characters/);
+});

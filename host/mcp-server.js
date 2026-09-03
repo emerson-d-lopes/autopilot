@@ -14,6 +14,8 @@ import { listBrowsers, pickDefault } from './registry.js';
 import { TOOLS, TOOL_NAMES } from './schemas.js';
 import { encodeGif } from './gif.js';
 import { normalizeCall } from '../extension/src/lib/aliases.js';
+import { toError, fromThrown, wrapResult, retryDecision, newCallId, contractLine, formatError } from './errors.js';
+import { applyCaps } from './redact.js';
 
 const CLIENT_ID = process.env.CHROME_MCP_CLIENT_ID || randomUUID();
 
@@ -121,7 +123,7 @@ const NOT_RUNNING =
   '  4. Chrome was restarted after registering the host.\n\n' +
   'Run `npm run doctor` in the chrome-mcp directory to check all four.';
 
-async function callBridge(type, payload, timeout = 120000) {
+async function callBridge(type, payload, timeout = 120000, callId = null) {
   try {
     await ensureLink();
   } catch (err) {
@@ -152,8 +154,41 @@ async function callBridge(type, payload, timeout = 120000) {
       reject(new Error('Browser did not respond within ' + timeout / 1000 + 's.'));
     }, timeout);
     pending.set(id, { resolve, reject, timer });
-    link.send({ ...payload, type, id, clientId: CLIENT_ID });
+    // callId is the correlation id. It travels with the request so the
+    // extension, the journal and the result all name the same call.
+    link.send({ ...payload, type, id, clientId: CLIENT_ID, callId });
   });
+}
+
+// ---------------------------------------------------------------------------
+// C4. Retry by side effect
+// ---------------------------------------------------------------------------
+
+/**
+ * Calls the bridge, and repeats the call only where the contract says a repeat
+ * cannot cause a second write. The decision is in host/errors.js so npm run
+ * doctor prints the same table this obeys.
+ */
+async function callWithRetry(tool, args, callId) {
+  let attempt = 0;
+  const notes = [];
+
+  for (;;) {
+    attempt += 1;
+    try {
+      return { result: await callBridge('tool_request', { tool, args }, 120000, callId), attempt, notes };
+    } catch (thrown) {
+      const error = fromThrown(thrown, { tool, id: callId });
+      const decision = retryDecision({ tool, args, error, attempt });
+      if (!decision.retry) {
+        error.attempts = attempt;
+        if (notes.length) error.retries = notes;
+        throw error;
+      }
+      notes.push('attempt ' + attempt + ' failed with ' + error.code + ', retrying (' + decision.reason + ')');
+      await new Promise((r) => setTimeout(r, decision.delayMs));
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +519,27 @@ function formatResult(toolName, result, args = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// C1. The contract, written into the reply
+// ---------------------------------------------------------------------------
+
+/**
+ * Tools whose reply is a rendered summary rather than the JSON body.
+ *
+ * Everything else falls through to JSON.stringify of the whole result, which
+ * already carries ok, effects, evidence, warnings and id, so a second copy in
+ * prose would only cost tokens.
+ */
+const PROSE_RESULTS = new Set([
+  'read_page', 'get_page_text', 'find', 'read_console_messages', 'read_network_requests',
+  'gif_creator', 'browser_batch', 'quick', 'shortcuts_execute',
+]);
+
+/** True when the contract fields need a line of their own. */
+function needsContractLine(toolName, result) {
+  return PROSE_RESULTS.has(toolName) || Boolean(result && result.image);
+}
+
+// ---------------------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------------------
 
@@ -502,13 +558,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     args = { ...args, actions: args.actions.map((a) => (a && a.name ? normalizeCall(a.name, a.input) : a)) };
   }
 
+  const callId = newCallId();
+
   if (!TOOL_NAMES.includes(name)) {
-    return { content: [textBlock('Unknown tool: ' + name)], isError: true };
+    return {
+      content: [textBlock(formatError(toError('bad_request', { message: 'Unknown tool: ' + name, id: callId })))],
+      isError: true,
+    };
   }
 
   try {
     if (name === 'list_connected_browsers' || name === 'select_browser' || name === 'switch_browser') {
-      return { content: await handleBrowserTool(name, args) };
+      const content = await handleBrowserTool(name, args);
+      const wrapped = wrapResult({ effects: 'none' }, { tool: name, args, id: callId });
+      return { content: [...content, textBlock(contractLine(wrapped))] };
     }
     if (name === 'file_upload' && Array.isArray(args.paths)) {
       args = { ...args, paths: prepareUploadPaths(args.paths) };
@@ -540,11 +603,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       delete args.filename;
       name = 'file_upload';
     }
-    const result = await callBridge('tool_request', { tool: name, args });
-    return { content: formatResult(name, result, args) };
+    const call = await callWithRetry(name, args, callId);
+
+    // S5, S6 and F2 run here, on the read path, so capture in the extension
+    // stays passive and every tool gets the same treatment whatever build the
+    // browser is on.
+    const capped = applyCaps(name, call.result);
+    const warnings = [...capped.warnings];
+    if (call.notes.length) warnings.push(...call.notes);
+
+    const wrapped = wrapResult(capped.result, { tool: name, args, id: callId, warnings });
+    const content = formatResult(name, wrapped, args);
+    if (needsContractLine(name, wrapped)) content.push(textBlock(contractLine(wrapped)));
+    return { content };
   } catch (err) {
-    const message = err && err.message ? err.message : String(err);
-    return { content: [textBlock(message)], isError: true };
+    const error = err && err.code && err.hint ? err : fromThrown(err, { tool: name, id: callId });
+    if (!error.id) error.id = callId;
+    return { content: [textBlock(formatError(error))], isError: true };
   }
 });
 
