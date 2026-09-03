@@ -70,3 +70,87 @@ test('setGroupStatus marks the group title and colour, and only when the state c
   assert.deepEqual(updates[2][1], { title: '\u274C chrome-mcp', color: 'red' });
   assert.equal(await tabs.setGroupStatus('nobody', 'done'), false, 'no group, nothing to mark');
 });
+
+// ---------------------------------------------------------------------------
+// Replacing a tab that can no longer be driven
+// ---------------------------------------------------------------------------
+
+/** A session holding one tab in group 42, ready to be replaced. */
+function scriptSession({ groupId = 43, tab = null } = {}) {
+  const dead = tab || { id: 11, url: 'https://x.test/home', groupId, windowId: 3, index: 2, status: 'complete' };
+  const created = { id: 12, url: dead.url, windowId: dead.windowId, status: 'complete' };
+  const log = { created: null, grouped: null, removed: [] };
+
+  stub.storage = {
+    local: {
+      async get() {
+        return { tabGroups: { sessionA: groupId } };
+      },
+      async set() {},
+    },
+  };
+  stub.tabGroups = {
+    TAB_GROUP_ID_NONE: -1,
+    async get() {
+      return { id: groupId };
+    },
+    async update() {},
+  };
+  stub.tabs = {
+    ...stub.tabs,
+    async get(id) {
+      if (id === dead.id) return dead;
+      if (id === created.id) return created;
+      throw new Error('No tab with id ' + id);
+    },
+    async create(props) {
+      log.created = props;
+      return created;
+    },
+    async group(props) {
+      log.grouped = props;
+      return props.groupId;
+    },
+    async remove(id) {
+      log.removed.push(id);
+    },
+    onUpdated: { addListener() {}, removeListener() {} },
+    onRemoved: { addListener() {} },
+  };
+  return { dead, created, log };
+}
+
+test('a dead session tab is replaced in the same group, unselected, and the old one closed', async () => {
+  const { log } = scriptSession();
+
+  const result = await tabs.replaceSessionTab(11);
+
+  assert.deepEqual(result, {
+    clientId: 'sessionA',
+    tabGroupId: 43,
+    oldTabId: 11,
+    newTabId: 12,
+    url: 'https://x.test/home',
+  });
+  assert.deepEqual(log.created, { windowId: 3, url: 'https://x.test/home', active: false, index: 2 });
+  assert.deepEqual(log.grouped, { tabIds: [12], groupId: 43 }, 'the replacement joins the session group');
+  assert.deepEqual(log.removed, [11], 'the tab that could not be driven is closed');
+});
+
+test('a tab no session owns is not replaced', async () => {
+  scriptSession({ groupId: 43, tab: { id: 11, url: 'https://x.test/', groupId: 99, windowId: 3, index: 0 } });
+  assert.equal(await tabs.replaceSessionTab(11), null, 'a tab outside the session group is left alone');
+});
+
+test('a tab that has already gone is not replaced', async () => {
+  scriptSession();
+  assert.equal(await tabs.replaceSessionTab(404), null);
+});
+
+test('sessionForTab names the session holding a tab', async () => {
+  scriptSession();
+  const found = await tabs.sessionForTab(11);
+  assert.equal(found.clientId, 'sessionA');
+  assert.equal(found.groupId, 43);
+  assert.equal(await tabs.sessionForTab(404), null);
+});

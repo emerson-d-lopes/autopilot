@@ -337,6 +337,11 @@ export const handlers = {
       await perms.checkPermission({ tool: 'navigate', url, toolUseId: ctx.toolUseId });
       await ensureAttached(tabId);
 
+      // A page with unsaved input can hold the navigation with a beforeunload
+      // dialog. Leaving is the caller's decision, so without force the dialog
+      // is dismissed, the tab stays, and the call says what the page asked.
+      cdp.setBeforeunloadPolicy(tabId, input.force ? 'accept' : 'dismiss');
+
       // Page.navigate reports why a load failed. chrome.tabs.update does not,
       // so a dead host or a refused connection looked like a successful
       // navigation onto Chrome's error page.
@@ -349,6 +354,9 @@ export const handlers = {
       }
       await tabsLib.waitForLoad(tabId);
       recorder.noteNavigation(tabId, url);
+
+      const dialog = cdp.takeBeforeunloadDialog(tabId);
+      if (dialog && !input.force) throw cdp.dialogOpenError(tabId, url, dialog);
 
       if (errorText) {
         throw new Error(

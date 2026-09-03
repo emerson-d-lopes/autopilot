@@ -54,6 +54,13 @@ export const TOOLS = [
       properties: {
         url: { type: 'string', description: 'Absolute or bare URL, or "back" / "forward".' },
         tabId: tabIdProp,
+        force: {
+          type: 'boolean',
+          description:
+            'Leave the page even when it asks to stay. A page with unsaved input can hold a navigation with a ' +
+            'beforeunload dialog; without force the dialog is dismissed, the tab stays put, and the call returns ' +
+            'dialog_open with the text the page showed.',
+        },
       },
       required: ['url', 'tabId'],
     },

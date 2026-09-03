@@ -298,6 +298,53 @@ export async function adoptTab(clientId, tabId) {
   return { tabId, tabGroupId: groupId };
 }
 
+/** The session whose group holds a tab, or null when no session owns it. */
+export async function sessionForTab(tabId) {
+  await loadGroups();
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return null;
+  }
+  if (tab.groupId === undefined || tab.groupId === null) return null;
+  for (const [clientId, groupId] of sessionGroups) {
+    if (groupId === tab.groupId) return { clientId, groupId, tab };
+  }
+  return null;
+}
+
+/**
+ * Replaces a session tab that can no longer be driven.
+ *
+ * A tab whose debugger attach is refused for good is dead to the agent while
+ * still holding the page the caller wanted. A fresh tab on the same URL joins
+ * the same group in the same window, unselected, and the dead one goes, so the
+ * session keeps its tab count and the caller gets an id it can act on. What is
+ * lost is page state: form input, scroll position and anything the page held in
+ * memory. Returns null when the tab belongs to no session, since replacing a
+ * tab the user owns is not this code's business.
+ */
+export async function replaceSessionTab(tabId) {
+  const found = await sessionForTab(tabId);
+  if (!found) return null;
+  const { clientId, groupId, tab } = found;
+  const url = tab.url && tab.url !== 'chrome://newtab/' ? tab.url : 'about:blank';
+
+  const created = await chrome.tabs.create({
+    windowId: tab.windowId,
+    url,
+    active: false,
+    index: tab.index,
+  });
+  await chrome.tabs.group({ tabIds: [created.id], groupId });
+  cdp.forgetTab(tabId);
+  await chrome.tabs.remove(tabId).catch(() => {});
+  if (url !== 'about:blank') await waitForLoad(created.id, 15000);
+
+  return { clientId, tabGroupId: groupId, oldTabId: tabId, newTabId: created.id, url };
+}
+
 export async function releaseSession(clientId, { closeEmptyOnly = true } = {}) {
   const tabs = await listGroupTabs(clientId);
   let toClose = closeEmptyOnly
