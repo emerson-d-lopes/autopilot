@@ -4,9 +4,19 @@ import { installChromeStub } from './chrome-stub.js';
 
 installChromeStub();
 
-const { targetDimensions, estimateTokens, PX_PER_TOKEN, MAX_TARGET_PX, DEFAULT_MAX_TOKENS } = await import(
-  '../extension/src/lib/screenshot.js'
-);
+const {
+  targetDimensions,
+  estimateTokens,
+  PX_PER_TOKEN,
+  MAX_TARGET_PX,
+  DEFAULT_MAX_TOKENS,
+  noteInput,
+  lastInputAt,
+  needsPaintWait,
+  clearInputMark,
+  PAINT_WAIT_WINDOW_MS,
+  PAINT_CEILING_MS,
+} = await import('../extension/src/lib/screenshot.js');
 
 test('a tall viewport is bounded by the default token budget, not just the long edge', () => {
   // 1568x1411 sits under the long-edge cap and still costs about 2800 tokens.
@@ -67,4 +77,44 @@ test('degenerate sizes never produce a zero dimension', () => {
   const t = targetDimensions(1, 10000);
   assert.ok(t.width >= 1);
   assert.ok(t.height >= 1);
+});
+
+// ---------------------------------------------------------------------------
+// R3: the repaint clock
+// ---------------------------------------------------------------------------
+//
+// A screenshot in the same round trip as a click showed the pre-click frame on
+// TodoMVC, twice. The capture cannot tell whether it is inside a batch, so it
+// keys off when the tab was last acted on instead.
+
+test('a tab nothing has touched needs no repaint wait', () => {
+  clearInputMark(99);
+  assert.equal(needsPaintWait(99), false);
+  assert.equal(lastInputAt(99), 0);
+});
+
+test('an input just dispatched makes the next capture wait for a paint', () => {
+  const now = 1_000_000;
+  noteInput(98, now);
+  assert.equal(lastInputAt(98), now);
+  assert.equal(needsPaintWait(98, now + 10), true);
+  assert.equal(needsPaintWait(98, now + 120), true, 'still inside the window a batch runs in');
+});
+
+test('an input from a previous turn does not make a fresh screenshot wait', () => {
+  const now = 2_000_000;
+  noteInput(97, now);
+  assert.equal(needsPaintWait(97, now + PAINT_WAIT_WINDOW_MS + 1), false);
+});
+
+test('the mark is per tab, so one tab acting does not slow a capture on another', () => {
+  clearInputMark(96);
+  noteInput(95, 3_000_000);
+  assert.equal(needsPaintWait(96, 3_000_010), false);
+  assert.equal(needsPaintWait(95, 3_000_010), true);
+});
+
+test('the paint wait is bounded, so a page that never paints costs a fixed amount', () => {
+  assert.equal(PAINT_CEILING_MS, 300);
+  assert.ok(PAINT_CEILING_MS < PAINT_WAIT_WINDOW_MS);
 });

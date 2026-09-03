@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTree, scoreCandidates, stripUrlAttributes } from '../extension/src/lib/find.js';
+import {
+  parseTree,
+  scoreCandidates,
+  stripUrlAttributes,
+  shouldWiden,
+  WIDEN_BELOW_SCORE,
+} from '../extension/src/lib/find.js';
 
 const TREE = [
   'navigation [ref_1]',
@@ -168,4 +174,65 @@ test('duplicates collapse only for links to the same place', () => {
   assert.equal(links[0].count, 2);
   const buttons = scoreCandidates(tree, 'add to cart button');
   assert.equal(buttons.filter((m) => m.name === 'Add to cart').length, 3, 'every button stays addressable');
+});
+
+// ---------------------------------------------------------------------------
+// W3: the irreversible mark survives the tree parse
+// ---------------------------------------------------------------------------
+
+test('parseTree reads the irreversible mark without losing the role or the ref', () => {
+  const nodes = parseTree(
+    [
+      'button "Send" [irreversible] [ref_1] type=submit',
+      'button "Save draft" [ref_2]',
+      'link "Delete account" [irreversible] [ref_3] (offscreen) href=/settings',
+    ].join('\n')
+  );
+
+  assert.equal(nodes.length, 3);
+  assert.equal(nodes[0].role, 'button');
+  assert.equal(nodes[0].name, 'Send');
+  assert.equal(nodes[0].ref, 'ref_1');
+  assert.equal(nodes[0].irreversible, true);
+  assert.match(nodes[0].attrs, /type=submit/);
+  assert.equal(nodes[1].irreversible, false);
+  assert.equal(nodes[2].irreversible, true);
+  assert.equal(nodes[2].offscreen, true, 'the offscreen mark still parses alongside it');
+});
+
+test('a match carries the irreversible flag so the model sees it before clicking', () => {
+  const matches = scoreCandidates('button "Send message" [irreversible] [ref_9]', 'send message button', 5);
+  assert.equal(matches[0].ref, 'ref_9');
+  assert.equal(matches[0].irreversible, true);
+});
+
+// ---------------------------------------------------------------------------
+// P5: when the interactive filter is the wrong scope
+// ---------------------------------------------------------------------------
+
+const TABLE_PAGE_INTERACTIVE = [
+  'link "Elemental Selenium" [ref_1] href=/',
+  'link "Fork me" [ref_2] href=/gh',
+].join('\n');
+
+test('a query naming a table cell widens past the interactive filter', () => {
+  const matches = scoreCandidates(TABLE_PAGE_INTERACTIVE, 'table cell containing 50.20', 20);
+  const reason = shouldWiden({ query: 'table cell containing 50.20', matches, searched: 2 });
+  assert.equal(reason, 'query names a non-interactive role');
+});
+
+test('a page with almost nothing interactive widens even for a plain query', () => {
+  const matches = scoreCandidates(TABLE_PAGE_INTERACTIVE, 'the price of the third row', 20);
+  assert.ok(shouldWiden({ query: 'the price of the third row', matches, searched: 2 }));
+});
+
+test('a modal whose close control is styled text widens rather than reporting no match', () => {
+  const matches = scoreCandidates('link "Elemental Selenium" [ref_1] href=/', 'Close', 20);
+  assert.equal(shouldWiden({ query: 'Close', matches, searched: 2 }), 'no interactive node matched');
+});
+
+test('an ordinary page with a good interactive match is not widened', () => {
+  const matches = scoreCandidates(TREE, 'sign in button', 20);
+  assert.ok(matches[0].score >= WIDEN_BELOW_SCORE, 'the match is confident: ' + matches[0].score);
+  assert.equal(shouldWiden({ query: 'sign in button', matches, searched: 15 }), null);
 });

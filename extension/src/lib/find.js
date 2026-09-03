@@ -34,7 +34,21 @@ const ROLE_HINTS = [
   { words: ['dialog', 'modal', 'popup'], roles: ['dialog'] },
 ];
 
-const LINE_RE = /^(\s*)([a-zA-Z][\w-]*)\s*(?:"((?:[^"\\]|\\.)*)")?\s*\[(ref_\d+)\]\s*(\(offscreen\))?\s*(.*)$/;
+// The optional [irreversible] mark sits between the name and the ref, which is
+// where the tree writes it.
+const LINE_RE =
+  /^(\s*)([a-zA-Z][\w-]*)\s*(?:"((?:[^"\\]|\\.)*)")?\s*(\[irreversible\])?\s*\[(ref_\d+)\]\s*(\(offscreen\))?\s*(.*)$/;
+
+/**
+ * Best score below which `find` widens from the interactive filter to the whole
+ * tree (P5). A page whose target is a table cell, a paragraph or a modal's
+ * close text has no interactive node to match, and the interactive filter
+ * reported two candidates on a page with more than nine thousand cells.
+ */
+export const WIDEN_BELOW_SCORE = 3;
+
+/** Below this share of the page's nodes, a search says how little it covered. */
+export const NARROW_SCOPE_RATIO = 0.1;
 
 /** Drops href and src values, whose long URLs produce spurious substring hits. */
 export function stripUrlAttributes(attrs) {
@@ -49,7 +63,7 @@ export function parseTree(text) {
   for (const line of text.split('\n')) {
     const match = LINE_RE.exec(line);
     if (!match) continue;
-    const [, indent, role, rawName, ref, offscreen, attrs] = match;
+    const [, indent, role, rawName, irreversible, ref, offscreen, attrs] = match;
     let name = '';
     if (rawName !== undefined) {
       try {
@@ -68,6 +82,7 @@ export function parseTree(text) {
       // scores a Donate link whose href contains "wmf_medium=sidebar".
       matchableAttrs: stripUrlAttributes(attrString),
       offscreen: Boolean(offscreen),
+      irreversible: Boolean(irreversible),
       depth: Math.floor(indent.length / 2),
       line: line.trim(),
     });
@@ -217,6 +232,34 @@ export function scoreCandidates(treeText, query, limit = 20) {
     name: n.name,
     attrs: n.attrs || undefined,
     offscreen: n.offscreen || undefined,
+    // Carried through so a caller sees before it clicks that the control sends,
+    // posts, deletes or pays.
+    irreversible: n.irreversible || undefined,
     score: n.score,
   }));
+}
+
+/**
+ * Whether a search over the interactive filter should be repeated over the
+ * whole tree (P5).
+ *
+ * Three shapes make the interactive filter the wrong scope. A query naming a
+ * structural role (a table cell, a row, a heading, a paragraph) has no
+ * interactive node to hit. A page whose content is a table has almost no
+ * interactive nodes at all, which is how a nine-thousand-cell page reported two
+ * candidates. And a modal built out of styled text rather than buttons has its
+ * dismiss control outside the filter.
+ */
+const STRUCTURAL_QUERY_WORDS = [
+  'cell', 'row', 'column', 'table', 'heading', 'title', 'text', 'paragraph',
+  'label', 'caption', 'value', 'price', 'containing', 'contains', 'says',
+];
+
+export function shouldWiden({ query, matches, searched }) {
+  const tokens = tokenize(query);
+  if (tokens.some((t) => STRUCTURAL_QUERY_WORDS.includes(t))) return 'query names a non-interactive role';
+  if (!matches.length) return 'no interactive node matched';
+  if (matches[0].score < WIDEN_BELOW_SCORE) return 'best interactive match scored low';
+  if (searched < 10) return 'the interactive filter left almost nothing to search';
+  return null;
 }
