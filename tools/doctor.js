@@ -1,0 +1,159 @@
+#!/usr/bin/env node
+// Checks every link in the chain and reports the first one that is broken.
+
+import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import os from 'node:os';
+import { connect } from '../host/ipc.js';
+import { listBrowsers } from '../host/registry.js';
+import { TOOL_NAMES } from '../host/schemas.js';
+import { JOURNAL_DIR } from '../host/journal.js';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const HOST_NAME = 'com.chromemcp.host';
+
+const results = [];
+function check(label, ok, detail) {
+  results.push({ label, ok, detail });
+  console.log((ok ? '  ok   ' : '  FAIL ') + label + (detail ? '\n         ' + detail : ''));
+}
+
+console.log('chrome-mcp doctor\n');
+
+// 1. Extension identity
+const idPath = join(ROOT, '.keys', 'extension-id.txt');
+const hasId = existsSync(idPath);
+const extId = hasId ? readFileSync(idPath, 'utf8').trim() : null;
+check('extension key generated', hasId, hasId ? 'id ' + extId : 'run: npm run keygen');
+
+const manifestPath = join(ROOT, 'extension', 'manifest.json');
+let manifestHasKey = false;
+if (existsSync(manifestPath)) {
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  manifestHasKey = Boolean(manifest.key);
+}
+check('manifest carries the pinned key', manifestHasKey, manifestHasKey ? null : 'run: npm run keygen');
+
+// 2. Native messaging host manifest
+const hostManifestPath = join(ROOT, 'host', HOST_NAME + '.json');
+const hasHostManifest = existsSync(hostManifestPath);
+check('native host manifest written', hasHostManifest, hasHostManifest ? hostManifestPath : 'run: npm run install-host');
+
+let wrapperPath = null;
+if (hasHostManifest) {
+  const hostManifest = JSON.parse(readFileSync(hostManifestPath, 'utf8'));
+  wrapperPath = hostManifest.path;
+  const wrapperExists = existsSync(wrapperPath);
+  check('host wrapper exists', wrapperExists, wrapperPath);
+
+  const originOk = hostManifest.allowed_origins?.[0] === 'chrome-extension://' + extId + '/';
+  check('manifest allows this extension id', originOk, originOk ? null : 'allowed_origins does not match .keys/extension-id.txt; re-run npm run install-host');
+
+  if (wrapperExists && process.platform === 'win32') {
+    const content = readFileSync(wrapperPath, 'utf8');
+    const match = content.match(/"([^"]*node\.exe)"/i);
+    const nodeOk = match ? existsSync(match[1]) : false;
+    check(
+      'wrapper points at a real node binary',
+      nodeOk,
+      match ? match[1] : 'no absolute node path found; re-run npm run install-host'
+    );
+  }
+}
+
+// 3. Browser registration
+if (process.platform === 'win32') {
+  const keys = [
+    ['Chrome', 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\' + HOST_NAME],
+    ['Edge', 'HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\' + HOST_NAME],
+    ['Brave', 'HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\' + HOST_NAME],
+  ];
+  let any = false;
+  for (const [name, key] of keys) {
+    try {
+      // reg writes to stderr before exiting non-zero for a missing key, and a
+      // browser that is simply not installed is not worth printing noise for.
+      const out = execFileSync('reg', ['query', key, '/ve'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const value = (out.match(/REG_SZ\s+(.+)/) || [])[1]?.trim();
+      const ok = value && existsSync(value);
+      check(name + ' registration', ok, value);
+      any = any || ok;
+    } catch {
+      /* not registered for this browser */
+    }
+  }
+  if (!any) check('any browser registered', false, 'run: npm run install-host');
+} else {
+  const home = os.homedir();
+  const dirs =
+    process.platform === 'darwin'
+      ? [
+          join(home, 'Library/Application Support/Google/Chrome/NativeMessagingHosts'),
+          join(home, 'Library/Application Support/Microsoft Edge/NativeMessagingHosts'),
+        ]
+      : [join(home, '.config/google-chrome/NativeMessagingHosts'), join(home, '.config/chromium/NativeMessagingHosts')];
+  let any = false;
+  for (const dir of dirs) {
+    const file = join(dir, HOST_NAME + '.json');
+    if (existsSync(file)) {
+      check('registered at ' + file, true);
+      any = true;
+    }
+  }
+  if (!any) check('any browser registered', false, 'run: npm run install-host');
+}
+
+// 4. Live bridge
+const browsers = await listBrowsers();
+check(
+  'a browser is connected',
+  browsers.length > 0,
+  browsers.length
+    ? browsers.map((b) => b.name + ' ' + b.version + ' (' + b.id + ')').join(', ')
+    : 'no browser is running with the extension loaded and enabled'
+);
+
+if (browsers.length > 1) {
+  console.log('         several browsers are connected, so a session must call select_browser');
+}
+
+for (const browser of browsers) {
+  try {
+    const link = await connect(browser.socket);
+    const status = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), 2000);
+      link.on('message', (message) => {
+        if (message.type === 'browser_status') {
+          clearTimeout(timer);
+          resolve(message);
+        }
+      });
+    });
+    link.end();
+    check(
+      browser.name + ' extension is attached',
+      Boolean(status && status.connected),
+      status && status.connected
+        ? 'extension v' + (status.extensionVersion || '?') + ', ' + status.tools.length + ' handlers, ' + TOOL_NAMES.length + ' tools advertised'
+        : 'reload the extension at chrome://extensions'
+    );
+  } catch (err) {
+    check(browser.name + ' extension is attached', false, err.message);
+  }
+}
+
+const failed = results.filter((r) => !r.ok);
+console.log('');
+if (!failed.length) {
+  console.log('Action journal: ' + JOURNAL_DIR + '  (npm run log)');
+  console.log('All checks passed. Add the server with:');
+  console.log('  claude mcp add chrome-mcp -- node "' + join(ROOT, 'host', 'mcp-server.js') + '"');
+} else {
+  console.log(failed.length + ' check(s) failed. Fix the first one listed above.');
+  process.exitCode = 1;
+}

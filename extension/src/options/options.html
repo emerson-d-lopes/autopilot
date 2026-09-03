@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Lantern settings</title>
+    <link rel="stylesheet" href="../ui/tokens.css" />
+    <link rel="stylesheet" href="../ui/components.css" />
+    <link rel="stylesheet" href="../ui/lantern.css" />
+    <style>
+      body {
+        padding: var(--al-space-12) var(--al-space-8);
+        max-width: 680px;
+        margin: 0 auto;
+      }
+      .lede {
+        margin: var(--al-space-3) 0 0;
+        color: var(--al-color-text-muted);
+      }
+      .textarea {
+        width: 100%;
+        min-height: 110px;
+        resize: vertical;
+        font-family: var(--al-font-family-mono);
+        font-size: var(--al-font-size-xs);
+      }
+      .grants li .meta {
+        color: var(--al-color-text-faint);
+        font-size: var(--al-font-size-xs);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand">
+      <img src="../../icons/icon-48.png" alt="" />
+      <h1>Lantern</h1>
+      <span class="version" id="version"></span>
+    </div>
+    <p class="lede">What the agent may do in this browser. These checks run inside the extension, so a client cannot bypass them.</p>
+
+    <div class="section">
+      <h2>Permission mode</h2>
+      <label class="choice">
+        <input type="radio" name="mode" value="allow" />
+        <span>Allow, with blocklist<span class="desc">Default. Any site works except the blocked hosts below.</span></span>
+      </label>
+      <label class="choice">
+        <input type="radio" name="mode" value="ask" />
+        <span>Require a grant per site<span class="desc">Acting on a site needs an entry under Granted sites. Reading and localhost stay allowed.</span></span>
+      </label>
+      <label class="choice">
+        <input type="radio" name="mode" value="skip_all_permission_checks" />
+        <span>Skip grant checks<span class="desc">Grants are not consulted. The blocklist still applies.</span></span>
+      </label>
+    </div>
+
+    <div class="section">
+      <h2>Blocked hosts</h2>
+      <p>One host per line. A leading <code>*.</code> matches subdomains. Blocked hosts are refused for reading as well as acting.</p>
+      <textarea class="textarea" id="blocked" spellcheck="false"></textarea>
+    </div>
+
+    <div class="section">
+      <h2>Allowed hosts</h2>
+      <p>Overrides the blocklist, for cases like a payment provider's sandbox.</p>
+      <textarea class="textarea" id="allowed" spellcheck="false"></textarea>
+    </div>
+
+    <div class="section">
+      <h2>Shortcuts</h2>
+      <p>Named quick scripts, one per block. Run them with <code>shortcuts_execute</code>. A block is a first line <code>id | name | description</code>, then the script lines. Blocks are separated by a blank line.</p>
+      <textarea class="textarea" id="shortcuts" spellcheck="false" style="min-height: 150px"></textarea>
+    </div>
+
+    <div class="section">
+      <h2>Granted sites</h2>
+      <ul class="list grants" id="grants"></ul>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="save">Save</button>
+      <button class="btn btn-ghost" id="reset">Restore defaults</button>
+      <span class="toast" id="saved">Saved</span>
+    </div>
+
+    <script src="options.js"></script>
+  </body>
+</html>

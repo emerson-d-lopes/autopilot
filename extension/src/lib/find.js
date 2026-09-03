@@ -1,0 +1,222 @@
+// Natural-language element lookup.
+//
+// Claude in Chrome answers find() with a nested Sonnet call over the tree. That
+// costs a second inference on every lookup. Scoring locally returns in under a
+// millisecond, and for the queries find actually receives ("the login button",
+// "search bar", "price of the second result") lexical scoring against role plus
+// accessible name resolves the same element.
+
+const STOPWORDS = new Set([
+  'the', 'a', 'an', 'to', 'for', 'of', 'on', 'in', 'at', 'with', 'that', 'this',
+  'and', 'or', 'my', 'me', 'i', 'is', 'are', 'be', 'it', 'its', 'please', 'find',
+  'click', 'get', 'element', 'containing', 'contains', 'named', 'called', 'labeled',
+]);
+
+/** Words in a query that imply a role rather than a name. */
+const ROLE_HINTS = [
+  { words: ['button', 'btn', 'submit'], roles: ['button'] },
+  { words: ['link', 'anchor', 'href'], roles: ['link'] },
+  { words: ['searchbar', 'search'], roles: ['searchbox', 'textbox'] },
+  { words: ['field', 'input', 'textbox', 'textarea', 'box'], roles: ['textbox', 'searchbox', 'spinbutton'] },
+  { words: ['checkbox', 'check'], roles: ['checkbox'] },
+  { words: ['radio'], roles: ['radio'] },
+  { words: ['dropdown', 'select', 'combobox', 'picker'], roles: ['combobox', 'listbox'] },
+  { words: ['option', 'item'], roles: ['option', 'listitem', 'menuitem'] },
+  { words: ['heading', 'header', 'title'], roles: ['heading'] },
+  { words: ['image', 'img', 'picture', 'photo'], roles: ['img'] },
+  { words: ['tab'], roles: ['tab'] },
+  { words: ['menu', 'menuitem'], roles: ['menuitem'] },
+  { words: ['toggle', 'switch'], roles: ['switch', 'checkbox'] },
+  { words: ['slider'], roles: ['slider'] },
+  { words: ['row'], roles: ['row'] },
+  { words: ['cell'], roles: ['cell', 'gridcell'] },
+  { words: ['form'], roles: ['form'] },
+  { words: ['dialog', 'modal', 'popup'], roles: ['dialog'] },
+];
+
+const LINE_RE = /^(\s*)([a-zA-Z][\w-]*)\s*(?:"((?:[^"\\]|\\.)*)")?\s*\[(ref_\d+)\]\s*(\(offscreen\))?\s*(.*)$/;
+
+/** Drops href and src values, whose long URLs produce spurious substring hits. */
+export function stripUrlAttributes(attrs) {
+  return String(attrs || '')
+    .replace(/\b(?:href|src)=(?:"(?:[^"\\]|\\.)*"|\S*)/g, ' ')
+    .trim();
+}
+
+export function parseTree(text) {
+  const nodes = [];
+  if (!text) return nodes;
+  for (const line of text.split('\n')) {
+    const match = LINE_RE.exec(line);
+    if (!match) continue;
+    const [, indent, role, rawName, ref, offscreen, attrs] = match;
+    let name = '';
+    if (rawName !== undefined) {
+      try {
+        name = JSON.parse('"' + rawName + '"');
+      } catch {
+        name = rawName;
+      }
+    }
+    const attrString = attrs ? attrs.trim() : '';
+    nodes.push({
+      ref,
+      role,
+      name,
+      attrs: attrString,
+      // URLs are excluded from matching. A query for "the search bar" otherwise
+      // scores a Donate link whose href contains "wmf_medium=sidebar".
+      matchableAttrs: stripUrlAttributes(attrString),
+      offscreen: Boolean(offscreen),
+      depth: Math.floor(indent.length / 2),
+      line: line.trim(),
+    });
+  }
+  return nodes;
+}
+
+function tokenize(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+    .split(/[\s-]+/)
+    .filter(Boolean);
+}
+
+function contentTokens(tokens) {
+  const filtered = tokens.filter((t) => !STOPWORDS.has(t));
+  return filtered.length ? filtered : tokens;
+}
+
+function roleHintsFor(tokens) {
+  const roles = new Set();
+  const consumed = new Set();
+  for (const hint of ROLE_HINTS) {
+    for (const word of hint.words) {
+      if (tokens.includes(word)) {
+        hint.roles.forEach((r) => roles.add(r));
+        consumed.add(word);
+      }
+    }
+  }
+  return { roles, consumed };
+}
+
+/**
+ * Scores one node against the query terms.
+ * Name matches dominate, role agreement breaks ties, and an offscreen element
+ * loses to an equivalent visible one.
+ */
+function scoreNode(node, { phrase, terms, roles, consumed }) {
+  const name = (node.name || '').toLowerCase();
+  const attrWords = new Set(tokenize(node.matchableAttrs || ''));
+  const nameWords = tokenize(name);
+  let score = 0;
+
+  // A query that names the control's type ("file input", "email field",
+  // "password box") is about that type, and a file input is rendered as a
+  // button, so the type has to be able to satisfy the role hint on its own.
+  const typeMatch = /\btype=(\S+)/.exec(node.matchableAttrs || '');
+  const type = typeMatch ? typeMatch[1].toLowerCase() : '';
+  const typeHit = Boolean(type) && terms.includes(type);
+  if (typeHit) score += 3;
+
+  if (name && name === phrase) score += 10;
+  else if (name && name.includes(phrase) && phrase.length > 2) score += 5;
+
+  let matchedTerms = 0;
+  let roleWordInName = false;
+  for (const term of terms) {
+    if (consumed.has(term) && terms.length > 1) {
+      // A role word that is also the element's name ("Search" for "search
+      // box") still identifies it, just less strongly than a distinct name.
+      if (nameWords.includes(term)) {
+        score += 1.5;
+        roleWordInName = true;
+      }
+      continue;
+    }
+    let best = 0;
+    for (const word of nameWords) {
+      if (word === term) best = Math.max(best, 2.5);
+      else if (word.startsWith(term) && term.length >= 3) best = Math.max(best, 1.6);
+      else if (word.includes(term) && term.length >= 4) best = Math.max(best, 1.0);
+    }
+    // Whole words only. Substring matching against attributes was the source of
+    // matches that shared no meaning with the query.
+    if (best === 0 && attrWords.has(term)) best = 0.7;
+    if (best > 0) matchedTerms++;
+    score += best;
+  }
+
+  const meaningful = terms.filter((t) => !consumed.has(t));
+  if (meaningful.length && matchedTerms === 0 && roles.size === 0) return 0;
+  if (meaningful.length && matchedTerms === 0 && roles.size > 0) {
+    // Role-only query such as "the submit button" with no distinguishing name.
+    score += 0.2;
+  }
+
+  if (roles.size) {
+    if (roles.has(node.role) || typeHit) score += 3;
+    else if (!roleWordInName) score -= 1.2;
+  }
+
+  if (node.offscreen) score -= 0.8;
+  if (!node.name) score -= 0.6;
+  if (meaningful.length && matchedTerms === meaningful.length) score += 1.5;
+
+  return score;
+}
+
+/**
+ * Ranks tree nodes against a natural-language query.
+ * @param {string} treeText output of the accessibility tree renderer
+ * @param {string} query
+ * @param {number} limit
+ */
+export function scoreCandidates(treeText, query, limit = 20) {
+  const nodes = parseTree(treeText);
+  const rawTokens = tokenize(query);
+  const terms = contentTokens(rawTokens);
+  const { roles, consumed } = roleHintsFor(rawTokens);
+  const phrase = String(query || '').toLowerCase().trim();
+
+  const scored = [];
+  for (const node of nodes) {
+    const score = scoreNode(node, { phrase, terms, roles, consumed });
+    if (score > 0.5) scored.push({ ...node, score: Math.round(score * 100) / 100 });
+  }
+
+  scored.sort((a, b) => b.score - a.score || a.depth - b.depth);
+
+  // A page with the same label link on every row would otherwise fill the
+  // whole result with copies of one element. The first is kept and the
+  // rest counted, so other candidates stay visible.
+  // Only links to the same place collapse. Ten "Add to cart" buttons with
+  // nothing to tell them apart are ten targets, and the caller may want the
+  // third one.
+  const seen = new Map();
+  const unique = [];
+  for (const n of scored) {
+    const href = /\bhref=(\S+)/.exec(n.attrs || '');
+    const key = href ? n.role + '\u0000' + n.name + '\u0000' + href[1] : null;
+    const first = key ? seen.get(key) : null;
+    if (first) {
+      first.count++;
+      continue;
+    }
+    n.count = 1;
+    if (key) seen.set(key, n);
+    unique.push(n);
+  }
+
+  return unique.slice(0, limit).map((n) => ({
+    count: n.count,
+    ref: n.ref,
+    role: n.role,
+    name: n.name,
+    attrs: n.attrs || undefined,
+    offscreen: n.offscreen || undefined,
+    score: n.score,
+  }));
+}

@@ -1,0 +1,214 @@
+/* Lantern: the few styles the extension's pages need on top of Ash Lumen.
+   Tokens and components come from tokens.css and components.css, copied from
+   the ash-lumen package. Everything here is layout and motion. */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--al-color-bg);
+  color: var(--al-color-text);
+  font-family: var(--al-font-family-sans);
+  font-size: var(--al-font-size-sm);
+  line-height: var(--al-line-height-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--al-color-text);
+}
+
+code,
+.mono {
+  font-family: var(--al-font-family-mono);
+  font-size: var(--al-font-size-xs);
+}
+
+/* Header with the mark and the name */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--al-space-3);
+}
+
+.brand img {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--al-radius-md);
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: var(--al-font-size-lg);
+  font-weight: var(--al-font-weight-semibold);
+  color: var(--al-color-text);
+  letter-spacing: -0.01em;
+}
+
+.brand .version {
+  color: var(--al-color-text-faint);
+  font-family: var(--al-font-family-mono);
+  font-size: var(--al-font-size-xs);
+}
+
+.muted {
+  color: var(--al-color-text-muted);
+}
+
+.faint {
+  color: var(--al-color-text-faint);
+}
+
+/* Status dot: a still point when idle, a slow breath while working */
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--al-radius-full);
+  background: var(--al-color-text-faint);
+  vertical-align: middle;
+  transition: background var(--al-transition-normal);
+}
+
+.dot.connected {
+  background: var(--al-color-success);
+}
+
+.dot.error {
+  background: var(--al-color-error);
+}
+
+.dot.working {
+  background: var(--al-color-text);
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+/* Lists */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.list li {
+  display: flex;
+  align-items: center;
+  gap: var(--al-space-3);
+  padding: var(--al-space-2) 0;
+  border-top: 1px solid var(--al-color-border-subtle);
+  animation: rise var(--al-transition-normal) both;
+}
+
+.list li:first-child {
+  border-top: 0;
+}
+
+.list .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Sections on the settings page */
+.section {
+  margin-top: var(--al-space-8);
+}
+
+.section h2 {
+  margin: 0 0 var(--al-space-2);
+  font-size: var(--al-font-size-xs);
+  font-weight: var(--al-font-weight-medium);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--al-color-text-faint);
+}
+
+.section p {
+  margin: 0 0 var(--al-space-3);
+  color: var(--al-color-text-muted);
+}
+
+.choice {
+  display: flex;
+  gap: var(--al-space-3);
+  align-items: flex-start;
+  padding: var(--al-space-3);
+  border: 1px solid var(--al-color-border);
+  border-radius: var(--al-radius-md);
+  margin-bottom: var(--al-space-2);
+  cursor: pointer;
+  transition: border-color var(--al-transition-fast), background var(--al-transition-fast);
+}
+
+.choice:hover {
+  background: var(--al-color-surface);
+}
+
+.choice:has(input:checked) {
+  border-color: var(--al-color-accent);
+}
+
+.choice input {
+  margin: 3px 0 0;
+  accent-color: var(--al-color-accent);
+}
+
+.choice .desc {
+  display: block;
+  color: var(--al-color-text-muted);
+  font-size: var(--al-font-size-xs);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--al-space-2);
+  margin-top: var(--al-space-6);
+}
+
+.toast {
+  color: var(--al-color-text-muted);
+  opacity: 0;
+  transition: opacity var(--al-transition-normal);
+}
+
+.toast.show {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot.working {
+    animation: none;
+    opacity: 1;
+  }
+  .list li {
+    animation: none;
+  }
+}

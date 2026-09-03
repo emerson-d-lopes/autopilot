@@ -1,0 +1,172 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>chrome-mcp fixture</title>
+    <style>
+      body { font: 15px/1.5 system-ui, sans-serif; margin: 40px; max-width: 700px; }
+      .tall { height: 1400px; }
+      #result { padding: 8px; border: 1px solid #ccc; margin-top: 12px; min-height: 22px; }
+      button { padding: 8px 14px; font: inherit; }
+      input, select { padding: 6px; font: inherit; display: block; margin: 6px 0; }
+      #below { margin-top: 40px; }
+      fieldset { margin: 18px 0; border: 1px solid #ddd; }
+      #ctx { padding: 20px; background: #eef; width: 220px; }
+      #dblarea { padding: 20px; background: #efe; width: 220px; }
+      #slider-track { position: relative; width: 300px; height: 24px; background: #ddd; margin: 10px 0; }
+      #slider-thumb { position: absolute; top: 0; left: 0; width: 24px; height: 24px; background: #557; }
+      #dropzone { width: 260px; height: 80px; border: 2px dashed #999; display: flex; align-items: center; justify-content: center; }
+      #draggable { width: 120px; padding: 10px; background: #fe9; cursor: grab; }
+    </style>
+  </head>
+  <body>
+    <nav><a href="#top">Home</a> <a href="/other.html">Other page</a></nav>
+    <main>
+      <h1>Checkout</h1>
+      <p>A fixture page for driving the bridge end to end.</p>
+
+      <form id="form">
+        <label for="email">Email address</label>
+        <input id="email" type="email" placeholder="you@example.com" />
+
+        <label for="qty">Quantity</label>
+        <input id="qty" type="number" value="1" />
+
+        <label for="country">Country</label>
+        <select id="country">
+          <option value="br">Brazil</option>
+          <option value="us">United States</option>
+          <option value="pt">Portugal</option>
+        </select>
+
+        <label><input type="checkbox" id="terms" /> I accept the terms</label>
+
+        <button type="button" id="submit">Place order</button>
+      </form>
+
+      <div id="result"></div>
+
+      <button id="log-error" type="button">Trigger an error</button>
+      <button id="fetch" type="button">Make a request</button>
+
+      <fieldset>
+        <legend>Pointer actions</legend>
+        <div id="ctx" tabindex="0">Right click target</div>
+        <div id="dblarea" tabindex="0">Double click target</div>
+        <div id="slider-track"><div id="slider-thumb"></div></div>
+        <div>slider value: <span id="slider-value">0</span></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Native drag and drop</legend>
+        <div id="draggable" draggable="true">Drag me</div>
+        <div id="dropzone">Drop here</div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Keystroke sensitive input</legend>
+        <label for="autocomplete">Autocomplete</label>
+        <input id="autocomplete" type="text" autocomplete="off" />
+        <div>keystrokes seen: <span id="keycount">0</span></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>File upload</legend>
+        <label for="file">Attach a file</label>
+        <input id="file" type="file" />
+        <label for="files">Attach several files</label>
+        <input id="files" type="file" multiple />
+        <div id="fileinfo">no file</div>
+        <div id="filesinfo">no files</div>
+      </fieldset>
+
+      <div class="tall"></div>
+      <button id="below" type="button">Button below the fold</button>
+    </main>
+
+    <script>
+      console.log('[fixture] page ready');
+      const out = (t) => { document.getElementById('result').textContent = t; };
+
+      document.getElementById('submit').addEventListener('click', () => {
+        const email = document.getElementById('email').value;
+        const qty = document.getElementById('qty').value;
+        const country = document.getElementById('country').selectedOptions[0].textContent;
+        const terms = document.getElementById('terms').checked;
+        out('ordered ' + qty + ' to ' + email + ' in ' + country + ' terms=' + terms);
+        console.log('[fixture] order placed for', email);
+      });
+
+      document.getElementById('below').addEventListener('click', () => out('clicked below the fold'));
+      document.getElementById('log-error').addEventListener('click', () => {
+        console.error('[fixture] deliberate error for the console reader');
+      });
+      document.getElementById('fetch').addEventListener('click', () => {
+        fetch('/api/missing').catch(() => {});
+      });
+
+      // Right click. preventDefault stops Chrome's own menu, which is what any
+      // app with a custom context menu does, and keeps the test from opening a
+      // native menu that would block further automation.
+      document.getElementById('ctx').addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        out('context menu at ' + Math.round(e.clientX) + ',' + Math.round(e.clientY));
+      });
+
+      document.getElementById('dblarea').addEventListener('dblclick', () => out('double clicked'));
+
+      // Pointer-driven drag, the kind sliders and sortable lists use.
+      (() => {
+        const track = document.getElementById('slider-track');
+        const thumb = document.getElementById('slider-thumb');
+        let dragging = false;
+        window.__dragStats = { down: 0, move: 0, moveWhileDown: 0, up: 0, xs: [], trackLeft: 0 };
+        thumb.addEventListener('mousedown', () => { dragging = true; window.__dragStats.down++; });
+        document.addEventListener('mousemove', (e) => {
+          window.__dragStats.move++;
+          if (!dragging) return;
+          window.__dragStats.moveWhileDown++;
+          window.__dragStats.xs.push(Math.round(e.clientX));
+          const rect = track.getBoundingClientRect();
+          window.__dragStats.trackLeft = Math.round(rect.left);
+          const x = Math.max(0, Math.min(rect.width - 24, e.clientX - rect.left - 12));
+          thumb.style.left = x + 'px';
+          document.getElementById('slider-value').textContent = Math.round((x / (rect.width - 24)) * 100);
+        });
+        document.addEventListener('mouseup', () => { dragging = false; window.__dragStats.up++; });
+      })();
+
+      // HTML5 drag and drop, which mouse events alone do not drive.
+      (() => {
+        const drag = document.getElementById('draggable');
+        const zone = document.getElementById('dropzone');
+        drag.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', 'payload');
+          console.log('[fixture] dragstart');
+        });
+        zone.addEventListener('dragover', (e) => e.preventDefault());
+        zone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          zone.textContent = 'dropped: ' + e.dataTransfer.getData('text/plain');
+        });
+      })();
+
+      // Only reacts to real key events, so insertText alone leaves it at zero.
+      (() => {
+        let count = 0;
+        document.getElementById('autocomplete').addEventListener('keydown', () => {
+          document.getElementById('keycount').textContent = ++count;
+        });
+      })();
+
+      document.getElementById('file').addEventListener('change', (e) => {
+        const f = e.target.files[0];
+        document.getElementById('fileinfo').textContent = f ? f.name + ' (' + f.size + ' bytes)' : 'no file';
+      });
+      document.getElementById('files').addEventListener('change', (e) => {
+        document.getElementById('filesinfo').textContent =
+          Array.from(e.target.files).map((f) => f.name).join(', ') || 'no files';
+      });
+    </script>
+  </body>
+</html>

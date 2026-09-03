@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "Lantern",
+  "version": "0.1.9",
+  "description": "Drives this browser for a local MCP server, in the background, in its own tab group.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "debugger",
+    "scripting",
+    "tabs",
+    "tabGroups",
+    "storage",
+    "alarms",
+    "nativeMessaging",
+    "windows",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/content/agent.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false,
+      "match_origin_as_fallback": true
+    }
+  ],
+  "action": {
+    "default_title": "Lantern",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    },
+    "default_popup": "src/popup/popup.html"
+  },
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqVYKh6ICluvElpDcZrBBzAW0lhEw9pm5d6QRezah18Kqnuastn+4cCPV9z3bF0/tzcbvNxsFq73FulZsGtWE0ymHkDviffkzqb7Mk7um/TBe7Keo8ngoOkpvC/4xFzJFEiMNJJ+1asXeYo+IC28IOIdH7k3IclY5i757/+Kk/MZY6DeeKvO5013NLYrUXcXRJSMIWXyyxOdjms11ZJFvn1/ZWw9fHCIXGZjCjcbk7FHnp/6V3LrXBN9kjC6qL1edL1BKqrWx7p6U2RQCGGOAceeE+89vHIHDYlSTLtiSvqaBLKCgHlhSB+gm7xwgSrJFz+iCcyk44kJfqjHFNBe+vQIDAQAB",
+  "short_name": "Lantern"
+}

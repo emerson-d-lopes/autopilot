@@ -1,0 +1,33 @@
+{
+  "name": "chrome-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server driving Chrome through a Manifest V3 extension and the DevTools Protocol",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "chrome-mcp": "./host/mcp-server.js"
+  },
+  "scripts": {
+    "keygen": "node tools/gen-key.js",
+    "install-host": "node tools/install.js",
+    "uninstall-host": "node tools/install.js --uninstall",
+    "doctor": "node tools/doctor.js",
+    "log": "node tools/log.js",
+    "icons": "node tools/icons.js",
+    "test": "node --test --test-concurrency=1 \"test/*.test.js\"",
+    "start": "node host/mcp-server.js",
+    "browser": "node tools/browser.js --detach",
+    "test:live": "node --test test/live.test.js",
+    "test:resilience": "node --test test/resilience.test.js",
+    "test:fast": "node --test --test-concurrency=1 --test-skip-pattern=\"survives|recovers when|resume a session|stale request\" \"test/*.test.js\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}

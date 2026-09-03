@@ -1,0 +1,7 @@
+node_modules/
+.keys/
+host/native-host.bat
+host/native-host.sh
+host/com.chromemcp.host.json
+*.log
+.browsers/

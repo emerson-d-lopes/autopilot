@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Lantern</title>
+    <link rel="stylesheet" href="../ui/tokens.css" />
+    <link rel="stylesheet" href="../ui/components.css" />
+    <link rel="stylesheet" href="../ui/lantern.css" />
+    <style>
+      body {
+        width: 320px;
+        padding: var(--al-space-4);
+      }
+      .state {
+        display: flex;
+        align-items: center;
+        gap: var(--al-space-2);
+        margin: var(--al-space-4) 0 var(--al-space-2);
+      }
+      .block {
+        margin-top: var(--al-space-4);
+      }
+      .block h2 {
+        margin: 0 0 var(--al-space-1);
+        font-size: var(--al-font-size-xs);
+        font-weight: var(--al-font-weight-medium);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--al-color-text-faint);
+      }
+      .foot {
+        display: flex;
+        gap: var(--al-space-2);
+        margin-top: var(--al-space-4);
+      }
+      .session {
+        cursor: pointer;
+      }
+      .session:hover .grow {
+        color: var(--al-color-text);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand">
+      <img src="../../icons/icon-48.png" alt="" />
+      <h1>Lantern</h1>
+      <span class="version" id="version"></span>
+    </div>
+
+    <div class="state">
+      <span class="dot" id="dot"></span>
+      <span id="state" class="muted">Checking</span>
+    </div>
+
+    <div class="block">
+      <h2>Sessions</h2>
+      <ul class="list" id="sessions"></ul>
+    </div>
+
+    <div class="block">
+      <h2>Recent</h2>
+      <ul class="list mono" id="recent"></ul>
+    </div>
+
+    <div class="foot">
+      <button class="btn btn-secondary" id="settings">Settings</button>
+      <button class="btn btn-ghost" id="close-empty">Close empty tabs</button>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

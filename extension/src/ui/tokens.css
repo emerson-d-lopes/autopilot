@@ -1,0 +1,187 @@
+/* ==========================================================================
+   Ash Lumen Design Tokens (generated — do not edit)
+   Source: tokens/*.json  |  https://github.com/emerson-d-lopes/ash-lumen
+   ========================================================================== */
+
+:root {
+  --al-font-family-mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', ui-monospace, monospace;
+  --al-font-family-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --al-font-size-xs: 0.825rem;
+  --al-font-size-sm: 0.9625rem;
+  --al-font-size-base: 1.1rem;
+  --al-font-size-lg: 1.2375rem;
+  --al-font-size-xl: 1.375rem;
+  --al-font-size-2xl: 1.65rem;
+  --al-font-size-3xl: 2.2rem;
+  --al-font-weight-normal: 400;
+  --al-font-weight-medium: 500;
+  --al-font-weight-semibold: 600;
+  --al-font-weight-bold: 700;
+  --al-line-height-tight: 1.25;
+  --al-line-height-normal: 1.5;
+  --al-line-height-relaxed: 1.75;
+  --al-space-0: 0;
+  --al-space-1: 0.25rem;
+  --al-space-2: 0.5rem;
+  --al-space-3: 0.75rem;
+  --al-space-4: 1rem;
+  --al-space-6: 1.5rem;
+  --al-space-8: 2rem;
+  --al-space-12: 3rem;
+  --al-space-16: 4rem;
+  --al-space-24: 6rem;
+  --al-radius-sm: 3px;
+  --al-radius-md: 6px;
+  --al-radius-lg: 10px;
+  --al-radius-full: 9999px;
+  --al-transition-fast: 120ms ease;
+  --al-transition-normal: 200ms ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --al-color-bg: #161616;
+    --al-color-surface: #1a1a1a;
+    --al-color-surface-raised: #222222;
+    --al-color-border: #303030;
+    --al-color-border-subtle: #232323;
+    --al-color-text: #a0a0a0;
+    --al-color-text-secondary: #787878;
+    --al-color-text-muted: #585858;
+    --al-color-text-faint: #404040;
+    --al-color-accent: #b0b0b0;
+    --al-color-accent-hover: #c0c0c0;
+    --al-color-focus-ring: #353535;
+    --al-color-error: #a88080;
+    --al-color-error-bg: #a8808015;
+    --al-color-warning: #a0a080;
+    --al-color-warning-bg: #a0a08015;
+    --al-color-success: #80a080;
+    --al-color-success-bg: #80a08015;
+    --al-color-info: #8090a0;
+    --al-color-info-bg: #8090a015;
+    --al-color-syntax-keyword: #b09898;
+    --al-color-syntax-string: #889888;
+    --al-color-syntax-function: #b0b0b0;
+    --al-color-syntax-constant: #98a0a0;
+    --al-color-syntax-comment: #484848;
+    --al-color-syntax-parameter: #a09898;
+    --al-color-diff-added: #80a08020;
+    --al-color-diff-removed: #a8808020;
+    --al-color-scrollbar: #40404040;
+    --al-color-scrollbar-hover: #50505060;
+    --al-shadow-sm: 0 1px 3px #00000040;
+    --al-shadow-md: 0 4px 12px #00000060;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --al-color-bg: #eeeeee;
+    --al-color-surface: #f0f0f0;
+    --al-color-surface-raised: #f8f8f8;
+    --al-color-border: #d0d0d0;
+    --al-color-border-subtle: #e8e8e8;
+    --al-color-text: #505050;
+    --al-color-text-secondary: #707070;
+    --al-color-text-muted: #909090;
+    --al-color-text-faint: #c0c0c0;
+    --al-color-accent: #404040;
+    --al-color-accent-hover: #303030;
+    --al-color-focus-ring: #d0d0d0;
+    --al-color-error: #806060;
+    --al-color-error-bg: #80606015;
+    --al-color-warning: #808060;
+    --al-color-warning-bg: #80806015;
+    --al-color-success: #607060;
+    --al-color-success-bg: #60706015;
+    --al-color-info: #607080;
+    --al-color-info-bg: #60708015;
+    --al-color-syntax-keyword: #7a4e4e;
+    --al-color-syntax-string: #436843;
+    --al-color-syntax-function: #404040;
+    --al-color-syntax-constant: #445068;
+    --al-color-syntax-comment: #b8b8b8;
+    --al-color-syntax-parameter: #6a4e4e;
+    --al-color-diff-added: #60706018;
+    --al-color-diff-removed: #80606018;
+    --al-color-scrollbar: #c0c0c040;
+    --al-color-scrollbar-hover: #b0b0b060;
+    --al-shadow-sm: 0 1px 3px #00000010;
+    --al-shadow-md: 0 4px 12px #00000015;
+  }
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --al-color-bg: #161616;
+  --al-color-surface: #1a1a1a;
+  --al-color-surface-raised: #222222;
+  --al-color-border: #303030;
+  --al-color-border-subtle: #232323;
+  --al-color-text: #a0a0a0;
+  --al-color-text-secondary: #787878;
+  --al-color-text-muted: #585858;
+  --al-color-text-faint: #404040;
+  --al-color-accent: #b0b0b0;
+  --al-color-accent-hover: #c0c0c0;
+  --al-color-focus-ring: #353535;
+  --al-color-error: #a88080;
+  --al-color-error-bg: #a8808015;
+  --al-color-warning: #a0a080;
+  --al-color-warning-bg: #a0a08015;
+  --al-color-success: #80a080;
+  --al-color-success-bg: #80a08015;
+  --al-color-info: #8090a0;
+  --al-color-info-bg: #8090a015;
+  --al-color-syntax-keyword: #b09898;
+  --al-color-syntax-string: #889888;
+  --al-color-syntax-function: #b0b0b0;
+  --al-color-syntax-constant: #98a0a0;
+  --al-color-syntax-comment: #484848;
+  --al-color-syntax-parameter: #a09898;
+  --al-color-diff-added: #80a08020;
+  --al-color-diff-removed: #a8808020;
+  --al-color-scrollbar: #40404040;
+  --al-color-scrollbar-hover: #50505060;
+  --al-shadow-sm: 0 1px 3px #00000040;
+  --al-shadow-md: 0 4px 12px #00000060;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --al-color-bg: #eeeeee;
+  --al-color-surface: #f0f0f0;
+  --al-color-surface-raised: #f8f8f8;
+  --al-color-border: #d0d0d0;
+  --al-color-border-subtle: #e8e8e8;
+  --al-color-text: #505050;
+  --al-color-text-secondary: #707070;
+  --al-color-text-muted: #909090;
+  --al-color-text-faint: #c0c0c0;
+  --al-color-accent: #404040;
+  --al-color-accent-hover: #303030;
+  --al-color-focus-ring: #d0d0d0;
+  --al-color-error: #806060;
+  --al-color-error-bg: #80606015;
+  --al-color-warning: #808060;
+  --al-color-warning-bg: #80806015;
+  --al-color-success: #607060;
+  --al-color-success-bg: #60706015;
+  --al-color-info: #607080;
+  --al-color-info-bg: #60708015;
+  --al-color-syntax-keyword: #7a4e4e;
+  --al-color-syntax-string: #436843;
+  --al-color-syntax-function: #404040;
+  --al-color-syntax-constant: #445068;
+  --al-color-syntax-comment: #b8b8b8;
+  --al-color-syntax-parameter: #6a4e4e;
+  --al-color-diff-added: #60706018;
+  --al-color-diff-removed: #80606018;
+  --al-color-scrollbar: #c0c0c040;
+  --al-color-scrollbar-hover: #b0b0b060;
+  --al-shadow-sm: 0 1px 3px #00000010;
+  --al-shadow-md: 0 4px 12px #00000015;
+}

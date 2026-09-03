@@ -1,0 +1,206 @@
+# chrome-mcp: status, parity and test coverage
+
+State of the build as of 2026-09-03. 25 tools, 16 test files.
+
+- Source: about 6,700 lines across the extension, host and tools
+- Tests: about 3,600 lines
+- Verified against Chrome for Testing 152 and against the user's own Chrome 152 on Windows 11
+
+Last full run of the browser-driven files was before the 2026-09-03 changes. On 2026-09-03 the eleven non-browser files (135 tests) pass, and the new behaviour was verified by driving the development browser and the user's Chrome directly, as described under Verification on real browsers.
+
+## Feature parity with Claude Code's browser integration
+
+Claude Code drives Chrome through Anthropic's `claude-in-chrome` extension, which exposes 22 tools. This is the mapping.
+
+| Claude Code | chrome-mcp | Notes |
+|---|---|---|
+| `tabs_context_mcp` | `tabs_context` | `createIfEmpty` opens an unselected tab in the window the user is looking at, and nothing is ever brought to the front. Claude in Chrome opens a new window and selects its tabs |
+| `tabs_create_mcp` | `tabs_create` | |
+| `tabs_close_mcp` | `tabs_close` | |
+| `navigate` | `navigate` | Also reports load failures, which `chrome.tabs.update` cannot |
+| `read_page` | `read_page` | |
+| `get_page_text` | `get_page_text` | |
+| `find` | `find` | Local ranking rather than a nested model call, so it costs no inference |
+| `form_input` | `form_input` | Also refuses disabled and read-only controls |
+| `computer` | `computer` | All 13 actions, plus `perKey` typing |
+| `javascript_tool` | `javascript` | |
+| `read_console_messages` | `read_console_messages` | |
+| `read_network_requests` | `read_network_requests` | |
+| `resize_window` | `resize_window` | |
+| `file_upload` | `file_upload` | Also handles drop zones with no file input |
+| `upload_image` | `upload_image` | Takes the `imageId` printed under each screenshot, a path, or `"last"` |
+| `gif_creator` | `gif_creator` | Own GIF89a encoder, no dependency. `start_recording` / `stop_recording` / `export` / `clear` and `filename` are accepted. The overlay `options` (click indicators, labels, watermark) are not drawn |
+| `browser_batch` | `browser_batch` | |
+| `list_connected_browsers` | `list_connected_browsers` | |
+| `select_browser` | `select_browser` | |
+| `switch_browser` | `switch_browser` | |
+| `shortcuts_list` | `shortcuts_list` | Saved quick scripts, edited from the options page |
+| `shortcuts_execute` | `shortcuts_execute` | |
+| — | `quick` | Compact one-line-per-action script protocol |
+| side panel | popup and settings page | Claude in Chrome shows progress in a side panel. Here a toolbar popup shows the connection state, the sessions with their marks, and the last calls, with a settings page for policy and shortcuts. Both on the Ash Lumen design system |
+| side panel status | tab group title | Claude in Chrome shows progress in its side panel and marks its group. Here the group title carries ⏳ / ✅ / ❌ with a matching colour, updated per call, and `tabs_context` reports the title |
+| — | action journal | Every call recorded by the host as JSONL and a Markdown timeline, `npm run log`. Claude in Chrome keeps no equivalent record |
+| — | `page_state` | URL, title, scroll, viewport |
+| — | `wait_for_page` | Wait for load and for the DOM to settle |
+
+All 22 are covered. Three tools have no counterpart on the Claude Code side.
+
+Claude in Chrome's own spellings are accepted everywhere a tool name or argument is read, at the top level and inside `browser_batch`: `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp`, `javascript_tool` with `action: "javascript_exec"` and `text`, `onlyErrors`, `urlPattern` (a substring there, escaped into the regex here), `deviceId`, `command` for shortcuts, and the gif action names. The mapping lives in `extension/src/lib/aliases.js` and is applied by both the server and the extension. Its quick-mode tab commands `NT`, `ST` and `LT` exist too, and a tab created earlier in a batch can be addressed by later actions as `tabId: "$last"`.
+
+One difference is deliberate. `find` ranks locally instead of asking a model, which returns in under a millisecond and spends no tokens, at the cost of resolving descriptions by wording rather than meaning.
+
+## Test coverage
+
+| File | Tests | Covers |
+|---|---|---|
+| `journal.test.js` | 4 | Argument and result summaries, entry shape, both files written, failures marked |
+| `tabs.test.js` | 4 | Navigation-start wait behind `wait_for_page`, group status marks |
+| `aliases.test.js` | 6 | Claude in Chrome names and argument spellings, quick `NT` / `ST` / `LT` |
+| `cdp.test.js` | 9 | Debugger transport: stale-attachment recovery, `onDetach` tracking, frame diagnostics on a refused attach |
+| `a11y.test.js` | 38 | Accessibility tree against a real DOM: roles, names, refs, filtering, budgeting, shadow DOM, labels |
+| `find.test.js` | 22 | Ranking, tree parsing, URL-attribute exclusion |
+| `screenshot.test.js` | 10 | Downscaling, token budget, aspect ratio |
+| `permissions.test.js` | 16 | Modes, grants, blocklist, origin re-verification |
+| `protocol.test.js` | 10 | Native messaging framing, chunk reassembly, malformed input |
+| `ipc.test.js` | 7 | Socket framing, multiple clients, large payloads |
+| `parity.test.js` | 8 | Schemas and handlers describe the same tool set |
+| `e2e.test.js` | 11 | MCP protocol across real spawned processes |
+| `live.test.js` | 40 | Every tool against a running browser |
+| `edge.test.js` | 26 | Adversarial cases (see below) |
+| `shortcuts.test.js` | 5 | Saved shortcuts end to end, storage seeded through the service worker |
+| `resilience.test.js` | 4 | Idle worker, host killed, session resume, in-flight failure |
+
+### What is exercised live
+
+All 13 `computer` actions individually: `left_click`, `right_click`, `double_click`, `triple_click`, `hover`, `type`, `key`, `screenshot`, `zoom`, `wait`, `scroll`, `scroll_to`, `left_click_drag`. Plus `modifiers`, `repeat`, `perKey` and `save_to_disk`.
+
+Also live: same-origin iframes, open and closed shadow roots, non-ascii text through the tree and both typing paths, pointer drags and HTML5 drag and drop, file uploads to inputs and to drop zones, GIF output validated as a real multi-frame GIF89a, browser listing and selection, and saved shortcuts driving a page.
+
+### What is not tested
+
+- **Cross-origin iframes.** Reported as leaves by design. Reading inside one needs a frame-targeted call that does not exist yet.
+- **Two browsers at once.** The multi-browser path is built and `list_connected_browsers` / `select_browser` are tested against one live browser. Nothing has exercised Chrome and Edge connected simultaneously.
+- **The user's own Chrome, by the suite.** The automated files run against Chrome for Testing with an isolated profile, because Chrome 137 and later ignore `--load-extension` and loading unpacked is a manual click-through. The user's Chrome was driven by hand on 2026-09-03, see below.
+- **The gif overlay options** Claude in Chrome draws (click circles, action labels, progress bar) are accepted and ignored.
+- **Non-Windows platforms.** The code paths exist for macOS and Linux (unix sockets, per-browser manifest directories) and are unexercised.
+
+## Bugs found and fixed
+
+Every one of these was found by testing rather than review, and each has a regression test. The last one came from driving Wikipedia rather than a fixture.
+
+| Bug | Symptom | Cause |
+|---|---|---|
+| Iframe clicks landed elsewhere | Reported success, page unchanged | `getBoundingClientRect` inside a frame is frame-relative; CDP dispatches in top-level coordinates |
+| Iframe offsets went stale | Same, after any scroll | The offset was captured when the tree was read. Now measured live from the frame chain |
+| Shadow elements read as covered | Every click inside a shadow root refused | `document.elementFromPoint` retargets a shadow descendant to its host |
+| Clipped elements read as covered | Anything inside a scroll container refused | Hit tested before scrolling it into view |
+| Disabled inputs accepted values | `form_input` wrote to a disabled field | No enabled check |
+| Covered elements clicked the cover | Reported success, wrong element pressed | No hit test |
+| Failed navigation looked successful | Landed on Chrome's error page silently | `chrome.tabs.update` reports nothing |
+| Out-of-range coordinates no-op'd | Nothing happened, no error | No bounds check |
+| Stale socket wiped the live one | First call after `select_browser` failed | A replaced socket's late `close` handler cleared shared state |
+| Handshake race after reconnect | Same | Status message raced a 250ms fixed wait |
+| Generic containers took subtree text | Every wrapper repeated everything inside it | Name-from-content applied to `generic` |
+| Interactive divs had no name | A `div` with `tabindex` was unnamed and unusable | Name-from-content applied too narrowly |
+| `find` matched URL substrings | "the search bar" returned a Donate link | `sidebar` inside an href scored as a match |
+| A styled radio or checkbox vanished | Wikipedia's theme controls were absent from the tree | The native input is hidden with `opacity: 0` and its label is the visible control, so the input was dropped as invisible and the label as a duplicate |
+| Second browser lost the pipe | Every call went to the first browser | One fixed pipe name for all browsers |
+| Session dropped silently after a navigation | The call after a navigation failed with "Debugger is not attached" while the extension believed it was | Chrome force-detaches a debugger session when a navigation makes the tab one the extension may not debug. Nothing listened to `chrome.debugger.onDetach`, so the attachment map stayed stale. It is tracked now, and the message counts as recoverable |
+| `find` ranked a textbox above the file input for "file input" | Uploads went to a drop target instead of the input | "input" is a role hint for textboxes, and a file input renders as a button, so the role bonus went to the wrong element. A term matching the control's `type` now satisfies the role hint |
+| The suite drove the wrong browser | Live tests failed against the user's Chrome, which ran an older extension build | `anyBridge()` sorted by connection time. `npm run browser` now records its browser id in `.browsers/dev-browser-id` and the test files prefer it |
+| `wait_for_page` returned before a submit navigation began | A batch of click, wait, read saw the form instead of the response | The wait checked whether the tab was loading, and a click returns before the browser has started the request. It now gives a navigation up to 600ms to start, then waits for the load and the DOM to settle, and reports `navigated` |
+| A hidden alert's links looked clickable | GitHub's "Please reload this page" links appeared in every tree | The `hidden` attribute marked the element hidden but its children were still walked. It prunes the subtree now |
+| Bare text was missing from the tree | `<div>Hello</div>`, a frame body holding one word, and the A and B boxes on a drag-and-drop page produced no output | Only elements with a role were emitted. Text directly inside a container with no role is emitted as `text` nodes, outside the interactive filter |
+| A soft navigation read the old page | On GitHub, click Issues then `wait_for_page` then `read_page` returned the header and footer only | The React app fetches, then renders, and neither the load event nor a 120ms DOM quiet check waits for that. `wait_for_page` now waits for in-flight requests to drain (bounded at four seconds) before the settle check, and reports `networkIdle` |
+| Page text included collapsed panels and menus | Wikipedia's search page dumped its advanced-search panel, an article began with the appearance menu | `display:none` was checked on the text node's parent only. Visibility is judged through ancestors with `checkVisibility`, navigation, aside and page-level header and footer regions are skipped, select options are not run together, and adjacent inline elements get a space |
+| Page text ignored frames | A frameset page read as "(no text)" | Only the top document was walked. Same-origin frames are walked recursively |
+| Page text reported a wrong total | A full opinion piece reported 1478 chars total | The walk stopped at twice the budget and reported that as the size. The whole page is counted now |
+| A consent dialog was invisible to the tree | The Guardian's tree showed the page underneath the cookie dialog as if clickable | The dialog is a cross-origin iframe. The tree now opens with a note naming the frame and the share of the viewport it covers, and says to act by coordinate |
+| `find` missed a query made of role words | "search box" found nothing on Wikipedia while a "Search" link was on the page | Role-hint words were excluded from name matching. They still count, at reduced weight |
+| `find` filled its result with copies | Twenty identical label links on GitHub's issue list | Identical role, name and attributes are collapsed to one entry with a count |
+| Batch output hid useful results | Console and network reads, tab context and a saved screenshot's path collapsed to "ok" inside a batch | Those steps are inlined now, and any step that produced an image also inlines its text line |
+| The browser was brought to the front on every action | The user lost their place whenever the agent clicked or captured | Visibility was treated as a requirement for input and capture. Hidden tabs are woken through CDP instead and captured through a screencast frame, so nothing is activated or focused any more |
+| A blank tab appeared in front when a session ended | An about:blank tab opened selected when the last empty session tabs closed in the browser's last window | The guard against quitting the browser created a replacement tab as the active one. One of the tabs about to close is kept instead |
+| `find` collapsed same-named buttons | Ten "Add to cart" buttons became one entry with a count | Dedupe keyed on name and attributes. It now collapses only links to the same href |
+| `resize_window` restored a minimized window | The window came to the front | It set the state to normal unconditionally. Only maximized and fullscreen windows are normalised now |
+| Popup history vanished on worker restart | Recent calls emptied after an idle period | Kept in memory only. It is mirrored to session storage |
+| Closing a tab could quit the browser | `tabs_close` on a session's last tab closed its window, and with no other window Chrome exited and took the bridge with it | Chrome closes a window with its final tab. A blank tab is now inserted first, so closing one tab closes exactly one tab |
+
+## Verification on real browsers, 2026-09-03
+
+The one open bug from the previous handoff was that on the user's own Chrome every CDP command failed with `Cannot access a chrome-extension:// URL of different extension` while the content-script path kept working. What was run, in order, on the user's Chrome 152 (profile "Profile 3", extensions installed: Claude, ChatGPT, Bitwarden, Chrome Remote Desktop, Google Docs Offline, Google Wallet):
+
+1. With the extension build that carried the retry in `send()`: navigate the session's first tab to `https://httpbin.org/forms/post`, screenshot (ok), two `form_input` fills (ok), click the "Medium" radio: **failed** with the exact message. Navigating that tab to example.com and clicking again failed with "Debugger is not attached".
+2. Through Claude in Chrome in the same profile: loaded the same page, clicked the name field with a real CDP click, and listed the DOM including shadow roots. Only a `form` in `body`, no iframes. Claude's extension evaluated JS through CDP there without trouble, so the page itself passes Chrome's check.
+3. After reloading the extension (verified as v0.1.2 through `npm run doctor`): the same first tab still failed, this time from `chrome.debugger.attach` itself, so Chrome refused to attach to that tab at all.
+4. In a fresh tab created at example.com: javascript, screenshot, click, javascript, all ok. Navigate it to httpbin, then the full sequence with a CDP probe between every step: all ok.
+5. In a fresh tab created blank first and then navigated to httpbin: all ok.
+6. All session tabs closed, `tabs_context createIfEmpty` again (the same new-window path the failing tab came from), navigate to httpbin, fill name and email, click Medium, click Bacon, click Submit, wait, read the page: **httpbin echoed `custname`, `custemail`, `size: medium`, `topping: bacon`**.
+
+So the flow the handoff asked for passes on the user's Chrome. What is established: the refusal is a property of a particular tab, not of the page or the profile, and it survives navigations within that tab. The only tab that showed it had been driven by the extension build loaded before the reload. What is not established: which frame or target Chrome is objecting to. The attach and command failure paths now append `chrome.webNavigation.getAllFrames` and `chrome.debugger.getTargets` output for the tab to the error, naming any `chrome-extension://` frame that is not ours, so the next occurrence carries the answer. A useful experiment that was not run: keep a session tab open, reload the extension at `chrome://extensions`, and attach to that tab again. If it is refused, the trigger is the reload itself.
+
+After a second reload of the extension on the user's Chrome (v0.1.2 with the current-window and alias changes): `tabs_context` reported no tabs, so the session's group from before the reload was gone and the planned attach-after-reload experiment could not be run. Whether the window was closed by hand or the reload dropped the stored group mapping was not established. A new session tab then opened in the user's current window, and the httpbin flow passed again through CDP clicks (echo showed `custname: Reload Check`, `size: large`).
+
+### Audit on real sites, 2026-09-03
+
+Driven by hand on the user's Chrome: Wikipedia (search with per-key typing and suggestions, results, an article, back and forward), GitHub (repository page, the React issues list, the filter combobox), the-internet.herokuapp.com (dropdown, hovers, shadow DOM, TinyMCE in an iframe, nested framesets, dynamic loading, HTML5 drag and drop, key presses, a link opening a new window), Hacker News (scroll then click by coordinate), a personal blog, the Guardian (cookie dialog in a cross-origin frame, an article, `scroll_to`), and the home page of a video site built on custom elements with a lazily rendered grid. Worked as expected: per-key typing into autocompletes, history navigation, hover-revealed content, open shadow roots, a select through `form_input`, HTML5 drag and drop, key presses including Shift+Tab, coordinate clicks after scrolling, a coordinate click into a cross-origin consent frame, a tab opened by a click joining the session group, zoom, saved screenshots. Everything that did not work is in the bugs table above. Each fix was then verified on the development browser against the same pages.
+
+Known limits seen during the audit: `find` is lexical, so "most viewed article link" cannot find links whose names share no word with the query. A page that renders five seconds after a click with no network or DOM activity in between (the-internet's dynamic loading example) is read too early by `wait_for_page`, which has nothing to wait on.
+
+The development browser exited six times during the session with exit code 0. The user later said they had been closing its window by hand, which is what a clean exit with nothing in the logs looks like. Not a bug. The launcher keeps --enable-logging with --log-file=.browsers/chrome.log, which is cheap and answers this class of question next time. It was restarted each time and the probes after each restart passed.
+
+## Constraints that shape the implementation
+
+Five behaviours that are not visible from a tool surface, each of which silently breaks a naive implementation.
+
+**A pending `setTimeout` does not keep an MV3 service worker alive.** Chrome suspends the worker while it awaits one, so a 100ms hover delay measured about five seconds and every click paid it. Timed waits run on the page's clock through `Runtime.evaluate`, which keeps the worker busy on a pending extension API callback.
+
+**`Input.dispatchMouseEvent` answers only after the renderer processes the event.** A throttled renderer holds that answer for a fixed five seconds. Dispatch waits briefly and moves on, since the event is delivered either way, and records that the renderer looked throttled so the next action can bring the window forward.
+
+**Chrome reports a fully covered window as occluded**, which sets `visibilityState` to `hidden` and makes the renderer drop input outright rather than delay it. Whether a test passed depended on which window happened to be in front. The development browser launches with `--disable-features=CalculateNativeWinOcclusion`. The agent now works in hidden tabs by design and never raises anything: on attach it sends `Emulation.setFocusEmulationEnabled` and `Page.setWebLifecycleState active`, which on Chrome 152 make a hidden or minimized tab answer input in a millisecond, run animation frames and report itself visible. Screenshots of hidden tabs come from a single screencast frame (about 50ms), because a surface capture of a hidden tab takes seconds and the extension debugger API refuses renderer captures ("Only screenshots from surface are allowed").
+
+**`requestAnimationFrame` stops entirely in a hidden tab**, so an rAF-driven settle loop never resolves. Waiting for the DOM to quieten runs on timers.
+
+**Chrome caches the compiled module graph for an extension service worker** across browser restarts, so a cold start can run stale code while serving the edited file over `chrome-extension://`. On Chrome 152 the cache that matters is `Default/Extension Scripts` in the profile, alongside `Service Worker` and `Code Cache`. `npm run browser` clears all three on launch. `chrome.runtime.reload()` over the DevTools port did not drop it: an edited `wait_for_page` kept returning the old result shape until the browser was restarted with the directory removed.
+
+## Architecture
+
+```
+Claude Code ──stdio──> mcp-server.js ──named pipe──> native-host.js ──native messaging──> extension ──CDP──> page
+```
+
+Each connected browser gets its own native host, its own pipe, and one entry in a registry directory. An MCP server discovers browsers through that registry, uses the only one when there is one, and asks the session to choose when there are several. The host is the listener and MCP servers are clients, so several Claude Code sessions share one browser.
+
+Payloads above 384KB are chunked, because Chrome caps a single native message at 1MB and screenshots exceed it.
+
+The installer resolves the real path to the node binary with `realpath` before writing the host wrapper. Chrome spawns the host from the browser process rather than a shell, and fnm's `process.execPath` points into a per-shell directory that disappears when the terminal closes.
+
+## Running it
+
+```bash
+npm install
+npm run keygen          # pins the extension id, run once
+npm run install-host    # registers the native messaging host
+npm run doctor          # checks every link in the chain
+```
+
+Then load `extension/` at `chrome://extensions` with Developer mode on, and restart Chrome. That step is manual because Chrome 137 and later ignore `--load-extension`.
+
+```bash
+npm test                # everything, about five minutes with a browser up
+npm run browser         # isolated development browser with the extension loaded
+npm run test:live       # browser tests only
+npm run test:resilience # the slow recovery tests on their own
+```
+
+The browser-driven files share one bridge, so the suite runs with `--test-concurrency=1`. Running them in parallel had the recovery tests killing the bridge underneath the live tests.
+
+With more than one browser connected the browser-driven files pick, in order, `CHROME_MCP_BROWSER_ID`, the browser recorded in `.browsers/dev-browser-id` by `npm run browser`, then the earliest connected. The full run takes about five minutes with a browser up. During development run the file you are working on, and `npm run test:fast` skips the recovery tests.
+
+## Known limits
+
+- Loading the extension is manual on Chrome 137 and later
+- Cross-origin iframes are reported as leaves
+- A JavaScript modal dialog blocks all further extension calls until a human dismisses it, which is a Chrome constraint
+- The CDP debugger banner is visible on tabs the session has attached
+- Completely covering the browser window can stall input until the extension raises it again

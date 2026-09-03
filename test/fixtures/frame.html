@@ -1,0 +1,12 @@
+<!doctype html>
+<html>
+  <body style="font:14px system-ui;margin:8px">
+    <button id="fbtn">Button inside iframe</button>
+    <div id="fout">-</div>
+    <script>
+      document.getElementById('fbtn').addEventListener('click', () => {
+        document.getElementById('fout').textContent = 'iframe clicked';
+      });
+    </script>
+  </body>
+</html>

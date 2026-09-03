@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>chrome-mcp edge cases</title>
+    <style>
+      body { font: 15px/1.5 system-ui, sans-serif; margin: 24px; }
+      #cover-zone { position: relative; height: 110px; margin: 12px 0; }
+      #overlay { position: absolute; left: 20px; top: 0; width: 260px; height: 90px; background: rgba(0,0,0,.75); color: #fff; z-index: 10; display: flex; align-items: center; justify-content: center; }
+      #covered { position: absolute; left: 30px; top: 20px; width: 200px; height: 50px; }
+      .scroller { height: 120px; overflow: auto; border: 1px solid #ccc; width: 320px; }
+      .scroller div { height: 60px; }
+      iframe { width: 320px; height: 120px; border: 1px solid #999; display: block; margin: 8px 0; }
+      #sticky { position: sticky; top: 0; background: #ffd; padding: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1 id="sticky">Edge cases</h1>
+
+    <button id="unicode-btn">Café ☕ naïve 日本語</button>
+    <label for="unicode-in">Unicode field</label>
+    <input id="unicode-in" type="text" />
+    <div id="unicode-out">-</div>
+
+    <button id="disabled-btn" disabled>Disabled button</button>
+    <input id="disabled-in" type="text" value="locked" disabled />
+    <input id="readonly-in" type="text" value="readonly" readonly />
+
+    <div id="cover-zone">
+      <div id="covered"><button id="under">Under overlay</button></div>
+      <div id="overlay">overlay on top</div>
+    </div>
+
+    <div class="scroller" id="scroller">
+      <div>scroll region 1</div>
+      <div>scroll region 2</div>
+      <div>scroll region 3</div>
+      <div><button id="in-scroller">Inside a scroll container</button></div>
+    </div>
+
+    <iframe id="same-origin" src="/frame.html"></iframe>
+
+    <div id="host-open"></div>
+    <div id="host-closed"></div>
+
+    <select id="dupes">
+      <option value="a">Same</option>
+      <option value="b">Same</option>
+    </select>
+
+    <form id="navform" action="/landed" method="get">
+      <input type="text" name="q" id="navq" />
+      <button type="submit" id="navsubmit">Submit and navigate</button>
+    </form>
+
+    <button id="slow">Slow handler</button>
+    <div id="slow-out">-</div>
+
+    <button id="detacher">Remove myself</button>
+
+    <label for="keys-in">Key recorder</label>
+    <input id="keys-in" type="text" />
+    <div id="keys-out">-</div>
+    <div id="mod-out">-</div>
+
+    <label for="img">Attach an image</label>
+    <input id="img" type="file" accept="image/*" />
+    <div id="imginfo">no image</div>
+
+    <div id="big"></div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      $('unicode-btn').addEventListener('click', () => { $('unicode-out').textContent = 'clicked'; });
+      $('unicode-in').addEventListener('input', (e) => { $('unicode-out').textContent = e.target.value; });
+
+      $('under').addEventListener('click', () => { $('unicode-out').textContent = 'under was clicked'; });
+      $('overlay').addEventListener('click', () => { $('unicode-out').textContent = 'overlay was clicked'; });
+
+      $('slow').addEventListener('click', () => {
+        const end = Date.now() + 1200;
+        while (Date.now() < end) { /* block the main thread */ }
+        $('slow-out').textContent = 'slow done';
+      });
+
+      $('detacher').addEventListener('click', (e) => { e.target.remove(); });
+
+      // Open shadow root
+      const open = $('host-open').attachShadow({ mode: 'open' });
+      open.innerHTML = '<button id="in-open">Inside open shadow</button><div id="open-out">-</div>';
+      open.getElementById('in-open').addEventListener('click', () => {
+        open.getElementById('open-out').textContent = 'open shadow clicked';
+      });
+
+      // Closed shadow root, which the tree cannot see into
+      const closed = $('host-closed').attachShadow({ mode: 'closed' });
+      closed.innerHTML = '<button>Inside closed shadow</button>';
+
+      // A long list, for truncation behaviour
+      const big = $('big');
+      for (let i = 0; i < 900; i++) {
+        const b = document.createElement('button');
+        b.textContent = 'Row action ' + i;
+        big.appendChild(b);
+      }
+      // Records modifiers and counts arrow presses, for modifier and repeat coverage.
+      (() => {
+        let downs = 0;
+        $('keys-in').addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowRight') $('keys-out').textContent = String(++downs);
+          const mods = [e.ctrlKey && 'ctrl', e.shiftKey && 'shift', e.altKey && 'alt'].filter(Boolean);
+          if (mods.length) $('mod-out').textContent = mods.join('+') + ' ' + e.key;
+        });
+        $('unicode-btn').addEventListener('mousedown', (e) => {
+          const mods = [e.ctrlKey && 'ctrl', e.shiftKey && 'shift', e.altKey && 'alt'].filter(Boolean);
+          $('mod-out').textContent = mods.length ? 'click ' + mods.join('+') : 'click plain';
+        });
+      })();
+
+      $('img').addEventListener('change', (e) => {
+        const f = e.target.files[0];
+        $('imginfo').textContent = f ? f.name : 'no image';
+      });
+
+      console.log('[edge] ready');
+    </script>
+  </body>
+</html>
