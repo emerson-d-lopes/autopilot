@@ -8,9 +8,11 @@ import * as tabsLib from './lib/tabs.js';
 import * as recorder from './lib/recorder.js';
 import { detachAll } from './lib/cdp.js';
 import { PermissionDenied } from './lib/permissions.js';
+import * as sessions from './lib/sessions.js';
 
 const HOST_NAME = 'com.chromemcp.host';
 const BROWSER_ID_KEY = 'browserId';
+const BROWSER_LABEL_KEY = 'browserLabel';
 const KEEPALIVE_ALARM = 'chrome-mcp-keepalive';
 
 // A single native message is capped at 1MB. Screenshots exceed that, so large
@@ -60,12 +62,13 @@ function post(message) {
  * the identity and persists the id so it survives a worker restart.
  */
 async function browserIdentity() {
-  const stored = await chrome.storage.local.get(BROWSER_ID_KEY);
+  const stored = await chrome.storage.local.get([BROWSER_ID_KEY, BROWSER_LABEL_KEY]);
   let id = stored[BROWSER_ID_KEY];
   if (!id) {
     id = 'b' + Math.random().toString(36).slice(2, 10);
     await chrome.storage.local.set({ [BROWSER_ID_KEY]: id });
   }
+  const label = String(stored[BROWSER_LABEL_KEY] || '').trim();
 
   const ua = navigator.userAgent;
   let name = 'Chrome';
@@ -76,7 +79,40 @@ async function browserIdentity() {
   else if (/HeadlessChrome/.test(ua)) name = 'Chrome (headless)';
 
   const version = (ua.match(/Chrome\/([\d.]+)/) || [])[1] || 'unknown';
-  return { id, name, version };
+  const platform = (navigator.userAgentData && navigator.userAgentData.platform) || '';
+  return { id, name, version, label, platform, account: await profileAccount() };
+}
+
+/**
+ * The Chrome-signed-in account for this profile.
+ *
+ * getProfileUserInfo answers without a prompt and without a sign-in flow, which
+ * is what makes it usable in the hello frame. accountStatus ANY reports the
+ * account even when the user has not turned sync on. Both fields come back
+ * empty on a profile with nobody signed in, which is a fact worth sending
+ * rather than an error.
+ */
+async function profileAccount() {
+  const empty = { email: '', id: '' };
+  if (!chrome.identity || typeof chrome.identity.getProfileUserInfo !== 'function') return empty;
+  try {
+    const info = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), 2000);
+      const done = (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      };
+      try {
+        const maybe = chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' }, done);
+        if (maybe && typeof maybe.then === 'function') maybe.then(done, () => done(null));
+      } catch {
+        done(null);
+      }
+    });
+    return { email: (info && info.email) || '', id: (info && info.id) || '' };
+  } catch {
+    return empty;
+  }
 }
 
 function connect() {
@@ -229,6 +265,21 @@ async function handleMessage(message) {
         tools: TOOL_NAMES,
         context,
       });
+      return;
+    }
+
+    // Which sites this profile is signed into, so a caller with several
+    // profiles open can pick the one that already has the session it needs.
+    // Names and presence only, never a cookie value.
+    case 'sessions': {
+      try {
+        const result = message.url
+          ? await sessions.sessionsFor(message.url)
+          : { sessions: await sessions.listSessions(message.domains) };
+        post({ type: 'sessions_response', id: message.id, result });
+      } catch (err) {
+        post({ type: 'sessions_response', id: message.id, error: serializeError(err) });
+      }
       return;
     }
 

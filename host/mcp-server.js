@@ -10,7 +10,18 @@ import { statSync, accessSync, constants, writeFileSync, mkdirSync } from 'node:
 import { resolve as resolvePath, join as joinPath } from 'node:path';
 import { tmpdir } from 'node:os';
 import { socketPathFor, connect } from './ipc.js';
-import { listBrowsers, pickDefault } from './registry.js';
+import {
+  listBrowsers,
+  pickDefault,
+  selectBrowser,
+  parseSelectorString,
+  describeBrowser,
+  isLocal,
+  isDev,
+  devBrowserId,
+} from './registry.js';
+import { ToolFailure } from './errors.js';
+import { SESSION_DOMAINS, registrableDomain } from '../extension/src/lib/sessions.js';
 import { TOOLS, TOOL_NAMES } from './schemas.js';
 import { encodeGif } from './gif.js';
 import { normalizeCall } from '../extension/src/lib/aliases.js';
@@ -28,6 +39,138 @@ let selectedBrowser = process.env.CHROME_MCP_BROWSER_ID || null;
 let activeBrowser = null;
 
 /**
+ * A default asked for at startup, by CHROME_MCP_BROWSER or --browser.
+ *
+ * It cannot be resolved here because no browser may be connected yet, so it is
+ * held until the first call that needs a browser and resolved against the live
+ * list then.
+ */
+function startupSelector() {
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--browser' && argv[i + 1]) return parseSelectorString(argv[i + 1]);
+    if (argv[i].startsWith('--browser=')) return parseSelectorString(argv[i].slice('--browser='.length));
+  }
+  if (process.env.CHROME_MCP_BROWSER) return parseSelectorString(process.env.CHROME_MCP_BROWSER);
+  return null;
+}
+
+let pendingSelector = startupSelector();
+
+// ---------------------------------------------------------------------------
+// Which sites each connected profile is signed into
+// ---------------------------------------------------------------------------
+
+const SESSION_TTL = 15000;
+const sessionsCache = new Map();
+
+/**
+ * Asks one browser about its sessions.
+ *
+ * A short-lived connection rather than the session's own link, because this has
+ * to work for every connected browser, including ones this session is not
+ * driving. Never returns cookie values, only names and presence.
+ */
+function askSessions(entry, payload, timeout = 3000) {
+  const id = 'sessions_' + ++requestSeq;
+  return new Promise((resolve) => {
+    let done = false;
+    let close = () => {};
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      close();
+      resolve(value);
+    };
+    connect(entry.socket).then(
+      (socket) => {
+        const timer = setTimeout(() => finish(null), timeout);
+        close = () => {
+          clearTimeout(timer);
+          try {
+            socket.end();
+          } catch {
+            /* already closed */
+          }
+        };
+        socket.on('message', (message) => {
+          if (message.id !== id) return;
+          // An extension too old to know the request, or one whose worker is
+          // not attached, answers with an error rather than a result.
+          finish(message.error || message.type !== 'sessions_response' ? null : message.result || null);
+        });
+        socket.on('close', () => finish(null));
+        socket.on('error', () => finish(null));
+        try {
+          socket.send({ ...payload, type: 'sessions', id, clientId: CLIENT_ID });
+        } catch {
+          finish(null);
+        }
+      },
+      () => finish(null)
+    );
+  });
+}
+
+/** The table domains one browser holds a session for, cached briefly. */
+async function fetchSessions(entry) {
+  const cached = sessionsCache.get(entry.id);
+  if (cached && Date.now() - cached.at < SESSION_TTL) return cached.sessions;
+
+  const result = await askSessions(entry, {});
+  const sessions = result && Array.isArray(result.sessions) ? result.sessions : null;
+  if (sessions) sessionsCache.set(entry.id, { at: Date.now(), sessions });
+  return sessions;
+}
+
+/** The heuristic answer for a site the table does not cover. */
+function fetchSessionFor(entry, url) {
+  return askSessions(entry, { url });
+}
+
+/**
+ * The connected browsers with their `sessions` filled in, asked in parallel.
+ *
+ * A site outside the known table gets one extra question per browser, whose
+ * answer is a heuristic on cookie shape. It is folded into the same list so
+ * selection works the same way for a site the table has never heard of.
+ */
+async function withSessions(browsers, alsoAsk) {
+  const domain = alsoAsk && registrableDomain(alsoAsk);
+  const heuristic = domain && !SESSION_DOMAINS.includes(domain) ? domain : null;
+
+  return Promise.all(
+    browsers.map(async (entry) => {
+      const reported = await fetchSessions(entry);
+      // A copy, because the cached array must not grow a heuristic answer.
+      const sessions = [...(reported || [])];
+      if (heuristic) {
+        const answer = await fetchSessionFor(entry, heuristic);
+        if (answer && answer.likely) sessions.push(answer.domain || heuristic);
+      }
+      // An extension that never answered is a different fact from a profile
+      // signed into nothing, and the listing has to say which one it saw.
+      return { ...entry, sessions, sessionsReported: reported !== null };
+    })
+  );
+}
+
+/** True when a selector needs live session state to be decided. */
+function needsSessions(selector) {
+  if (!selector) return false;
+  return Boolean(selector.site) || Boolean(selector.any && String(selector.any).includes('.'));
+}
+
+/** The one browser a selector names, asking for session state only when the selector needs it. */
+async function resolveSelector(selector) {
+  const wanted = typeof selector === 'string' ? parseSelectorString(selector) : selector;
+  let browsers = await listBrowsers();
+  if (!browsers.length) throw new ToolFailure('browser_unknown', 'No browsers are connected.');
+  if (needsSessions(wanted)) browsers = await withSessions(browsers, wanted.site || wanted.any);
+  return selectBrowser(browsers, wanted);
+}
+
+/**
  * Finds the browser to talk to.
  *
  * With one connected browser there is nothing to choose. With several, the
@@ -40,16 +183,23 @@ async function resolveBrowser() {
     return { id: 'override', name: 'Browser', socket: process.env.CHROME_MCP_SOCKET };
   }
 
+  if (!selectedBrowser && pendingSelector) {
+    const chosen = await resolveSelector(pendingSelector);
+    selectedBrowser = chosen.id;
+    pendingSelector = null;
+    return chosen;
+  }
+
   const browsers = await listBrowsers();
   if (!browsers.length) return null;
 
   const chosen = pickDefault(browsers, selectedBrowser);
   if (chosen) return chosen;
 
-  const names = browsers.map((b) => '  ' + b.id + '  ' + b.name + ' ' + b.version).join('\n');
+  const names = browsers.map((b) => '  ' + b.id + '  ' + describeBrowser(b)).join('\n');
   throw new Error(
     browsers.length + ' browsers are connected, so this session needs to pick one:\n' + names +
-      '\n\nCall select_browser with one of those ids.'
+      '\n\nCall select_browser with one of those ids, or with {profile}, {account} or {site}.'
   );
 }
 
@@ -121,12 +271,57 @@ const NOT_RUNNING =
   '  4. Chrome was restarted after registering the host.\n\n' +
   'Run `npm run doctor` in the chrome-mcp directory to check all four.';
 
+/**
+ * One call against a browser this session is not driving.
+ *
+ * The `browser` argument on a page tool routes a single call without changing
+ * the session default, so a session can read one profile and keep writing in
+ * another. It opens its own connection and closes it, which keeps the session's
+ * own link and its browser_status state untouched.
+ */
+function callOnBrowser(target, type, payload, timeout = 120000) {
+  const id = 'mcp_route_' + ++requestSeq;
+  return new Promise((resolve, reject) => {
+    connect(target.socket).then((socket) => {
+      let done = false;
+      const finish = (fn, value) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        try {
+          socket.end();
+        } catch {
+          /* already closed */
+        }
+        fn(value);
+      };
+      const timer = setTimeout(
+        () => finish(reject, new Error(describeBrowser(target) + ' did not respond within ' + timeout / 1000 + 's.')),
+        timeout
+      );
+      socket.on('message', (message) => {
+        if (message.type === 'browser_status' || message.id !== id) return;
+        if (message.error) finish(reject, message.error);
+        else finish(resolve, message.result !== undefined ? message.result : message);
+      });
+      socket.on('close', () => finish(reject, new Error('Connection to ' + target.id + ' closed.')));
+      socket.on('error', (err) => finish(reject, err));
+      try {
+        socket.send({ ...payload, type, id, clientId: CLIENT_ID });
+      } catch (err) {
+        finish(reject, err);
+      }
+    }, reject);
+  });
+}
+
 async function callBridge(type, payload, timeout = 120000) {
   try {
     await ensureLink();
   } catch (err) {
     // A selection problem is actionable and must not be reported as a missing
     // bridge, which would send the caller to the wrong fix.
+    if (err instanceof ToolFailure) throw err;
     if (err && /needs to pick one/.test(err.message || '')) throw err;
     throw new Error(NOT_RUNNING);
   }
@@ -312,11 +507,75 @@ function dropLink() {
   activeBrowser = null;
 }
 
+/** How this session stands towards one browser, for the listing. */
+function selectionMark(entry) {
+  if (activeBrowser && activeBrowser.id === entry.id) return '  (in use)';
+  if (selectedBrowser === entry.id) return '  (selected)';
+  return '';
+}
+
+/** The full listing for one browser: who it is, whose account, and what it is signed into. */
+function browserReport(entry, devId) {
+  const profile = entry.profile || {};
+  const account = entry.account || {};
+  const email = account.email || profile.userName || '';
+
+  const head = entry.id + (entry.label ? '  ' + entry.label : '') + selectionMark(entry);
+  const lines = [head];
+  lines.push(
+    '  browser: ' + entry.name + ' ' + entry.version +
+      '  local: ' + isLocal(entry) +
+      '  dev: ' + isDev(entry, devId)
+  );
+  lines.push(
+    '  profile: ' + (profile.directory || 'unknown') +
+      (profile.name ? ' "' + profile.name + '"' : '') +
+      '  account: ' + (email || 'not signed in')
+  );
+  if (profile.reason) lines.push('  profile detail missing: ' + profile.reason);
+  lines.push(
+    '  sessions: ' +
+      (!entry.sessionsReported
+        ? 'not reported (reload the extension so it picks up the cookies permission)'
+        : entry.sessions.length ? entry.sessions.join(', ') : 'none detected')
+  );
+  return lines.join('\n');
+}
+
+/**
+ * tabs_context across every connected browser, one section each.
+ *
+ * A session with two profiles open has two sets of tab ids, and a tab id alone
+ * does not say which browser it belongs to. The header on each section is what
+ * a caller passes as `browser` on the next call.
+ */
+async function groupedTabsContext(browsers, args) {
+  const sections = await Promise.all(
+    browsers.map(async (entry) => {
+      let body;
+      try {
+        const result = await callOnBrowser(entry, 'tool_request', { tool: 'tabs_context', args }, 20000);
+        body = JSON.stringify(result, null, 2);
+      } catch (err) {
+        body = 'unavailable: ' + ((err && err.message) || String(err));
+      }
+      return 'browser ' + entry.id + '  ' + describeBrowser(entry) + selectionMark(entry) + '\n' + body;
+    })
+  );
+  return [
+    textBlock(
+      sections.join('\n\n') +
+        '\n\nTab ids are per browser. Pass browser: "<id>" on a call to act in one of them without switching.'
+    ),
+  ];
+}
+
 /** Tools answered by the server itself, because they are about which browser to use. */
 async function handleBrowserTool(name, args) {
-  const browsers = await listBrowsers();
+  const devId = devBrowserId();
 
   if (name === 'list_connected_browsers') {
+    const browsers = await listBrowsers();
     if (!browsers.length) {
       return [
         textBlock(
@@ -324,31 +583,30 @@ async function handleBrowserTool(name, args) {
         ),
       ];
     }
-    const lines = browsers.map((b) => {
-      const mark = activeBrowser && activeBrowser.id === b.id ? ' (in use)' : selectedBrowser === b.id ? ' (selected)' : '';
-      return b.id + '  ' + b.name + ' ' + b.version + mark;
-    });
-    return [textBlock(browsers.length + ' connected:\n' + lines.join('\n'))];
-  }
-
-  // select_browser and switch_browser are the same operation.
-  const wanted = String(args.browserId || args.id || '').trim();
-  if (!wanted) {
-    return [textBlock('Pass browserId. Call list_connected_browsers to see the ids.')];
-  }
-  const match = browsers.find((b) => b.id === wanted || b.name.toLowerCase() === wanted.toLowerCase());
-  if (!match) {
+    const enriched = await withSessions(browsers);
     return [
       textBlock(
-        'No connected browser matches ' + JSON.stringify(wanted) + '. Connected: ' +
-          (browsers.map((b) => b.id + ' (' + b.name + ')').join(', ') || 'none')
+        enriched.length + ' connected:\n' + enriched.map((b) => browserReport(b, devId)).join('\n\n') +
+          '\n\nselect_browser takes any of browserId, label, profile, account or site.'
       ),
     ];
   }
 
+  // select_browser and switch_browser are the same operation.
+  const selector = {};
+  for (const key of ['browserId', 'id', 'label', 'profile', 'account', 'site']) {
+    if (args[key] !== undefined && String(args[key]).trim()) selector[key === 'id' ? 'browserId' : key] = String(args[key]).trim();
+  }
+  if (!Object.keys(selector).length) {
+    return [
+      textBlock('Pass one of browserId, label, profile, account or site. Call list_connected_browsers to see them.'),
+    ];
+  }
+
+  const match = await resolveSelector(selector);
   selectedBrowser = match.id;
   dropLink();
-  return [textBlock('Now using ' + match.name + ' ' + match.version + ' (' + match.id + ').')];
+  return [textBlock('Now using ' + describeBrowser(match) + ' (' + match.id + ').')];
 }
 
 let lastImagePath = null;
@@ -506,9 +764,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     return { content: [textBlock('Unknown tool: ' + name)], isError: true };
   }
 
+  // A `browser` argument routes this one call and leaves the session default
+  // alone, so reading another profile does not cost a switch and a switch back.
+  let route = null;
+  const isBrowserTool = name === 'list_connected_browsers' || name === 'select_browser' || name === 'switch_browser';
+  if (!isBrowserTool && args && args.browser !== undefined && args.browser !== null && String(args.browser).trim()) {
+    route = String(args.browser).trim();
+    args = { ...args };
+    delete args.browser;
+  }
+
   try {
-    if (name === 'list_connected_browsers' || name === 'select_browser' || name === 'switch_browser') {
+    if (isBrowserTool) {
       return { content: await handleBrowserTool(name, args) };
+    }
+    if (name === 'tabs_context' && !route && !args.createIfEmpty) {
+      // With several browsers connected the listing says which browser each
+      // group of tabs is in, and works without the session having chosen one.
+      // createIfEmpty is excluded because it would open a tab in every browser.
+      const connected = await listBrowsers();
+      if (connected.length > 1) return { content: await groupedTabsContext(connected, args) };
     }
     if (name === 'file_upload' && Array.isArray(args.paths)) {
       args = { ...args, paths: prepareUploadPaths(args.paths) };
@@ -540,9 +815,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       delete args.filename;
       name = 'file_upload';
     }
-    const result = await callBridge('tool_request', { tool: name, args });
+    const result = route
+      ? await callOnBrowser(await resolveSelector(route), 'tool_request', { tool: name, args })
+      : await callBridge('tool_request', { tool: name, args });
     return { content: formatResult(name, result, args) };
   } catch (err) {
+    // A selection failure carries a code from the catalogue, so it is reported
+    // in the structured shape rather than flattened to a sentence.
+    if (err instanceof ToolFailure) {
+      return { content: [textBlock(JSON.stringify({ ok: false, error: err.error }, null, 2))], isError: true };
+    }
     const message = err && err.message ? err.message : String(err);
     return { content: [textBlock(message)], isError: true };
   }
