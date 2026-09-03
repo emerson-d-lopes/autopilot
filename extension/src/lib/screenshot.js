@@ -169,3 +169,46 @@ export function getScalingContext(tabId) {
 export function clearScalingContext(tabId) {
   scalingContext.delete(tabId);
 }
+
+// ---------------------------------------------------------------------------
+// Repaint clock (R3)
+// ---------------------------------------------------------------------------
+//
+// A screenshot taken in the same round trip as a click showed the pre-click
+// frame: on TodoMVC a script that typed a todo, pressed Enter and ended with a
+// capture returned an empty field and no list, while a separate read a moment
+// later showed the todo present. An output that contradicts what happened is
+// worse than one that fails, because the caller acts on it.
+//
+// The capture cannot tell whether it is inside a batch, and it does not need
+// to. Every mutating action stamps its tab here, and a capture that finds a
+// recent stamp waits for a paint that postdates it. A capture on a tab nothing
+// has touched waits for nothing.
+
+/** @type {Map<number, number>} */
+const lastInput = new Map();
+
+/** How long after an input a capture still waits for the paint that follows it. */
+export const PAINT_WAIT_WINDOW_MS = 2000;
+
+/** Ceiling on the wait, so a page that never paints costs a fixed amount. */
+export const PAINT_CEILING_MS = 300;
+
+export function noteInput(tabId, at = Date.now()) {
+  if (tabId === undefined || tabId === null) return;
+  lastInput.set(tabId, at);
+}
+
+export function lastInputAt(tabId) {
+  return lastInput.get(tabId) || 0;
+}
+
+export function clearInputMark(tabId) {
+  lastInput.delete(tabId);
+}
+
+/** True when a capture on this tab should wait for a paint before reading pixels. */
+export function needsPaintWait(tabId, now = Date.now()) {
+  const at = lastInput.get(tabId);
+  return Boolean(at) && now - at < PAINT_WAIT_WINDOW_MS;
+}

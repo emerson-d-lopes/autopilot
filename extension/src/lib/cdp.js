@@ -695,3 +695,206 @@ export async function dropFiles(tabId, x, y, files) {
     await send(tabId, 'Input.dispatchDragEvent', { type, x, y, data });
   }
 }
+
+// ===========================================================================
+// Added by branch plan/content-verify. Self-contained, so the merge is a
+// straight append. Nothing above this line is modified.
+// ===========================================================================
+
+/**
+ * The key identity of a printable character (R5, S7).
+ *
+ * `typeKeys` sent a keyDown carrying only `text` and `key`, with no virtual key
+ * code and no `code`. Chrome delivers that as a key press with keyCode 0, and a
+ * field whose framework reads `event.keyCode` or `event.code` on keydown never
+ * sees a character, which is why `perKey` typing landed nothing in the jqueryui
+ * autocomplete while the same field took `Input.insertText` immediately. The
+ * fix is to send the same three events `pressKey` already sends for a named
+ * key: keyDown, char, keyUp, with the codes filled in.
+ */
+export function printableKeySpec(ch) {
+  const upper = ch.toUpperCase();
+  const codePoint = upper.charCodeAt(0);
+  let code = '';
+  if (/[A-Z]/.test(upper)) code = 'Key' + upper;
+  else if (/[0-9]/.test(ch)) code = 'Digit' + ch;
+  else {
+    const PUNCT = {
+      ' ': 'Space', '-': 'Minus', '=': 'Equal', '[': 'BracketLeft', ']': 'BracketRight',
+      '\\': 'Backslash', ';': 'Semicolon', "'": 'Quote', ',': 'Comma', '.': 'Period',
+      '/': 'Slash', '`': 'Backquote',
+    };
+    code = PUNCT[ch] || '';
+  }
+  // Windows virtual key codes for the characters that carry one. Anything else
+  // rides on the text payload alone, which is what an IME-produced character
+  // does too.
+  const VK = {
+    ' ': 32, '-': 189, '=': 187, '[': 219, ']': 221, '\\': 220, ';': 186,
+    "'": 222, ',': 188, '.': 190, '/': 191, '`': 192,
+  };
+  const vk = /[A-Z0-9]/.test(upper) ? codePoint : VK[ch] || 0;
+  return { vk, code, key: ch, text: ch };
+}
+
+/** Dispatches one printable character as a real key press. */
+export async function pressPrintable(tabId, ch, modifiers = 0) {
+  const spec = printableKeySpec(ch);
+  const base = {
+    modifiers,
+    windowsVirtualKeyCode: spec.vk,
+    nativeVirtualKeyCode: spec.vk,
+    code: spec.code || undefined,
+    key: spec.key,
+  };
+  await send(tabId, 'Input.dispatchKeyEvent', {
+    ...base,
+    type: 'keyDown',
+    text: spec.text,
+    unmodifiedText: spec.text,
+  });
+  await send(tabId, 'Input.dispatchKeyEvent', { ...base, type: 'char', text: spec.text });
+  await send(tabId, 'Input.dispatchKeyEvent', { ...base, type: 'keyUp' });
+}
+
+/**
+ * Types character by character with complete key events (R5).
+ *
+ * Replaces the payload `typeKeys` sent. Kept as a separate export so the old
+ * function stays available while both are in the tree.
+ */
+export async function typeKeysReal(tabId, text, delay = 12) {
+  for (const ch of String(text)) {
+    if (ch === '\n') {
+      await pressKey(tabId, 'enter');
+    } else {
+      await pressPrintable(tabId, ch);
+    }
+    if (delay) await sleep(delay, tabId);
+  }
+}
+
+/**
+ * Presses a key combination, falling through to the printable-character path
+ * when the name is a single character the key table does not carry (S7).
+ *
+ * `K /` used to error with a list of supported keys, so a GitHub search
+ * shortcut needed a different command than every other key press.
+ */
+export async function pressKeyLoose(tabId, combo) {
+  const raw = String(combo);
+  // Checked before splitting, so "+" itself is a key rather than an empty
+  // combination.
+  if ([...raw].length === 1 && !/[a-z0-9]/i.test(raw)) return pressPrintable(tabId, raw);
+
+  const parts = raw.split('+').map((p) => p.trim()).filter(Boolean);
+  const keyName = parts[parts.length - 1];
+  const printable = keyName && [...keyName].length === 1 && !/[a-z0-9]/i.test(keyName);
+  if (!printable) return pressKey(tabId, combo);
+  await pressPrintable(tabId, keyName, modifiersToMask(parts.slice(0, -1).join('+')));
+}
+
+export async function pressKeySequenceLoose(tabId, sequence, repeat = 1) {
+  const combos = String(sequence).split(/\s+/).filter(Boolean);
+  for (let r = 0; r < repeat; r++) {
+    for (const combo of combos) {
+      await pressKeyLoose(tabId, combo);
+      await sleep(10, tabId);
+    }
+  }
+}
+
+/**
+ * A drag with dwell time either side of the movement (R15).
+ *
+ * The local fixture's HTML5 drag boxes and its range slider both stayed put
+ * under `mouseDrag`, and the page's event log showed a pointerdown and a click
+ * with no drop between them: the press and the first move landed in the same
+ * frame, so the browser never started a drag. A pause after the press and
+ * another before the release gives the drag source time to begin and the drop
+ * target time to accept.
+ */
+export async function mouseDragDwell(tabId, from, to, modifiers = 0, hooks = {}, options = {}) {
+  const { onMove, onPress, onRelease } = hooks;
+  const { steps = 10, stepDelay = 16, pressDwell = 50, releaseDwell = 50 } = options;
+  const [x1, y1] = from;
+  const [x2, y2] = to;
+
+  if (onMove) onMove(x1, y1);
+  await sendInput(tabId, { type: 'mouseMoved', x: x1, y: y1, buttons: 0, modifiers });
+  await sleep(50, tabId);
+
+  if (onPress) onPress(x1, y1);
+  await send(tabId, 'Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x: x1,
+    y: y1,
+    button: 'left',
+    buttons: 1,
+    clickCount: 1,
+    modifiers,
+  });
+  await sleep(pressDwell, tabId);
+
+  for (let i = 1; i <= steps; i++) {
+    const stepX = Math.round(x1 + ((x2 - x1) * i) / steps);
+    const stepY = Math.round(y1 + ((y2 - y1) * i) / steps);
+    if (onMove) onMove(stepX, stepY);
+    await sendInput(tabId, {
+      type: 'mouseMoved',
+      x: stepX,
+      y: stepY,
+      button: 'left',
+      buttons: 1,
+      modifiers,
+    });
+    await sleep(stepDelay, tabId);
+  }
+
+  await sleep(releaseDwell, tabId);
+  await send(tabId, 'Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x: x2,
+    y: y2,
+    button: 'left',
+    buttons: 0,
+    clickCount: 1,
+    modifiers,
+  });
+  if (onRelease) onRelease(x2, y2);
+}
+
+/**
+ * The first screencast frame whose timestamp postdates a given moment (R3).
+ *
+ * A hidden tab runs no animation frames, so the repaint wait a visible tab uses
+ * cannot work there. Chrome stamps every screencast frame with the wall clock
+ * time it was produced, which is a paint clock the extension can compare
+ * against the moment of the last input.
+ */
+export function screencastFrameAfter(tabId, sinceMs, { timeout = 300, format = 'jpeg', quality = 50 } = {}) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      chrome.debugger.onEvent.removeListener(listener);
+      sendNoWait(tabId, 'Page.stopScreencast');
+      resolve(result);
+    };
+    const listener = (source, method, params) => {
+      if (!source || source.tabId !== tabId || method !== 'Page.screencastFrame') return;
+      sendNoWait(tabId, 'Page.screencastFrameAck', { sessionId: params.sessionId });
+      const stamp = params.metadata && params.metadata.timestamp ? params.metadata.timestamp * 1000 : Date.now();
+      if (stamp >= sinceMs) finish({ painted: true, at: stamp });
+      // A frame older than the input is the pre-input state. Waiting for the
+      // next one is the whole point, so this one is acknowledged and dropped.
+    };
+    const timer = setTimeout(() => finish({ painted: false, timedOut: true }), timeout);
+    chrome.debugger.onEvent.addListener(listener);
+    send(tabId, 'Page.startScreencast', { format, quality, everyNthFrame: 1 }).catch(() =>
+      finish({ painted: false, error: true })
+    );
+  });
+}
