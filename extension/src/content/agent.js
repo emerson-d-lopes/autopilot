@@ -202,16 +202,113 @@
     'blockquote',
   ]);
 
+  /**
+   * Whether the element is an editing host.
+   *
+   * `isContentEditable` is the browser's own answer and covers a descendant of
+   * an editing host. The attribute check is what catches the host itself in
+   * environments that do not implement editing.
+   */
+  function isEditableHost(el) {
+    if (!el) return false;
+    if (el.isContentEditable) return true;
+    const v = el.getAttribute && el.getAttribute('contenteditable');
+    return v === '' || v === 'true';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sensitive fields (F1)
+  // ---------------------------------------------------------------------------
+  //
+  // A value from one of these never leaves the page: not in the tree, not in a
+  // form_input confirmation, not in the journal. The test is the field itself
+  // rather than the page, because a password box on an ordinary page is still a
+  // password box.
+
+  const SENSITIVE_AUTOCOMPLETE = [
+    'current-password',
+    'new-password',
+    'one-time-code',
+    'cc-number',
+    'cc-csc',
+    'cc-exp-month',
+    'cc-exp-year',
+    'cc-exp',
+  ];
+
+  const REDACTED_VALUE = '[value redacted]';
+
+  function isSensitiveField(el) {
+    if (!el || !el.getAttribute) return false;
+    if (el.tagName === 'INPUT') {
+      const type = (el.getAttribute('type') || 'text').toLowerCase();
+      if (type === 'password' || type === 'hidden') return true;
+    }
+    const auto = (el.getAttribute('autocomplete') || '').toLowerCase();
+    if (!auto) return false;
+    return SENSITIVE_AUTOCOMPLETE.some((token) => auto.includes(token));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Irreversible controls (W3)
+  // ---------------------------------------------------------------------------
+  //
+  // One list, used by the tree, by find (which reads the tree's text) and by the
+  // click result. A control marked here cannot be undone by clicking something
+  // else, so the model gets to know before it presses rather than after.
+
+  const IRREVERSIBLE_WORDS = [
+    'send',
+    'post',
+    'publish',
+    'delete',
+    'remove',
+    'pay',
+    'purchase',
+    'buy',
+    'confirm order',
+    'transfer',
+    'unsubscribe',
+  ];
+
+  // Whole words only, so "Posted by" and "Sender" do not match, and the two-word
+  // entry tolerates any run of whitespace between its halves.
+  const IRREVERSIBLE_RE = new RegExp(
+    '(^|[^a-z])(' + IRREVERSIBLE_WORDS.map((w) => w.replace(/ /g, '\\s+')).join('|') + ')([^a-z]|$)',
+    'i'
+  );
+
+  const IRREVERSIBLE_ROLES = new Set([
+    'button',
+    'link',
+    'menuitem',
+    'menuitemcheckbox',
+    'menuitemradio',
+  ]);
+
+  // Set by the caller when the page is in the permission policy's payment
+  // category, where every control is treated as irreversible.
+  let paymentCategoryPage = false;
+
+  function isIrreversibleControl(el, role, name) {
+    if (!IRREVERSIBLE_ROLES.has(role)) return false;
+    if (paymentCategoryPage) return true;
+    if (name && IRREVERSIBLE_RE.test(name)) return true;
+    const formAction = el.getAttribute && el.getAttribute('formaction');
+    if (formAction && IRREVERSIBLE_RE.test(formAction)) return true;
+    const form = el.form || (el.closest && el.closest('form'));
+    const action = form && form.getAttribute && form.getAttribute('action');
+    if (action && IRREVERSIBLE_RE.test(action)) return true;
+    return false;
+  }
+
   function roleOf(el) {
     const explicit = el.getAttribute && el.getAttribute('role');
     if (explicit) return explicit.trim().split(/\s+/)[0];
     const tag = el.tagName ? el.tagName.toUpperCase() : '';
     const fn = TAG_ROLES[tag];
     if (fn) return fn(el);
-    if (el.hasAttribute && el.hasAttribute('contenteditable')) {
-      const v = el.getAttribute('contenteditable');
-      if (v === '' || v === 'true') return 'textbox';
-    }
+    if (isEditableHost(el)) return 'textbox';
     if (el.hasAttribute && el.hasAttribute('tabindex')) return 'generic';
     return 'generic';
   }
@@ -504,24 +601,34 @@
       out.push(k + '=' + (/[\s"]/.test(s) ? JSON.stringify(s) : s));
     };
 
+    // A sensitive control reports that it holds a value and never what the
+    // value is, and a sensitive select does not list what it could be set to.
+    const sensitive = isSensitiveField(el);
+
     if (el.tagName === 'A') push('href', el.getAttribute('href'));
     if (el.tagName === 'INPUT') {
       push('type', (el.getAttribute('type') || 'text').toLowerCase());
-      if (el.value && el.type !== 'password') push('value', el.value);
+      if (el.value) push('value', sensitive ? REDACTED_VALUE : el.value);
       if (el.checked) push('checked', 'true');
     }
-    if (el.tagName === 'TEXTAREA' && el.value) push('value', el.value.slice(0, 120));
+    if (el.tagName === 'TEXTAREA' && el.value) {
+      push('value', sensitive ? REDACTED_VALUE : el.value.slice(0, 120));
+    }
     if (el.tagName === 'SELECT') {
       const sel = el.selectedOptions && el.selectedOptions[0];
-      if (sel) push('selected', sel.textContent && sel.textContent.trim());
-      // Summarised here so the options do not each become a tree node. A select
-      // with 200 countries would otherwise cost 200 lines.
-      const labels = Array.from(el.options || [])
-        .slice(0, 8)
-        .map((o) => (o.textContent || '').trim())
-        .filter(Boolean);
-      if (labels.length) {
-        push('options', labels.join('|') + (el.options.length > 8 ? '|...+' + (el.options.length - 8) : ''));
+      if (sensitive) {
+        if (sel) push('selected', REDACTED_VALUE);
+      } else {
+        if (sel) push('selected', sel.textContent && sel.textContent.trim());
+        // Summarised here so the options do not each become a tree node. A select
+        // with 200 countries would otherwise cost 200 lines.
+        const labels = Array.from(el.options || [])
+          .slice(0, 8)
+          .map((o) => (o.textContent || '').trim())
+          .filter(Boolean);
+        if (labels.length) {
+          push('options', labels.join('|') + (el.options.length > 8 ? '|...+' + (el.options.length - 8) : ''));
+        }
       }
     }
     if (el.tagName === 'IFRAME') push('src', el.getAttribute('src'));
@@ -553,10 +660,7 @@
 
   function isInteractive(el, role) {
     if (INTERACTIVE_ROLES.has(role)) return true;
-    if (el.hasAttribute && el.hasAttribute('contenteditable')) {
-      const v = el.getAttribute('contenteditable');
-      if (v === '' || v === 'true') return true;
-    }
+    if (isEditableHost(el)) return true;
     if (el.hasAttribute && el.hasAttribute('onclick')) return true;
     const tabindex = el.getAttribute && el.getAttribute('tabindex');
     if (tabindex !== null && tabindex !== undefined && parseInt(tabindex, 10) >= 0) return true;
@@ -652,6 +756,9 @@
         const attrs = interestingAttributes(el, role);
         const parts = [role];
         if (name) parts.push(JSON.stringify(name));
+        // Sits between the name and the ref, so a reader sees what the control
+        // does before it sees how to press it.
+        if (isIrreversibleControl(el, role, name)) parts.push('[irreversible]');
         parts.push('[' + ref + ']');
         if (visibility.rendered && !visibility.onScreen) parts.push('(offscreen)');
         if (attrs.length) parts.push(attrs.join(' '));
@@ -718,7 +825,10 @@
       maxChars = 50000,
       refId = null,
       includeInvisible = false,
+      paymentCategory = false,
     } = options || {};
+
+    paymentCategoryPage = Boolean(paymentCategory);
 
     let root = document.documentElement;
     if (refId) {
@@ -749,19 +859,33 @@
 
     // Truncate at a line boundary and report the real size so the caller knows
     // to narrow with ref_id or depth instead of assuming the page is small.
+    //
+    // The count that is not shown goes in the text as well as in the fields,
+    // because a model reading the tree inline never sees the fields. Room for
+    // that line is reserved out of the budget, so the whole result still fits
+    // in maxChars.
+    const NOTE_ROOM = 200;
+    const budget = Math.max(0, maxChars - NOTE_ROOM);
     let acc = 0;
     const kept = [];
     for (const line of lines) {
-      if (acc + line.length + 1 > maxChars) break;
+      if (acc + line.length + 1 > budget) break;
       kept.push(line);
       acc += line.length + 1;
     }
+    const hidden = lines.length - kept.length;
+    const note =
+      'note: truncated. ' + hidden + ' more node' + (hidden === 1 ? '' : 's') + ' not shown, ' +
+      lines.length + ' in total (' + full.length + ' chars). ' +
+      'Narrow with ref_id, filter or depth, or raise max_chars.';
+    const withNote = kept.concat(note);
     return {
-      text: kept.join('\n'),
+      text: withNote.join('\n'),
       totalChars: full.length,
       truncated: true,
       nodes: lines.length,
       shownNodes: kept.length,
+      hiddenNodes: hidden,
     };
   }
 
@@ -769,13 +893,74 @@
   // Page text
   // ---------------------------------------------------------------------------
 
+  /**
+   * Names the container a walk was run against, for the diagnostic report.
+   */
+  function describeContainer(el) {
+    if (!el) return 'none';
+    if (el === document.body) return 'body';
+    const tag = el.tagName.toLowerCase();
+    const role = el.getAttribute && el.getAttribute('role');
+    if (role) return tag + '[role=' + role + ']';
+    return tag;
+  }
+
+  /**
+   * Reads the page's prose.
+   *
+   * The container chain (article, then main, then role=main, then body) picks
+   * the wrong element often enough to matter: a feed page's first `article` is
+   * frequently an empty or hidden slot, and a virtualized editor puts its text
+   * under a `content-visibility` ancestor that the visibility filter rejects
+   * wholesale. Either one returns zero characters with nothing to say why.
+   *
+   * So the walk is run up to three times: the chosen container with the
+   * visibility filter on, then `document.body` with it on, then `document.body`
+   * with it relaxed to the checks that cannot be wrong (the hidden attribute,
+   * aria-hidden, display none, visibility hidden). The counts from every pass
+   * are reported, so an empty result says which filter emptied it.
+   */
   function pageText(maxChars = 50000) {
-    const article =
+    const chosen =
       document.querySelector('article') ||
       document.querySelector('main') ||
       document.querySelector('[role="main"]') ||
       document.body;
-    if (!article) return { text: '', totalChars: 0, truncated: false };
+    if (!chosen) {
+      return {
+        text: '',
+        totalChars: 0,
+        truncated: false,
+        container: 'none',
+        textNodes: 0,
+        rejectedHidden: 0,
+        rejectedEmpty: 0,
+      };
+    }
+
+    const attempts = [{ container: chosen, strict: true }];
+    if (chosen !== document.body && document.body) attempts.push({ container: document.body, strict: true });
+    attempts.push({ container: chosen, strict: false });
+    if (chosen !== document.body && document.body) attempts.push({ container: document.body, strict: false });
+
+    let last = null;
+    for (const attempt of attempts) {
+      const result = collectText(attempt.container, maxChars, attempt.strict);
+      last = {
+        ...result,
+        container: describeContainer(attempt.container) + (attempt.strict ? '' : ' (visibility filter relaxed)'),
+        fallback: attempt !== attempts[0],
+      };
+      if (result.text.length) return last;
+    }
+    return last;
+  }
+
+  function collectText(article, maxChars, strict) {
+    let rejectedHidden = 0;
+    let rejectedEmpty = 0;
+    let rejectedChrome = 0;
+    let textNodes = 0;
 
     // Navigation, headers, footers and side panels inside the chosen container
     // are page chrome rather than content. They are kept only when the
@@ -796,8 +981,13 @@
       if (hiddenCache.has(el)) return hiddenCache.get(el);
       let result = false;
       if (el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true') result = true;
-      else if (typeof el.checkVisibility === 'function') result = !el.checkVisibility({ visibilityProperty: true });
-      else {
+      // checkVisibility reports false for a subtree Chrome is skipping under
+      // content-visibility, which is how a virtualized editor's own prose gets
+      // rejected. The relaxed pass drops it and keeps the checks that cannot be
+      // wrong about whether text is on the page.
+      else if (strict && typeof el.checkVisibility === 'function') {
+        result = !el.checkVisibility({ visibilityProperty: true });
+      } else {
         const style = getComputedStyle(el);
         result = !style || style.display === 'none' || style.visibility === 'hidden';
       }
@@ -806,23 +996,33 @@
       return result;
     }
 
-    const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        const parent = node.parentElement;
-        if (!parent) return NodeFilter.FILTER_REJECT;
-        if (SKIP_TAGS.has(parent.tagName) || parent.tagName === 'OPTION') return NodeFilter.FILTER_REJECT;
-        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
-        if (hiddenByAncestor(parent)) return NodeFilter.FILTER_REJECT;
-        if (!containerIsChrome) {
-          let region = parent.closest(CHROME + ',header,footer');
-          while (region && region !== article && article.contains(region) && !isChrome(region)) {
-            region = region.parentElement && region.parentElement.closest(CHROME + ',header,footer');
-          }
-          if (region && region !== article && article.contains(region)) return NodeFilter.FILTER_REJECT;
+    const acceptNode = (node) => {
+      const parent = node.parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      if (SKIP_TAGS.has(parent.tagName) || parent.tagName === 'OPTION') return NodeFilter.FILTER_REJECT;
+      if (!node.nodeValue || !node.nodeValue.trim()) {
+        rejectedEmpty++;
+        return NodeFilter.FILTER_REJECT;
+      }
+      if (hiddenByAncestor(parent)) {
+        rejectedHidden++;
+        return NodeFilter.FILTER_REJECT;
+      }
+      if (!containerIsChrome) {
+        let region = parent.closest(CHROME + ',header,footer');
+        while (region && region !== article && article.contains(region) && !isChrome(region)) {
+          region = region.parentElement && region.parentElement.closest(CHROME + ',header,footer');
         }
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
+        if (region && region !== article && article.contains(region)) {
+          rejectedChrome++;
+          return NodeFilter.FILTER_REJECT;
+        }
+      }
+      textNodes++;
+      return NodeFilter.FILTER_ACCEPT;
+    };
+
+    const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT, { acceptNode });
 
     // Same-origin frames hold content of their own. A page built from a
     // frameset has no text at all outside them.
@@ -853,7 +1053,7 @@
     let lastBlock = null;
     let lastParent = null;
     let collected = 0;
-    const walkers = roots.map((r) => (r === article ? walker : document.createTreeWalker(r, NodeFilter.SHOW_TEXT, { acceptNode: walker.filter.acceptNode })));
+    const walkers = roots.map((r) => (r === article ? walker : document.createTreeWalker(r, NodeFilter.SHOW_TEXT, { acceptNode })));
     let walkerIndex = 0;
     const nextText = () => {
       while (walkerIndex < walkers.length) {
@@ -896,10 +1096,16 @@
       .replace(/[ \t]+/g, ' ')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+    const counts = { textNodes, rejectedHidden, rejectedEmpty, rejectedChrome };
     if (full.length <= maxChars && total <= maxChars * 2) {
-      return { text: full, totalChars: full.length, truncated: false };
+      return { text: full, totalChars: full.length, truncated: false, ...counts };
     }
-    return { text: full.slice(0, maxChars), totalChars: Math.max(full.length, total), truncated: true };
+    return {
+      text: full.slice(0, maxChars),
+      totalChars: Math.max(full.length, total),
+      truncated: true,
+      ...counts,
+    };
   }
 
   function isDisabled(el) {
@@ -954,6 +1160,232 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Input verification (C3)
+  // ---------------------------------------------------------------------------
+  //
+  // An input that reports success and changed nothing is the worst result a
+  // browser tool can return, because the caller acts on it. Every mutating
+  // action arms this before dispatching and reads it after, so the result can
+  // say what the page did rather than what the extension sent.
+
+  /**
+   * The nearest ancestor that can actually scroll, which is not always the one
+   * the wheel event reaches. An `overflow:hidden` body with an inner scroll
+   * container is the common shape, and a CDP wheel event on it moves nothing.
+   */
+  function scrollableAncestor(el) {
+    for (let node = el; node && node.nodeType === Node.ELEMENT_NODE; node = node.parentElement) {
+      if (node === document.body || node === document.documentElement) break;
+      const style = getComputedStyle(node);
+      if (!style) continue;
+      const scrollsY =
+        /^(auto|scroll|overlay)$/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1;
+      const scrollsX =
+        /^(auto|scroll|overlay)$/.test(style.overflowX) && node.scrollWidth > node.clientWidth + 1;
+      if (scrollsY || scrollsX) return node;
+    }
+    return document.scrollingElement || document.documentElement || document.body;
+  }
+
+  function elementAt(x, y) {
+    try {
+      return document.elementFromPoint(x, y) || document.body || document.documentElement;
+    } catch {
+      return document.body || document.documentElement;
+    }
+  }
+
+  function scrollOffsets(x, y) {
+    const page = {
+      x: Math.round(window.pageXOffset || 0),
+      y: Math.round(window.pageYOffset || 0),
+    };
+    let container = null;
+    if (typeof x === 'number' && typeof y === 'number') {
+      const target = scrollableAncestor(elementAt(x, y));
+      if (target) {
+        container = {
+          tag: target.tagName ? target.tagName.toLowerCase() : 'unknown',
+          x: Math.round(target.scrollLeft || 0),
+          y: Math.round(target.scrollTop || 0),
+          isRoot: target === (document.scrollingElement || document.documentElement),
+        };
+      }
+    }
+    return { page, container };
+  }
+
+  /**
+   * Reads the focused control without echoing anything sensitive. A password
+   * field reports the length of its value, which is enough to see that a type
+   * landed and never enough to reconstruct it.
+   */
+  function focusSnapshot() {
+    const el = document.activeElement;
+    if (!el || el === document.body || el === document.documentElement) {
+      return { present: false, value: null, sensitive: false };
+    }
+    const sensitive = isSensitiveField(el);
+    let value = null;
+    if (isEditableHost(el)) value = String(el.textContent || '');
+    else if ('value' in el && typeof el.value === 'string') value = el.value;
+    return {
+      present: true,
+      ref: elementToRef.get(el) || null,
+      tag: el.tagName,
+      name: accessibleName(el, roleOf(el), true),
+      sensitive,
+      // The comparison value never leaves this function unredacted.
+      value: value === null ? null : sensitive ? 'len:' + value.length : value,
+    };
+  }
+
+  let watch = null;
+
+  /**
+   * The pointer overlay is drawn on every click, which would otherwise make
+   * every click report a DOM mutation and no action could ever be reported as
+   * having changed nothing. Its records are dropped.
+   */
+  function isOwnRecord(record) {
+    if (!cursorRoot) return false;
+    if (record.target === cursorRoot) return true;
+    if (cursorRoot.contains && cursorRoot.contains(record.target)) return true;
+    for (const node of record.addedNodes || []) if (node === cursorRoot) return true;
+    for (const node of record.removedNodes || []) if (node === cursorRoot) return true;
+    return false;
+  }
+
+  function countRecords(records) {
+    let n = 0;
+    for (const record of records) if (!isOwnRecord(record)) n++;
+    return n;
+  }
+
+  function armWatch(point) {
+    if (watch && watch.observer) watch.observer.disconnect();
+    const state = {
+      mutations: 0,
+      observer: null,
+      // The element itself, so two identical unnamed inputs are still two
+      // different focus targets. It is never serialized.
+      focusEl: document.activeElement,
+      focus: focusSnapshot(),
+      scroll: scrollOffsets(point && point.x, point && point.y),
+      point: point || null,
+      url: location.href,
+      armedAt: Date.now(),
+    };
+    state.observer = new MutationObserver((records) => {
+      state.mutations += countRecords(records);
+    });
+    state.observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true,
+    });
+    watch = state;
+    return {
+      ok: true,
+      armed: true,
+      focus: { present: state.focus.present, ref: state.focus.ref, name: state.focus.name },
+      scroll: state.scroll,
+    };
+  }
+
+  function readWatch() {
+    if (!watch) return { ok: false, error: 'no verification window is armed' };
+    const state = watch;
+    state.mutations += countRecords(state.observer.takeRecords());
+    state.observer.disconnect();
+    watch = null;
+
+    const after = {
+      focus: focusSnapshot(),
+      scroll: scrollOffsets(state.point && state.point.x, state.point && state.point.y),
+      url: location.href,
+    };
+
+    const focusChanged = state.focusEl !== document.activeElement;
+    const valueChanged = state.focus.value !== after.focus.value;
+
+    const scrollDelta = {
+      pageX: after.scroll.page.x - state.scroll.page.x,
+      pageY: after.scroll.page.y - state.scroll.page.y,
+      containerX:
+        after.scroll.container && state.scroll.container
+          ? after.scroll.container.x - state.scroll.container.x
+          : 0,
+      containerY:
+        after.scroll.container && state.scroll.container
+          ? after.scroll.container.y - state.scroll.container.y
+          : 0,
+    };
+    const scrolled =
+      Math.abs(scrollDelta.pageX) >= 1 ||
+      Math.abs(scrollDelta.pageY) >= 1 ||
+      Math.abs(scrollDelta.containerX) >= 1 ||
+      Math.abs(scrollDelta.containerY) >= 1;
+
+    const urlChanged = state.url !== after.url;
+
+    return {
+      ok: true,
+      mutations: state.mutations,
+      focusChanged,
+      focusedBefore: state.focus.present ? state.focus.name || state.focus.tag : null,
+      focusedAfter: after.focus.present ? after.focus.name || after.focus.tag : null,
+      valueChanged,
+      // Whether there was a value to watch at all. A type dispatched with no
+      // text control focused cannot be judged by whether a value moved.
+      valueTracked: state.focus.value !== null,
+      valueSensitive: Boolean(state.focus.sensitive || after.focus.sensitive),
+      scroll: { before: state.scroll, after: after.scroll, delta: scrollDelta },
+      scrolled,
+      urlChanged,
+      url: after.url,
+      windowMs: Date.now() - state.armedAt,
+      changed: state.mutations > 0 || focusChanged || valueChanged || scrolled || urlChanged,
+    };
+  }
+
+  /** Scrolls the nearest scrollable ancestor of a point, for when a wheel event did nothing. */
+  function scrollByFallback({ x, y, direction = 'down', amount = 3 }) {
+    const distance = Math.max(1, Number(amount) || 3) * 100;
+    const deltas = {
+      down: [0, distance],
+      up: [0, -distance],
+      right: [distance, 0],
+      left: [-distance, 0],
+    };
+    const [dx, dy] = deltas[direction] || deltas.down;
+    const target = scrollableAncestor(elementAt(x, y));
+    const before = scrollOffsets(x, y);
+    const root = document.scrollingElement || document.documentElement;
+    if (target === root) window.scrollBy(dx, dy);
+    else if (typeof target.scrollBy === 'function') target.scrollBy(dx, dy);
+    else {
+      target.scrollLeft += dx;
+      target.scrollTop += dy;
+    }
+    const after = scrollOffsets(x, y);
+    return {
+      ok: true,
+      target: target && target.tagName ? target.tagName.toLowerCase() : 'unknown',
+      isRoot: target === root,
+      before,
+      after,
+      delta: {
+        pageX: after.page.x - before.page.x,
+        pageY: after.page.y - before.page.y,
+        containerX: after.container && before.container ? after.container.x - before.container.x : 0,
+        containerY: after.container && before.container ? after.container.y - before.container.y : 0,
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Form input
   // ---------------------------------------------------------------------------
 
@@ -967,10 +1399,10 @@
     // A person cannot type into these, so neither should the agent. Writing the
     // value anyway produces state the page never agreed to and will not submit.
     if (isDisabled(el)) {
-      return { error: 'element ' + ref + ' is disabled, so its value cannot be set' };
+      return { error: 'element ' + ref + ' is disabled, so its value cannot be set', code: 'element_disabled' };
     }
     if (el.readOnly && tag !== 'SELECT') {
-      return { error: 'element ' + ref + ' is read-only, so its value cannot be set' };
+      return { error: 'element ' + ref + ' is read-only, so its value cannot be set', code: 'element_readonly' };
     }
 
     scrollIntoView(el);
@@ -1008,10 +1440,11 @@
       el.value = matched.value;
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
+      if (isSensitiveField(el)) return { ok: true, selected: '[redacted]', sensitive: true };
       return { ok: true, selected: (matched.textContent || '').trim() };
     }
 
-    if (el.isContentEditable) {
+    if (isEditableHost(el)) {
       el.focus();
       el.textContent = String(value);
       el.dispatchEvent(new InputEvent('input', { bubbles: true }));
@@ -1028,10 +1461,13 @@
       else el.value = String(value);
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
+      // The value of a password, one-time code or card field is never echoed
+      // back, so it cannot reach a transcript or the host's journal.
+      if (isSensitiveField(el)) return { ok: true, value: '[redacted]', sensitive: true };
       return { ok: true, value: el.value };
     }
 
-    return { error: 'element ' + ref + ' (' + tag + ') is not a form control' };
+    return { error: 'element ' + ref + ' (' + tag + ') is not a form control', code: 'not_a_form_control' };
   }
 
   // ---------------------------------------------------------------------------
@@ -1164,26 +1600,77 @@
 
     RESOLVE_REF: (msg) => {
       const el = resolveRef(msg.ref);
-      if (!el) return { error: 'ref ' + msg.ref + ' is no longer on the page. Re-read the page.' };
+      if (!el) {
+        return { error: 'ref ' + msg.ref + ' is no longer on the page. Re-read the page.', code: 'ref_stale' };
+      }
+      if (msg.paymentCategory !== undefined) paymentCategoryPage = Boolean(msg.paymentCategory);
+      const role = roleOf(el);
+      const name = accessibleName(el, role, true);
       return {
         ok: true,
         geometry: geometryOf(el),
         tag: el.tagName,
-        role: roleOf(el),
-        name: accessibleName(el, roleOf(el), true),
+        role,
+        name,
         disabled: isDisabled(el),
         occludedBy: describeOccluder(el),
+        contentEditable: isEditableHost(el),
+        sensitive: isSensitiveField(el),
+        irreversible: isIrreversibleControl(el, role, name),
       };
     },
 
     SCROLL_TO: (msg) => {
       const el = resolveRef(msg.ref);
-      if (!el) return { error: 'ref ' + msg.ref + ' is no longer on the page. Re-read the page.' };
+      if (!el) {
+        return { error: 'ref ' + msg.ref + ' is no longer on the page. Re-read the page.', code: 'ref_stale' };
+      }
       scrollIntoView(el);
       return { ok: true, geometry: geometryOf(el) };
     },
 
     FORM_INPUT: (msg) => setFormValue(msg.ref, msg.value),
+
+    // --- verification (C3) ----------------------------------------------------
+
+    VERIFY_ARM: (msg) => armWatch(msg.point),
+
+    VERIFY_REPORT: async (msg) => {
+      const wait = Math.max(0, Math.min(5000, msg.window ?? 250));
+      if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+      return readWatch();
+    },
+
+    /** Offsets before and after a scroll, so a wheel event that moved nothing is visible. */
+    SCROLL_OFFSETS: (msg) => ({ ok: true, ...scrollOffsets(msg.x, msg.y) }),
+
+    SCROLL_BY: (msg) => scrollByFallback(msg),
+
+    /**
+     * The focused control's value, for verifying that a type landed. A sensitive
+     * field reports its length instead of its value.
+     */
+    FOCUSED_FIELD: () => ({ ok: true, ...focusSnapshot() }),
+
+    /** Text of an element addressed by ref, for verifying an editor write. */
+    REF_TEXT: (msg) => {
+      const el = resolveRef(msg.ref);
+      if (!el) {
+        return { error: 'ref ' + msg.ref + ' is no longer on the page. Re-read the page.', code: 'ref_stale' };
+      }
+      const sensitive = isSensitiveField(el);
+      const raw = isEditableHost(el)
+        ? String(el.textContent || '')
+        : 'value' in el && typeof el.value === 'string'
+          ? el.value
+          : String(el.textContent || '');
+      return {
+        ok: true,
+        sensitive,
+        length: raw.length,
+        text: sensitive ? '[redacted]' : raw.slice(0, 2000),
+      };
+    },
 
     CURSOR: (msg) => {
       if (msg.enabled === false) {
@@ -1242,6 +1729,7 @@
         filter: msg.filter || 'interactive',
         depth: msg.depth || 25,
         maxChars: msg.maxChars || 40000,
+        paymentCategory: msg.paymentCategory,
       }),
 
     PAGE_STATE: () => ({
@@ -1252,8 +1740,37 @@
       scrollY: Math.round(window.scrollY),
       scrollHeight: document.documentElement.scrollHeight,
       viewport: { width: window.innerWidth, height: window.innerHeight },
+      // The window's outer size is what a resize request is measured against.
+      // Reporting only the layout viewport made a working resize read as a
+      // no-op, since device pixel ratio and browser chrome sit between them.
+      outerWidth: window.outerWidth,
+      outerHeight: window.outerHeight,
       devicePixelRatio: window.devicePixelRatio,
     }),
+
+    /**
+     * Waits for a paint that postdates the last input, so a screenshot taken in
+     * the same batch as a click cannot render the pre-click frame.
+     *
+     * Two animation frames: the first is the one already scheduled when the
+     * call arrives, the second is the one that follows the commit. A hidden tab
+     * runs neither, so it resolves on the ceiling and the caller falls back to a
+     * screencast frame.
+     */
+    AWAIT_PAINT: (msg) =>
+      new Promise((resolve) => {
+        const ceiling = Math.max(0, Math.min(2000, msg.ceiling ?? 300));
+        const started = Date.now();
+        let settled = false;
+        const done = (painted) => {
+          if (settled) return;
+          settled = true;
+          resolve({ ok: true, painted, waitedMs: Date.now() - started });
+        };
+        setTimeout(() => done(false), ceiling);
+        if (typeof requestAnimationFrame !== 'function') return done(false);
+        requestAnimationFrame(() => requestAnimationFrame(() => done(true)));
+      }),
 
     WAIT_SETTLE: async (msg) => {
       const timeout = msg.timeout || 5000;
@@ -1307,6 +1824,17 @@
 
       return { ok: true, readyState: document.readyState, waitedMs: Date.now() - start };
     },
+  };
+
+  // The classifiers, reachable from the isolated world so tests and any future
+  // module read the same list rather than keeping a second copy. Nothing here
+  // is visible to the page: content scripts run in their own world.
+  globalThis.__chromeMcpAgent = {
+    IRREVERSIBLE_WORDS,
+    SENSITIVE_AUTOCOMPLETE,
+    isSensitiveField,
+    isIrreversibleControl,
+    scrollableAncestor,
   };
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

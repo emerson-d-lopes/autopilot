@@ -8,6 +8,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { parseTree } from '../extension/src/lib/find.js';
+// The shared harness, for the cases needing a stubbed checkVisibility or a real
+// window outer size. The loader below stays as it was for everything else.
+import { loadPage as loadPageWith } from './page-harness.js';
 
 const AGENT_SOURCE = readFileSync(new URL('../extension/src/content/agent.js', import.meta.url), 'utf8');
 
@@ -516,4 +519,79 @@ test('GET_PAGE_TEXT skips page chrome but keeps an article\'s own header and hid
   assert.ok(!/Collapsed panel text/.test(result.text), 'display:none ancestor skipped');
   assert.ok(!/Hidden attribute text/.test(result.text), 'hidden ancestor skipped');
   assert.ok(!/OneTwo/.test(result.text), 'options are not run together');
+});
+
+// ---------------------------------------------------------------------------
+// R2: get_page_text returns something, and says why when it does not
+// ---------------------------------------------------------------------------
+
+test('GET_PAGE_TEXT falls back when the first article is an empty slot', async () => {
+  // The shape LinkedIn's feed has: the first <article> in the DOM is a
+  // placeholder, and the prose is in a <main> further down.
+  const { call } = loadPage(`<!doctype html><body>
+    <article></article>
+    <main><p>The feed post everyone can see.</p></main>
+  </body>`);
+  const result = await call({ type: 'GET_PAGE_TEXT', maxChars: 5000 });
+
+  assert.match(result.text, /The feed post everyone can see/);
+  assert.equal(result.fallback, true, 'the result says it did not use the first container');
+  assert.match(result.container, /body/);
+  assert.ok(result.textNodes >= 1, 'the accepted node count is reported');
+});
+
+test('GET_PAGE_TEXT relaxes the visibility filter when it rejected everything', async () => {
+  const { call } = loadPageWith(
+    `<!doctype html><body>
+      <main data-content-visibility="auto"><p>Notion block prose.</p></main>
+    </body>`,
+    { contentVisibilitySkips: true }
+  );
+  const result = await call({ type: 'GET_PAGE_TEXT', maxChars: 5000 });
+
+  assert.match(result.text, /Notion block prose/);
+  assert.match(result.container, /visibility filter relaxed/);
+});
+
+test('GET_PAGE_TEXT reports the counts that explain an empty result', async () => {
+  const { call } = loadPage('<!doctype html><body><main><p hidden>Never shown.</p></main></body>');
+  const result = await call({ type: 'GET_PAGE_TEXT', maxChars: 5000 });
+
+  assert.equal(result.text, '');
+  assert.equal(result.textNodes, 0);
+  assert.ok(result.rejectedHidden >= 1, 'the hidden rejection is counted: ' + JSON.stringify(result));
+  assert.equal(typeof result.rejectedEmpty, 'number');
+});
+
+test('GET_PAGE_TEXT keeps the container it used when the first one works', async () => {
+  const { call } = loadPage('<!doctype html><body><main><p>Plain prose.</p></main></body>');
+  const result = await call({ type: 'GET_PAGE_TEXT' });
+
+  assert.equal(result.container, 'main');
+  assert.equal(result.fallback, false);
+});
+
+// ---------------------------------------------------------------------------
+// S4: the truncation line
+// ---------------------------------------------------------------------------
+
+test('a truncated tree ends with the count it did not show, inside the budget', async () => {
+  const many = Array.from({ length: 400 }, (_, i) => '<button>Action number ' + i + '</button>').join('');
+  const { call } = loadPage('<!doctype html><body>' + many + '</body>');
+  const result = await call({ type: 'READ_PAGE', filter: 'interactive', maxChars: 4000 });
+
+  const lastLine = result.text.split('\n').pop();
+  assert.match(lastLine, /^note: truncated\./);
+  assert.match(lastLine, new RegExp(result.hiddenNodes + ' more nodes not shown'));
+  assert.ok(result.text.length <= 4000, 'the note fits inside the budget: ' + result.text.length);
+  assert.equal(result.shownNodes + result.hiddenNodes, result.nodes);
+});
+
+test('PAGE_STATE reports the window outer size alongside the viewport', async () => {
+  const { call } = loadPageWith('<!doctype html><body></body>', { width: 800, height: 600 });
+  const state = await call({ type: 'PAGE_STATE' });
+
+  assert.equal(state.viewport.width, 800);
+  assert.equal(state.outerWidth, 816);
+  assert.equal(state.outerHeight, 688);
 });
