@@ -38,6 +38,12 @@
     <p class="lede">What the agent may do in this browser. These checks run inside the extension, so a client cannot bypass them.</p>
 
     <div class="section">
+      <h2>Browser label</h2>
+      <p>A name for this browser profile, shown by <code>list_connected_browsers</code> and usable with <code>select_browser</code>. Useful when several profiles are connected at once, since they otherwise differ only by id.</p>
+      <input class="textarea" id="label" type="text" spellcheck="false" placeholder="Work Chrome" style="min-height: 0" />
+    </div>
+
+    <div class="section">
       <h2>Permission mode</h2>
       <label class="choice">
         <input type="radio" name="mode" value="allow" />

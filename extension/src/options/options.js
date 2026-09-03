@@ -62,6 +62,9 @@ function renderGrants(policy) {
 }
 
 const SHORTCUT_KEY = 'shortcuts';
+// The label the extension sends in its hello frame, so the host can name this
+// browser in list_connected_browsers instead of showing a random id.
+const LABEL_KEY = 'browserLabel';
 
 /** Text form of the shortcut list, so it can be edited as one block. */
 function shortcutsToText(list) {
@@ -90,8 +93,9 @@ document.getElementById('version').textContent = 'v' + chrome.runtime.getManifes
 
 async function render() {
   const policy = await load();
-  const stored = await chrome.storage.local.get(SHORTCUT_KEY);
+  const stored = await chrome.storage.local.get([SHORTCUT_KEY, LABEL_KEY]);
   $('shortcuts').value = shortcutsToText(stored[SHORTCUT_KEY]);
+  $('label').value = stored[LABEL_KEY] || '';
   for (const input of document.querySelectorAll('input[name=mode]')) {
     input.checked = input.value === policy.mode;
   }
@@ -112,6 +116,9 @@ $('save').addEventListener('click', async () => {
     },
   });
   await chrome.storage.local.set({ [SHORTCUT_KEY]: textToShortcuts($('shortcuts').value) });
+  // The hello frame is sent once at connect time, so a new label reaches the
+  // host on the next reconnect rather than straight away.
+  await chrome.storage.local.set({ [LABEL_KEY]: $('label').value.trim() });
   const saved = $('saved');
   saved.classList.add('show');
   setTimeout(() => saved.classList.remove('show'), 1400);

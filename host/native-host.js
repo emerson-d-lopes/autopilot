@@ -11,6 +11,7 @@ import path from 'node:path';
 import { NativeMessaging } from './protocol.js';
 import { socketPathFor, listen } from './ipc.js';
 import { writeEntry, removeEntry } from './registry.js';
+import { detectProfile } from './profile.js';
 import { record as journal, makeEntry, pruneJournal, JOURNAL_DIR } from './journal.js';
 import { ResponseQueue } from './response-queue.js';
 
@@ -67,6 +68,19 @@ function noteDropped(dropped) {
   }
 }
 
+// Which Chrome profile spawned this host. Started at once rather than on the
+// hello frame, because reading the process tree costs a subprocess and the
+// answer never changes for the life of the host.
+const profilePromise = detectProfile().catch((err) => ({
+  browser: null,
+  directory: 'Default',
+  name: null,
+  userName: null,
+  gaiaName: null,
+  userDataDir: null,
+  reason: 'profile detection failed: ' + err.message,
+}));
+
 // ---------------------------------------------------------------------------
 // Extension side
 // ---------------------------------------------------------------------------
@@ -97,7 +111,8 @@ chrome.on('message', (message) => {
 
     case 'tool_response':
     case 'status':
-    case 'released': {
+    case 'released':
+    case 'sessions_response': {
       const entry = pending.get(message.id);
       if (!entry) return;
       clearTimeout(entry.timer);
@@ -295,14 +310,22 @@ function startListening() {
 
   const socket = socketPathFor(browser.id);
   listen(socket, onConnection)
-    .then(() => {
+    .then(async () => {
       log('listening on', socket);
+      const profile = await profilePromise;
+      if (profile && profile.reason) log('profile detection partial:', profile.reason);
       // Recorded so any MCP server can discover this browser without knowing
-      // the naming scheme.
+      // the naming scheme. The profile and account fields are what let a
+      // session tell two Chromes on the same machine apart.
       writeEntry({
         id: browser.id,
         name: browser.name,
         version: browser.version,
+        label: browser.label || '',
+        platform: browser.platform || '',
+        account: browser.account || { email: '', id: '' },
+        profile,
+        host: os.hostname(),
         socket,
         pid: process.pid,
         connectedAt: Date.now(),

@@ -7,7 +7,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { connect } from '../host/ipc.js';
-import { listBrowsers } from '../host/registry.js';
+import { listBrowsers, isLocal, isDev, devBrowserId } from '../host/registry.js';
 import { TOOL_NAMES } from '../host/schemas.js';
 import { extensionIdFromDer } from './gen-key.js';
 import { JOURNAL_DIR, retentionDays, redactionOn, journalSize } from '../host/journal.js';
@@ -119,6 +119,8 @@ if (browsers.length > 1) {
   console.log('         several browsers are connected, so a session must call select_browser');
 }
 
+const devId = devBrowserId();
+
 for (const browser of browsers) {
   try {
     const link = await connect(browser.socket);
@@ -131,13 +133,46 @@ for (const browser of browsers) {
         }
       });
     });
+    // Which sites this profile is signed into, from the same request
+    // list_connected_browsers uses. Names and presence only, never a value.
+    const sessions = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), 3000);
+      link.on('message', (message) => {
+        if (message.id !== 'doctor_sessions') return;
+        clearTimeout(timer);
+        resolve(message.error || message.type !== 'sessions_response' ? null : (message.result && message.result.sessions) || []);
+      });
+      try {
+        link.send({ type: 'sessions', id: 'doctor_sessions' });
+      } catch {
+        clearTimeout(timer);
+        resolve(null);
+      }
+    });
     link.end();
+
     check(
       browser.name + ' extension is attached',
       Boolean(status && status.connected),
       status && status.connected
         ? 'extension v' + (status.extensionVersion || '?') + ', ' + status.tools.length + ' handlers, ' + TOOL_NAMES.length + ' tools advertised'
         : 'reload the extension at chrome://extensions'
+    );
+
+    const profile = browser.profile || {};
+    console.log(
+      '         profile ' + (profile.directory || 'unknown') +
+        (profile.name ? ' "' + profile.name + '"' : '') +
+        '  account ' + ((browser.account && browser.account.email) || profile.userName || 'not signed in') +
+        '  label ' + (browser.label || 'none') +
+        '  local ' + isLocal(browser) + '  dev ' + isDev(browser, devId)
+    );
+    if (profile.reason) console.log('         profile detail missing: ' + profile.reason);
+    console.log(
+      '         sessions ' +
+        (sessions === null
+          ? 'not reported (reload the extension so it picks up the cookies permission)'
+          : sessions.length ? sessions.join(', ') : 'none detected')
     );
   } catch (err) {
     check(browser.name + ' extension is attached', false, err.message);

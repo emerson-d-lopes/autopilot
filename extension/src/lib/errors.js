@@ -158,13 +158,13 @@ export const CODES = {
   },
   browser_unknown: {
     message: 'No connected browser matches that name or id.',
-    hint: 'Call list_connected_browsers to see what is connected.',
+    hint: 'Call list_connected_browsers and use one of the ids, labels or profiles it prints.',
     retryable: false,
     effects: 'none',
   },
   profile_ambiguous: {
     message: 'Several connected browsers match, so the session cannot pick one.',
-    hint: 'Call select_browser with one of the ids from list_connected_browsers.',
+    hint: 'Narrow the selector, or pass browserId from list_connected_browsers.',
     retryable: false,
     effects: 'none',
   },

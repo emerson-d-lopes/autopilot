@@ -14,7 +14,10 @@
     "nativeMessaging",
     "offscreen",
     "windows",
-    "webNavigation"
+    "webNavigation",
+    "identity",
+    "identity.email",
+    "cookies"
   ],
   "host_permissions": [
     "<all_urls>"

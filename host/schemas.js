@@ -9,6 +9,16 @@ const tabIdProp = {
   description: 'Tab to act on. Must be a tab in this session\'s group. Call tabs_context first if you do not have one.',
 };
 
+// Per-call routing. Present on every page tool so a session driving one profile
+// can read another without switching and switching back. Tab ids are per
+// browser, so a routed call needs a tabId from that browser's tabs_context.
+const browserProp = {
+  type: 'string',
+  description:
+    'Run this one call against another connected browser, without changing the session default. ' +
+    'Takes an id or label from list_connected_browsers, or "profile=Work", "account=me@example.com", "site=linkedin.com".',
+};
+
 export const TOOLS = [
   {
     name: 'tabs_context',
@@ -22,6 +32,7 @@ export const TOOLS = [
           type: 'boolean',
           description: 'Open a blank tab in the current window when this session has no tabs yet.',
         },
+        browser: browserProp,
       },
     },
   },
@@ -32,6 +43,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         url: { type: 'string', description: 'URL to open. Defaults to about:blank. A bare host gets https://.' },
+        browser: browserProp,
       },
     },
   },
@@ -40,7 +52,7 @@ export const TOOLS = [
     description: 'Close a tab in this session\'s tab group.',
     inputSchema: {
       type: 'object',
-      properties: { tabId: tabIdProp },
+      properties: { tabId: tabIdProp, browser: browserProp },
       required: ['tabId'],
     },
   },
@@ -58,9 +70,10 @@ export const TOOLS = [
           type: 'boolean',
           description:
             'Leave the page even when it asks to stay. A page with unsaved input can hold a navigation with a ' +
-            'beforeunload dialog; without force the dialog is dismissed, the tab stays put, and the call returns ' +
+            'beforeunload dialog. Without force the dialog is dismissed, the tab stays put, and the call returns ' +
             'dialog_open with the text the page showed.',
         },
+        browser: browserProp,
       },
       required: ['url', 'tabId'],
     },
@@ -90,6 +103,7 @@ export const TOOLS = [
             'Output budget in characters. Default 50000, or 20000 for filter "interactive", which is sized so a ' +
             'link-dense news page returns inline. A truncated read ends with a line saying how many nodes are not shown.',
         },
+        browser: browserProp,
       },
       required: ['tabId'],
     },
@@ -101,7 +115,7 @@ export const TOOLS = [
       'Use read_page instead when you need to interact with anything.',
     inputSchema: {
       type: 'object',
-      properties: { tabId: tabIdProp, max_chars: { type: 'number', description: 'Default 50000.' } },
+      properties: { tabId: tabIdProp, max_chars: { type: 'number', description: 'Default 50000.' }, browser: browserProp },
       required: ['tabId'],
     },
   },
@@ -122,6 +136,7 @@ export const TOOLS = [
           type: 'boolean',
           description: 'Search all elements rather than only interactive ones. Use for text and headings.',
         },
+        browser: browserProp,
       },
       required: ['query', 'tabId'],
     },
@@ -144,6 +159,7 @@ export const TOOLS = [
           description: 'Text for inputs, option value or label for selects, boolean for checkboxes and radios.',
         },
         tabId: tabIdProp,
+        browser: browserProp,
       },
       required: ['ref', 'value', 'tabId'],
     },
@@ -219,6 +235,7 @@ export const TOOLS = [
           description:
             'For screenshot and zoom: also write the image to a file and report the path, so it can be attached to a message. Skip it for images you only need to look at.',
         },
+        browser: browserProp,
       },
       required: ['action', 'tabId'],
     },
@@ -235,6 +252,7 @@ export const TOOLS = [
       properties: {
         code: { type: 'string', description: 'JavaScript to evaluate in the page context.' },
         tabId: tabIdProp,
+        browser: browserProp,
       },
       required: ['code', 'tabId'],
     },
@@ -252,6 +270,7 @@ export const TOOLS = [
         pattern: { type: 'string', description: 'Case-insensitive regular expression filter on message text.' },
         limit: { type: 'number', description: 'Most recent N entries. Default 100.' },
         clear: { type: 'boolean', description: 'Empty the buffer after reading.' },
+        browser: browserProp,
       },
       required: ['tabId'],
     },
@@ -269,6 +288,7 @@ export const TOOLS = [
         only_failed: { type: 'boolean', description: 'Return only failed requests and 4xx/5xx responses.' },
         limit: { type: 'number', description: 'Most recent N requests. Default 100.' },
         clear: { type: 'boolean', description: 'Empty the buffer after reading.' },
+        browser: browserProp,
       },
       required: ['tabId'],
     },
@@ -278,7 +298,7 @@ export const TOOLS = [
     description: 'Current URL, title, scroll position, viewport size, and load state. Cheap orientation check after an action.',
     inputSchema: {
       type: 'object',
-      properties: { tabId: tabIdProp },
+      properties: { tabId: tabIdProp, browser: browserProp },
       required: ['tabId'],
     },
   },
@@ -289,7 +309,7 @@ export const TOOLS = [
       'slow render, instead of a fixed sleep.',
     inputSchema: {
       type: 'object',
-      properties: { tabId: tabIdProp, timeout: { type: 'number', description: 'Milliseconds, default 15000.' } },
+      properties: { tabId: tabIdProp, timeout: { type: 'number', description: 'Milliseconds, default 15000.' }, browser: browserProp },
       required: ['tabId'],
     },
   },
@@ -302,6 +322,7 @@ export const TOOLS = [
         width: { type: 'number' },
         height: { type: 'number' },
         tabId: tabIdProp,
+        browser: browserProp,
       },
       required: ['width', 'height', 'tabId'],
     },
@@ -332,6 +353,7 @@ export const TOOLS = [
           description: 'Absolute or relative paths to the files to attach.',
         },
         tabId: tabIdProp,
+        browser: browserProp,
       },
       required: ['paths', 'tabId'],
     },
@@ -355,6 +377,7 @@ export const TOOLS = [
         },
         filename: { type: 'string', description: 'For stop: name of the gif file. Default recording-<timestamp>.gif.' },
         tabId: tabIdProp,
+        browser: browserProp,
       },
       required: ['action', 'tabId'],
     },
@@ -389,6 +412,7 @@ export const TOOLS = [
           description: 'Newline-separated commands, e.g. "F ref_12 hello\\nC ref_18\\nK Enter\\nW\\nR".',
         },
         tabId: tabIdProp,
+        browser: browserProp,
       },
       required: ['script', 'tabId'],
     },
@@ -397,6 +421,8 @@ export const TOOLS = [
     name: 'list_connected_browsers',
     description:
       'List the browsers currently running the extension, with the id to pass to select_browser. ' +
+      'Each row carries the label, profile directory and name, account email, version, whether it is on this ' +
+      'machine, whether it is the development browser, and the sites that profile is signed into. ' +
       'Call this when a tool reports that several browsers are connected, or to check which one is in use.',
     inputSchema: { type: 'object', properties: {} },
   },
@@ -404,13 +430,22 @@ export const TOOLS = [
     name: 'select_browser',
     description:
       'Choose which connected browser this session drives. Needed only when more than one is connected, ' +
-      'since a single browser is used automatically. The choice holds for the rest of the session.',
+      'since a single browser is used automatically. The choice holds for the rest of the session. ' +
+      'Pass exactly one of the arguments below. Two browsers matching a site selector is an error ' +
+      '(profile_ambiguous) listing both, rather than a guess.',
     inputSchema: {
       type: 'object',
       properties: {
         browserId: { type: 'string', description: 'Id or name from list_connected_browsers, e.g. "Edge".' },
+        label: { type: 'string', description: 'The label set on the extension options page, e.g. "Work Chrome".' },
+        profile: { type: 'string', description: 'Profile directory or display name, e.g. "Default" or "Profile 2" or "Work".' },
+        account: { type: 'string', description: 'Signed-in account email, e.g. "me@example.com".' },
+        site: {
+          type: 'string',
+          description:
+            'Domain this profile is signed into, e.g. "linkedin.com". The development browser is never matched this way.',
+        },
       },
-      required: ['browserId'],
     },
   },
   {
@@ -420,8 +455,11 @@ export const TOOLS = [
       type: 'object',
       properties: {
         browserId: { type: 'string', description: 'Id or name from list_connected_browsers.' },
+        label: { type: 'string', description: 'The label set on the extension options page.' },
+        profile: { type: 'string', description: 'Profile directory or display name.' },
+        account: { type: 'string', description: 'Signed-in account email.' },
+        site: { type: 'string', description: 'Domain this profile is signed into, e.g. "linkedin.com".' },
       },
-      required: ['browserId'],
     },
   },
   {
@@ -429,7 +467,7 @@ export const TOOLS = [
     description:
       'List the saved shortcuts for this browser. A shortcut is a named quick script, saved from the ' +
       "extension's options page, for a flow that gets repeated. Run one with shortcuts_execute.",
-    inputSchema: { type: 'object', properties: {} },
+    inputSchema: { type: 'object', properties: { browser: browserProp } },
   },
   {
     name: 'shortcuts_execute',
@@ -441,6 +479,7 @@ export const TOOLS = [
       properties: {
         shortcutId: { type: 'string', description: 'Id or name from shortcuts_list.' },
         tabId: tabIdProp,
+        browser: browserProp,
       },
       required: ['shortcutId', 'tabId'],
     },
@@ -465,6 +504,7 @@ export const TOOLS = [
           description: '[x, y] to drop onto, for a drop zone with no file input.',
         },
         tabId: tabIdProp,
+        browser: browserProp,
       },
       required: ['tabId'],
     },
@@ -496,6 +536,7 @@ export const TOOLS = [
             required: ['name', 'input'],
           },
         },
+        browser: browserProp,
       },
       required: ['actions'],
     },
