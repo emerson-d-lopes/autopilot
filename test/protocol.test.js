@@ -134,3 +134,79 @@ test('an absurd declared length is rejected', async () => {
   assert.equal(h.errors.length, 1);
   assert.match(h.errors[0].message, /out of range/);
 });
+
+// --- C7 and R11, the envelope the contract adds ------------------------------
+
+test('a request envelope keeps its correlation id and generation through framing', async () => {
+  const h = harness();
+  const envelope = {
+    type: 'tool_request',
+    id: 'req_1',
+    tool: 'form_input',
+    args: { tabId: 3, ref: 'ref_1', value: 'x' },
+    clientId: 'sess-1',
+    callId: 'call_9_ab12cd',
+    generation: 4,
+  };
+  h.input.write(frame(envelope));
+  await tick();
+  assert.deepEqual(h.received, [envelope]);
+});
+
+test('a contract result survives chunk reassembly whole', async () => {
+  const h = harness();
+  const original = {
+    type: 'tool_response',
+    id: 'req_2',
+    callId: 'call_10_zz99yy',
+    generation: 4,
+    result: {
+      ok: true,
+      effects: 'applied',
+      evidence: { mutations: 12, focus: 'button#send', navigated: false },
+      warnings: ['output_truncated: the serialized value is 204800 characters, cut to 51200.'],
+      image: { data: 'B'.repeat(5000) },
+    },
+  };
+  const json = JSON.stringify(original);
+  const size = 900;
+  const total = Math.ceil(json.length / size);
+  for (let i = 0; i < total; i++) {
+    h.input.write(frame({ type: 'chunk', id: 'c9', index: i, total, data: json.slice(i * size, (i + 1) * size) }));
+  }
+  await tick();
+  assert.equal(h.received.length, 1);
+  assert.deepEqual(h.received[0], original);
+  assert.equal(h.received[0].result.effects, 'applied');
+  assert.equal(h.received[0].result.evidence.mutations, 12);
+});
+
+test('an error envelope carries the whole contract error object', async () => {
+  const h = harness();
+  const envelope = {
+    type: 'tool_response',
+    id: 'req_3',
+    callId: 'call_11',
+    error: {
+      code: 'ref_stale',
+      message: 'ref ref_9 is no longer on the page.',
+      cause: 'the page reflowed',
+      hint: 'Read the page again with read_page and use the new ref.',
+      effects: 'none',
+      retryable: false,
+    },
+  };
+  h.input.write(frame(envelope));
+  await tick();
+  assert.deepEqual(h.received[0].error, envelope.error);
+});
+
+test('a replayed response is marked as such and keeps its original id', async () => {
+  const h = harness();
+  const envelope = { type: 'tool_response', id: 'mcp_1', replayed: true, generation: 5, result: { ok: true, effects: 'none' } };
+  h.input.write(frame(envelope));
+  await tick();
+  assert.equal(h.received[0].replayed, true);
+  assert.equal(h.received[0].id, 'mcp_1');
+  assert.equal(h.received[0].generation, 5);
+});
