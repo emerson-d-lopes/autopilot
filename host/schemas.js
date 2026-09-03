@@ -77,7 +77,12 @@ export const TOOLS = [
         },
         depth: { type: 'number', description: 'Maximum tree depth. Default 15. Lower it when output is too large.' },
         ref_id: { type: 'string', description: 'Read only this element and its descendants, e.g. "ref_42".' },
-        max_chars: { type: 'number', description: 'Output budget in characters. Default 50000.' },
+        max_chars: {
+          type: 'number',
+          description:
+            'Output budget in characters. Default 50000, or 20000 for filter "interactive", which is sized so a ' +
+            'link-dense news page returns inline. A truncated read ends with a line saying how many nodes are not shown.',
+        },
       },
       required: ['tabId'],
     },
@@ -98,7 +103,9 @@ export const TOOLS = [
     description:
       'Find elements by describing them, e.g. "search bar", "login button", "row containing Acme Corp". ' +
       'Returns up to 20 ranked matches with refs. Cheaper than reading the whole tree when you know what you want. ' +
-      'If nothing matches, fall back to read_page.',
+      'Searches interactive nodes first and widens to every node on its own when the query names a table cell, a ' +
+      'heading or other static content, or when nothing interactive matched. The result says which scope was used ' +
+      'and how much of the page it covered. If nothing matches, fall back to read_page.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -117,7 +124,10 @@ export const TOOLS = [
     description:
       'Set the value of a form control by ref. Handles text inputs, textareas, selects, checkboxes and radios, and ' +
       'fires the events frameworks listen for. Prefer this over clicking and typing for form fields: it is one call ' +
-      'and it cannot miss the target. For a select, value matches either the option value or its visible text.',
+      'and it cannot miss the target. For a select, value matches either the option value or its visible text. ' +
+      'A contenteditable is written through a real click, a select-all and an inserted-text event, which is what a ' +
+      'rich editor needs, and the result is verified by reading the element back. ' +
+      'A password, one-time code or card field reports [redacted] instead of the value it was given.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -179,11 +189,18 @@ export const TOOLS = [
         },
         text: {
           type: 'string',
-          description: 'Text for "type", or the key combination for "key" (space-separate several, e.g. "Tab Tab Enter").',
+          description:
+            'Text for "type", or the key combination for "key" (space-separate several, e.g. "Tab Tab Enter"). ' +
+            'A single punctuation character such as "/" is pressed as that character, which is what keyboard-driven ' +
+            'sites listen for.',
         },
         perKey: {
           type: 'boolean',
           description: 'For "type": send individual key events instead of inserting the string at once. Needed by inputs that only react to keystrokes, such as autocompletes.',
+        },
+        replace: {
+          type: 'boolean',
+          description: 'For "type": select the field\'s contents first, so the text replaces what is there instead of appending to it.',
         },
         modifiers: { type: 'string', description: 'Held modifiers, e.g. "ctrl", "shift", "ctrl+shift".' },
         scroll_direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
@@ -345,11 +362,12 @@ export const TOOLS = [
       '  C <target>      left click            RC/DC/TC <target>  right / double / triple click\n' +
       '  H <target>      hover                 SC ref_N           scroll into view\n' +
       '  T <text>        type text             TK <text>          type with real key events\n' +
+      '  TR <text>       type, replacing what is already in the field\n' +
       '  K <keys>        press keys            F ref_N <value>    set a form control\n' +
       '  S <dir> [n]     scroll                D x1 y1 x2 y2      drag\n' +
       '  N <url>         navigate              J <expression>     evaluate javascript\n' +
       '  W [ms]          wait for the page to settle              PAUSE [s]  sleep\n' +
-      '  R [all]         read the page         X                  read page text\n' +
+      '  R [all] [max]   read the page         X                  read page text\n' +
       '  SS              screenshot            P                  page state\n' +
       '  Z x0 y0 x1 y1   zoom to a region      # ...              comment\n' +
       '  NT [url]        new tab, later lines act on it            ST tabId   switch tab\n' +

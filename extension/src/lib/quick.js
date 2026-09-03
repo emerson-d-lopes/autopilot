@@ -76,6 +76,12 @@ export function parseScript(script, tabId) {
       case 'TK':
         push('computer', { action: 'type', text: rest, perKey: true });
         return;
+      // Types over whatever is already in the field. Without it, a pre-filled
+      // input needs an explicit "K ctrl+a" first, and GitHub's file finder,
+      // which puts a literal "t" in its own box, produced "tREADME".
+      case 'TR':
+        push('computer', { action: 'type', text: rest, replace: true });
+        return;
       case 'K':
         if (!rest) throw new QuickParseError('line ' + lineNo + ': K needs a key, e.g. "K Enter"');
         push('computer', { action: 'key', text: rest });
@@ -137,9 +143,23 @@ export function parseScript(script, tabId) {
         push('form_input', { ref: parts[0], value: coerced });
         return;
       }
-      case 'R':
-        push('read_page', { filter: parts[0] === 'all' ? 'all' : 'interactive' });
+      // R [all] [max_chars]. The budget is a trailing number, so "R 30000" and
+      // "R all 30000" both work and "R" keeps the tool's own default.
+      case 'R': {
+        const input = { filter: parts[0] === 'all' ? 'all' : 'interactive' };
+        const budget = parts[parts.length - 1];
+        if (parts.length && budget !== 'all') {
+          const n = Number(budget);
+          if (!Number.isFinite(n) || n <= 0) {
+            throw new QuickParseError(
+              'line ' + lineNo + ': R takes "all" and an optional character budget, got ' + JSON.stringify(budget)
+            );
+          }
+          input.max_chars = n;
+        }
+        push('read_page', input);
         return;
+      }
       case 'X':
         push('get_page_text', {});
         return;
@@ -171,7 +191,7 @@ export function parseScript(script, tabId) {
       default:
         throw new QuickParseError(
           'line ' + lineNo + ': unknown command ' + JSON.stringify(command) +
-            '. Supported: C RC DC TC H SC T TK K S D Z N J W F R X SS P PAUSE ST NT LT'
+            '. Supported: C RC DC TC H SC T TK TR K S D Z N J W F R X SS P PAUSE ST NT LT'
         );
     }
   });
