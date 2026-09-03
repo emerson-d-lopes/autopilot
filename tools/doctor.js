@@ -10,7 +10,8 @@ import { connect } from '../host/ipc.js';
 import { listBrowsers } from '../host/registry.js';
 import { TOOL_NAMES } from '../host/schemas.js';
 import { extensionIdFromDer } from './gen-key.js';
-import { JOURNAL_DIR } from '../host/journal.js';
+import { JOURNAL_DIR, retentionDays, redactionOn, journalSize } from '../host/journal.js';
+import { retryTable, CODE_NAMES } from '../host/errors.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HOST_NAME = 'com.chromemcp.host';
@@ -142,6 +143,23 @@ for (const browser of browsers) {
     check(browser.name + ' extension is attached', false, err.message);
   }
 }
+
+// 5. The retry table, so what the server will and will not repeat is readable
+// without opening host/errors.js.
+console.log('\nRetry policy (host/errors.js)');
+for (const row of retryTable()) {
+  console.log('  ' + row.kind.padEnd(6) + ' attempts ' + row.attempts + ', backoff ' + row.backoffMs + 'ms');
+  console.log('         tools: ' + row.tools);
+  console.log('         on: ' + row.on);
+}
+console.log('  ' + CODE_NAMES.length + ' error codes in the catalogue: ' + CODE_NAMES.join(', '));
+
+const size = journalSize();
+console.log(
+  '\nJournal: ' + JOURNAL_DIR + '\n  ' + size.files + ' file(s), ' + Math.round(size.bytes / 1024) + ' KB, ' +
+    'retention ' + retentionDays() + ' days (CHROME_MCP_JOURNAL_DAYS), ' +
+    'redaction ' + (redactionOn() ? 'on' : 'off') + ' (CHROME_MCP_JOURNAL_REDACT)'
+);
 
 const failed = results.filter((r) => !r.ok);
 console.log('');
