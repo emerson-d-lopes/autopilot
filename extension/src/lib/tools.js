@@ -29,6 +29,12 @@ const VERIFY_NAV_WINDOW_MS = 1000;
 
 /** Sends a message to the page agent, injecting it first if the page predates the extension. */
 async function pageCall(tabId, message, { retry = true } = {}) {
+  // A message to the content script reaches the same renderer a CDP command
+  // does, and chrome.tabs.sendMessage has no timeout, so a read_page issued
+  // while the page is in a busy loop waited the whole loop out. When the tab is
+  // already waiting on a CDP command, this waits with that command's deadline
+  // and reports timeout instead.
+  if (cdp.busyFor(tabId) > 0) await cdp.awaitTurn(tabId, (message && message.type) || 'page call');
   try {
     const response = await chrome.tabs.sendMessage(tabId, message);
     if (response === undefined) throw new Error('no response from page agent');

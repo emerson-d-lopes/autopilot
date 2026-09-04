@@ -1201,3 +1201,138 @@ test('a replacement refused for a different cause is still replaced once', async
   await chrome.storage.local.clear();
   delete chrome.webNavigation;
 });
+
+// ---------------------------------------------------------------------------
+// Open bug 4: a call queued behind a frozen renderer
+// ---------------------------------------------------------------------------
+//
+// An 8 s busy loop in javascript delayed the next call on the same tab by the
+// whole 8 s, and it then succeeded. Nothing was lost, and the caller got no
+// timeout and no reload hint while it waited.
+
+/** A debugger whose commands answer after `delay` ms, so one can be left hanging. */
+function scriptSlowDebugger({ delay = 50 } = {}) {
+  const calls = [];
+  globalThis.chrome.debugger = {
+    attach(_t, _v, done) {
+      chrome.runtime.lastError = null;
+      done();
+    },
+    detach(_t, done) {
+      chrome.runtime.lastError = null;
+      done();
+    },
+    sendCommand(_t, method, _p, done) {
+      const at = Date.now();
+      calls.push({ method, at });
+      setTimeout(() => {
+        chrome.runtime.lastError = null;
+        done({ ok: true, method });
+        chrome.runtime.lastError = null;
+      }, delay);
+    },
+    onEvent: { addListener() {}, removeListener() {} },
+    onDetach: { addListener() {} },
+  };
+  return calls;
+}
+
+test('a command queued behind an unanswered one fails with timeout and the reload hint', async () => {
+  const calls = scriptSlowDebugger({ delay: 600 });
+  await cdp.attach(70);
+
+  const first = cdp.send(70, 'Runtime.evaluate', { expression: 'busy()' }, { timeout: 5000 });
+  await new Promise((r) => setTimeout(r, 20));
+
+  const started = Date.now();
+  await assert.rejects(
+    () => cdp.send(70, 'DOM.getDocument', {}, { timeout: 200, wakeOnTimeout: false }),
+    (err) => {
+      assert.equal(err.code, 'timeout');
+      assert.equal(err.effects, 'none', 'the queued command never ran, so it changed nothing');
+      assert.match(err.hint, /reload the tab with navigate/);
+      assert.match(err.message, /behind Runtime\.evaluate/);
+      assert.equal(err.details.blockedBy, 'Runtime.evaluate');
+      return true;
+    }
+  );
+  const waited = Date.now() - started;
+  assert.ok(waited < 500, 'it gave up on its own timeout, not the first command: ' + waited + 'ms');
+
+  // The first call is left alone and finishes.
+  const result = await first;
+  assert.equal(result.method, 'Runtime.evaluate');
+  assert.equal(
+    calls.filter((c) => c.method === 'DOM.getDocument').length,
+    0,
+    'the queued command was never dispatched'
+  );
+  await cdp.detachAll();
+});
+
+test('a queued command that gets its turn in time still runs', async () => {
+  scriptSlowDebugger({ delay: 60 });
+  await cdp.attach(71);
+
+  const first = cdp.send(71, 'Runtime.evaluate', { expression: '1' }, { timeout: 5000 });
+  const second = cdp.send(71, 'DOM.getDocument', {}, { timeout: 5000 });
+  const [a, b] = await Promise.all([first, second]);
+
+  assert.equal(a.method, 'Runtime.evaluate');
+  assert.equal(b.method, 'DOM.getDocument', 'an ordinary pair of calls is unaffected');
+  await cdp.detachAll();
+});
+
+test('busyFor reports how long the tab has been waiting, and clears when it answers', async () => {
+  scriptSlowDebugger({ delay: 200 });
+  await cdp.attach(72);
+
+  assert.equal(cdp.busyFor(72), 0);
+  const call = cdp.send(72, 'Runtime.evaluate', {}, { timeout: 5000 });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.ok(cdp.busyFor(72) >= 40, 'busyFor: ' + cdp.busyFor(72));
+  await call;
+  assert.equal(cdp.busyFor(72), 0);
+  await cdp.detachAll();
+});
+
+test('input dispatch is not tracked, so a missing acknowledgement blocks nothing', async () => {
+  const calls = scriptSlowDebugger({ delay: 5000 });
+  await cdp.attach(73);
+
+  // Sent with timeout 0, the way sendInput sends it, and never answered.
+  cdp.send(73, 'Input.dispatchMouseEvent', { type: 'mouseMoved' }, { timeout: 0 }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(cdp.busyFor(73), 0, 'an unacknowledged input does not make the tab look busy');
+
+  const started = Date.now();
+  await assert.rejects(
+    () => cdp.send(73, 'DOM.getDocument', {}, { timeout: 150, wakeOnTimeout: false }),
+    (err) => err.code === 'timeout'
+  );
+  assert.ok(Date.now() - started < 400, 'it went out and timed out on its own, rather than queueing');
+  assert.ok(calls.some((c) => c.method === 'DOM.getDocument'), 'the command was dispatched');
+  await cdp.detachAll();
+});
+
+test('awaitTurn gives a page call the same deadline, since sendMessage has none', async () => {
+  scriptSlowDebugger({ delay: 800 });
+  await cdp.attach(74);
+
+  const first = cdp.send(74, 'Runtime.evaluate', { expression: 'busy()' }, { timeout: 5000 });
+  await new Promise((r) => setTimeout(r, 20));
+
+  await assert.rejects(
+    () => cdp.awaitTurn(74, 'READ_PAGE', 150),
+    (err) => {
+      assert.equal(err.code, 'timeout');
+      assert.match(err.message, /CDP READ_PAGE waited 150ms/);
+      assert.match(err.hint, /reload the tab with navigate/);
+      return true;
+    }
+  );
+
+  await first;
+  await cdp.awaitTurn(74, 'READ_PAGE', 150);
+  await cdp.detachAll();
+});

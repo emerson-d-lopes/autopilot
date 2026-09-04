@@ -583,6 +583,98 @@ function frozenError(tabId, method, ms) {
   });
 }
 
+/**
+ * The command each tab is waiting on, and since when.
+ *
+ * CDP runs a session's commands in order, so a second call on a tab whose
+ * renderer is in an 8 second busy loop used to wait the loop out and then
+ * succeed: no timeout, no reload hint, and a caller with no way to tell a slow
+ * page from a frozen one. A queued command is now given its own timeout from
+ * the moment it was queued.
+ *
+ * Only commands that carry a timeout are tracked. Input dispatch is sent with
+ * timeout 0 on purpose, because the acknowledgement is expected not to come on
+ * a hidden tab, and waiting on that would stall every later command.
+ *
+ * @type {Map<number, {method: string, startedAt: number, done: Promise<void>}>}
+ */
+const inFlight = new Map();
+
+/** How long a tab's current CDP command has gone unanswered, or 0 for none. */
+export function busyFor(tabId) {
+  const ahead = inFlight.get(tabId);
+  return ahead ? Date.now() - ahead.startedAt : 0;
+}
+
+export function queuedTimeoutError(tabId, method, ms, ahead) {
+  const blame = ahead ? ' behind ' + ahead.method + ', unanswered for ' + (Date.now() - ahead.startedAt) + 'ms' : '';
+  return new ToolError(
+    'timeout',
+    'CDP ' + method + ' waited ' + ms + 'ms on tab ' + tabId + blame + '. The renderer is not answering.',
+    {
+      cause: 'the renderer has not answered an earlier command',
+      hint: 'the renderer did not respond, reload the tab with navigate',
+      // The queued command was never dispatched, so nothing it would have done
+      // happened. The command it waited behind is still running.
+      effects: 'none',
+      retryable: true,
+      details: ahead ? { tabId, method, waitedMs: ms, blockedBy: ahead.method } : { tabId, method, waitedMs: ms },
+    }
+  );
+}
+
+/** Resolves true when `promise` settles first, false when the timer wins. */
+function settlesWithin(promise, ms) {
+  let timer = null;
+  const timed = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  return Promise.race([promise.then(() => true, () => true), timed]).then((won) => {
+    if (timer) clearTimeout(timer);
+    return won;
+  });
+}
+
+/**
+ * Waits for the tab's current command to answer, no longer than this command's
+ * own timeout counted from the moment it was queued.
+ */
+async function waitForTurn(tabId, method, timeout) {
+  if (!(timeout > 0)) return;
+  const deadline = Date.now() + timeout;
+  let ahead = inFlight.get(tabId);
+  while (ahead) {
+    const left = deadline - Date.now();
+    if (left <= 0 || !(await settlesWithin(ahead.done, left))) {
+      throw queuedTimeoutError(tabId, method, timeout, ahead);
+    }
+    ahead = inFlight.get(tabId);
+  }
+}
+
+/**
+ * Waits for the tab's CDP queue to clear on behalf of something that is not a
+ * CDP command. A message to the content script reaches the same renderer and
+ * waits out the same busy loop, with no timeout of its own to stop it.
+ */
+export function awaitTurn(tabId, label, timeout = DEFAULT_COMMAND_TIMEOUT) {
+  return waitForTurn(tabId, label, timeout);
+}
+
+/** rawSend, queued behind whatever the tab is already waiting on. */
+async function queuedSend(tabId, method, params, timeout = timeoutFor(method)) {
+  await waitForTurn(tabId, method, timeout);
+  const promise = rawSend(tabId, method, params, timeout);
+  if (!(timeout > 0)) return promise;
+  const entry = { method, startedAt: Date.now(), done: promise.then(() => {}, () => {}) };
+  inFlight.set(tabId, entry);
+  try {
+    return await promise;
+  } finally {
+    if (inFlight.get(tabId) === entry) inFlight.delete(tabId);
+  }
+}
+
 function rawSend(tabId, method, params, timeout = timeoutFor(method)) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -744,7 +836,7 @@ export async function send(tabId, method, params = {}, options = {}) {
   const { retry = true, timeout = timeoutFor(method), wakeOnTimeout = true } = options;
   installDetachListener();
   try {
-    return await rawSend(tabId, method, params, timeout);
+    return await queuedSend(tabId, method, params, timeout);
   } catch (err) {
     // A renderer that stopped answering is woken the way a hidden tab is, and
     // the command is sent once more before the call is given up on.
