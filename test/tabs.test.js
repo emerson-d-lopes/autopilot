@@ -529,3 +529,105 @@ test('a restart with nothing stored is a session with no tabs, not an error', as
   const context = await tabs.tabsContext('c1');
   assert.deepEqual(context.tabs, []);
 });
+
+// ---------------------------------------------------------------------------
+// Check 13: a session across a service worker restart
+// ---------------------------------------------------------------------------
+//
+// Stopping the worker from chrome://serviceworker-internals lost the session.
+// The restarted worker rewrote the persisted record to {groupId: null,
+// tabIds: []} about 18 s after the stop with no tool call, so the restore that
+// mattered read an empty record and tabs_context listed nothing while both
+// tabs were still open. Emptying a record is proved now, and the proof is
+// every tab id in it answering that it is gone.
+
+/** Makes the first read of the session table from each area fail, the way a restart can. */
+function failFirstTableRead() {
+  for (const area of [stub.storage.session, stub.storage.local]) {
+    const inner = area.get.bind(area);
+    let failed = false;
+    area.get = async (key) => {
+      if (key === 'sessionTable' && !failed) {
+        failed = true;
+        throw new Error('storage is not ready');
+      }
+      return inner(key);
+    };
+  }
+}
+
+test('a restart whose restore reads nothing keeps the record the browser still has tabs for', async () => {
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+  await tabs.adoptTab('c1', 11);
+  assert.deepEqual(browser.local.get('sessionTable').c1.tabIds, [11, 12], 'the record starts full');
+
+  // The worker is stopped and started again: its maps are empty, the table is
+  // still on disk, and the first thing that runs is a tab event, not a call.
+  tabs.resetSessionTable();
+  failFirstTableRead();
+  await tabs.forgetRemovedTab(4242);
+
+  const written = browser.local.get('sessionTable');
+  assert.ok(written.c1, 'the record survived a restore that computed nothing');
+  assert.deepEqual(written.c1.tabIds, [11, 12], 'with both tab ids');
+  assert.equal(written.c1.groupId, 77, 'and its group');
+  assert.deepEqual(browser.activations, [], 'nothing was activated');
+});
+
+test('a tabs_context after that restart lists the tabs under their old ids', async () => {
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+  await tabs.adoptTab('c1', 11);
+
+  // The group map goes too, so the session table is the only route back.
+  tabs.resetSessionTable();
+  browser.local.delete('tabGroups');
+  failFirstTableRead();
+  await tabs.forgetRemovedTab(4242);
+
+  const context = await tabs.tabsContext('c1');
+  assert.equal(context.tabGroupId, 77, 'the group came back');
+  assert.deepEqual(context.tabs.map((t) => t.tabId), [11, 12], 'and the ids the caller is holding');
+  assert.equal(context.missingTabs, undefined, 'nothing went away, so nothing is reported missing');
+  assert.deepEqual(browser.activations, []);
+});
+
+test('a browser that will not answer about a tab keeps it rather than dropping it', async () => {
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+  await tabs.adoptTab('c1', 11);
+
+  tabs.resetSessionTable();
+  browser.session.clear();
+  const inner = stub.tabs.get;
+  stub.tabs.get = async (id) => {
+    if (id === 12) throw new Error('Tabs cannot be edited right now (user may be dragging a tab).');
+    return inner(id);
+  };
+
+  const restored = await tabs.restoreSessions();
+  stub.tabs.get = inner;
+  assert.equal(restored.missing, 0, 'a refused lookup is not a tab that went away');
+  assert.deepEqual(
+    browser.local.get('sessionTable').c1.tabIds,
+    [11, 12],
+    'the id stays in the record so the next restore can ask again'
+  );
+});
+
+test('a session whose tabs the user really closed still empties', async () => {
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+  await tabs.adoptTab('c1', 11);
+
+  browser.close(11);
+  browser.close(12);
+  await tabs.recordSession('c1');
+
+  assert.deepEqual(
+    browser.local.get('sessionTable').c1.tabIds,
+    [],
+    'both tabs answered that they are gone, so the empty write stands'
+  );
+});

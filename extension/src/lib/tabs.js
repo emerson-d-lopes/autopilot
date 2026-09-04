@@ -58,23 +58,94 @@ async function currentBrowserId() {
 }
 
 /**
+ * What the last read or write left on disk, or null when this worker has not
+ * seen a table it can trust yet.
+ *
+ * The gate below needs to know what it would be overwriting. Reading storage on
+ * every write would cost a read per call, so the restore's own read is kept and
+ * every successful write updates it. A restore that read nothing leaves it null,
+ * which is the one case where the gate goes back to storage.
+ */
+let persistedSnapshot = null;
+
+/** True while restoreSessions is running, so its own write does not wait on itself. */
+let inRestore = false;
+
+/**
+ * Whether a tab is still open, and whether the browser answered at all.
+ *
+ * chrome.tabs.get rejects with "No tab with id" for a tab that is gone. Any
+ * other rejection is the API declining to answer, which is not proof the tab
+ * went away, and code that reads it as proof drops a tab the user still has.
+ */
+async function tabState(tabId) {
+  try {
+    await chrome.tabs.get(tabId);
+    return 'alive';
+  } catch (err) {
+    const message = String((err && err.message) || err);
+    return /no tab with id/i.test(message) ? 'gone' : 'unknown';
+  }
+}
+
+/**
+ * Refuses a write that would empty a session whose tabs the browser still has.
+ *
+ * A worker that restarts and cannot read the table computes an empty session
+ * for every client, and the write at the end of the restore used to put that
+ * empty result on disk, so the record the restore was reading was destroyed and
+ * no later call could recover it. Emptying a record has to be proved now: every
+ * tab id in it has to answer that it is gone. One tab still open, or a browser
+ * that will not answer, keeps the record, and the session's maps are rebuilt
+ * from it so the next tabs_context lists the same tab ids in the same group.
+ *
+ * A session whose tabs the user really closed still empties, which is what
+ * releaseSession and forgetRemovedTab depend on.
+ */
+async function keepLivingRecords(payload) {
+  const stored = persistedSnapshot || (await readSessionTable());
+  let revived = 0;
+  for (const [clientId, prev] of Object.entries(stored)) {
+    if (!prev || typeof prev !== 'object') continue;
+    const prevIds = Array.isArray(prev.tabIds) ? prev.tabIds : [];
+    if (!prevIds.length) continue;
+    const next = payload[clientId];
+    if (next && Array.isArray(next.tabIds) && next.tabIds.length) continue;
+    const kept = await reviveEntry(clientId, prev);
+    if (!kept.tabIds.length) continue;
+    payload[clientId] = kept;
+    revived += 1;
+  }
+  if (revived) await persistGroups();
+  return payload;
+}
+
+/**
  * Writes the table to both storage areas.
  *
  * storage.session is the right home for state that belongs to this browser run.
  * storage.local is written as well because a reload of the extension clears the
  * session area, which is the case this exists for.
+ *
+ * Every write goes through here, and every write waits for the restore, so a
+ * worker that woke on a tab event rather than a tool call cannot put its empty
+ * maps on disk ahead of the table it has not read yet.
  */
 async function persistSessionTable() {
-  const payload = Object.fromEntries(sessionTable);
+  if (!inRestore) await ensureRestored();
+  const payload = await keepLivingRecords(Object.fromEntries(sessionTable));
   const areas = [chrome.storage.session, chrome.storage.local];
+  let written = false;
   for (const area of areas) {
     if (!area || typeof area.set !== 'function') continue;
     try {
       await area.set({ [SESSION_TABLE_KEY]: payload });
+      written = true;
     } catch {
       /* a storage area that refuses a write must not fail the call that made it */
     }
   }
+  if (written) persistedSnapshot = payload;
 }
 
 async function readSessionTable() {
@@ -135,62 +206,88 @@ export async function forgetRemovedTab(tabId) {
  * Nothing here activates a tab or focuses a window: a tab that fell out of its
  * group is grouped again, which leaves it exactly where it was.
  */
-export async function restoreSessions() {
-  const stored = await readSessionTable();
-  await loadGroups();
-  let restoredTabs = 0;
-  let missing = 0;
-
-  for (const [clientId, entry] of Object.entries(stored)) {
-    if (!entry || typeof entry !== 'object') continue;
-    const alive = [];
-    const gone = [];
-    for (const tabId of Array.isArray(entry.tabIds) ? entry.tabIds : []) {
-      try {
-        await chrome.tabs.get(tabId);
-        alive.push(tabId);
-      } catch {
-        gone.push(tabId);
-      }
-    }
-
-    let groupId = entry.groupId === undefined ? null : entry.groupId;
-    if (!(await groupExists(groupId))) groupId = null;
-
-    if (alive.length) {
-      try {
-        if (groupId === null) {
-          groupId = await chrome.tabs.group({ tabIds: alive });
-          await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'purple' }).catch(() => {});
-        } else {
-          const inGroup = new Set((await chrome.tabs.query({ groupId }).catch(() => [])).map((t) => t.id));
-          const strays = alive.filter((id) => !inGroup.has(id));
-          if (strays.length) await chrome.tabs.group({ tabIds: strays, groupId });
-        }
-        sessionGroups.set(clientId, groupId);
-        restoredTabs += alive.length;
-      } catch {
-        /* the tabs went away between the get and the group */
-      }
-    } else if (groupId !== null) {
-      sessionGroups.set(clientId, groupId);
-    }
-
-    if (gone.length) {
-      goneTabs.set(clientId, gone);
-      missing += gone.length;
-    }
-    sessionTable.set(clientId, {
-      tabIds: alive,
-      groupId,
-      browserId: entry.browserId === undefined ? null : entry.browserId,
-      at: Date.now(),
-    });
+/**
+ * Puts one stored entry back into this worker's maps.
+ *
+ * Shared by the restore and by the gate in persistSessionTable, so a record the
+ * gate rescues joins the session on the same terms as one the restore read.
+ * The tabs it could not get an answer about stay in the record without being
+ * grouped or reported, since a tab that may still exist is not a loss.
+ *
+ * Returns the entry it wrote, with `alive` and `gone` hung off it for the
+ * caller's counters.
+ */
+async function reviveEntry(clientId, entry) {
+  const alive = [];
+  const gone = [];
+  const unverified = [];
+  for (const tabId of Array.isArray(entry.tabIds) ? entry.tabIds : []) {
+    const state = await tabState(tabId);
+    if (state === 'alive') alive.push(tabId);
+    else if (state === 'gone') gone.push(tabId);
+    else unverified.push(tabId);
   }
 
-  await persistGroups();
-  await persistSessionTable();
-  return { sessions: Object.keys(stored).length, tabs: restoredTabs, missing };
+  let groupId = entry.groupId === undefined ? null : entry.groupId;
+  if (!(await groupExists(groupId))) groupId = null;
+  let grouped = 0;
+
+  if (alive.length) {
+    try {
+      if (groupId === null) {
+        groupId = await chrome.tabs.group({ tabIds: alive });
+        await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'purple' }).catch(() => {});
+      } else {
+        const inGroup = new Set((await chrome.tabs.query({ groupId }).catch(() => [])).map((t) => t.id));
+        const strays = alive.filter((id) => !inGroup.has(id));
+        if (strays.length) await chrome.tabs.group({ tabIds: strays, groupId });
+      }
+      sessionGroups.set(clientId, groupId);
+      grouped = alive.length;
+    } catch {
+      /* the tabs went away between the get and the group */
+    }
+  } else if (groupId !== null) {
+    sessionGroups.set(clientId, groupId);
+  }
+
+  const kept = {
+    tabIds: [...alive, ...unverified],
+    groupId,
+    browserId: entry.browserId === undefined ? null : entry.browserId,
+    at: Date.now(),
+  };
+  sessionTable.set(clientId, kept);
+  return { ...kept, alive: grouped, gone };
+}
+
+export async function restoreSessions() {
+  inRestore = true;
+  try {
+    const stored = await readSessionTable();
+    // A table that read back empty is not proof the disk is empty, so the gate
+    // in persistSessionTable goes back to storage rather than trusting this.
+    persistedSnapshot = Object.keys(stored).length ? stored : null;
+    await loadGroups();
+    let restoredTabs = 0;
+    let missing = 0;
+
+    for (const [clientId, entry] of Object.entries(stored)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const kept = await reviveEntry(clientId, entry);
+      restoredTabs += kept.alive;
+      if (kept.gone.length) {
+        goneTabs.set(clientId, kept.gone);
+        missing += kept.gone.length;
+      }
+    }
+
+    await persistSessionTable();
+    await persistGroups();
+    return { sessions: Object.keys(stored).length, tabs: restoredTabs, missing };
+  } finally {
+    inRestore = false;
+  }
 }
 
 let restorePromise = null;
@@ -217,6 +314,8 @@ export function resetSessionTable() {
   sessionGroups.clear();
   restorePromise = null;
   cachedBrowserId = null;
+  persistedSnapshot = null;
+  inRestore = false;
 }
 
 async function loadGroups() {
