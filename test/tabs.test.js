@@ -412,6 +412,75 @@ test('a worker restart puts the tabs that still exist back in the session', asyn
   assert.equal(context.missingTabs, undefined);
 });
 
+test('a worker restart with no extension reload restores from the session area', async () => {
+  // Chrome stops an idle worker after 30 s and starts it again for the next
+  // event. The extension was never reloaded, so storage.session still holds the
+  // table and the local copy is not what answers. Bug 3 from the third pass.
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+  await tabs.adoptTab('c1', 11);
+
+  tabs.resetSessionTable();
+  browser.local.delete('sessionTable');
+  browser.ungroup(12);
+
+  const restored = await tabs.restoreSessions();
+  assert.equal(restored.tabs, 2, 'the session area carried both tabs');
+  assert.equal(restored.missing, 0);
+  assert.deepEqual(
+    browser.groupCalls[browser.groupCalls.length - 1],
+    { tabIds: [12], groupId: 77 },
+    'the tab that fell out of the group was put back'
+  );
+  assert.deepEqual(browser.activations, [], 'nothing was activated');
+
+  const context = await tabs.tabsContext('c1');
+  assert.deepEqual(context.tabs.map((t) => t.tabId), [11, 12]);
+});
+
+test('the call that wakes the worker waits for the restore before writing the table', async () => {
+  // The waking call runs against empty maps, so recordSession used to persist a
+  // table holding only its own session and drop every other one.
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+  await tabs.adoptTab('c1', 11);
+
+  const withSecond = {
+    ...browser.session.get('sessionTable'),
+    c2: { tabIds: [], groupId: null, browserId: 'bw-test', at: Date.now() },
+  };
+  browser.session.set('sessionTable', withSecond);
+  browser.local.set('sessionTable', withSecond);
+
+  // The worker restarts and the first call is not tabs_context.
+  tabs.resetSessionTable();
+  await tabs.recordSession('c1');
+
+  const written = browser.local.get('sessionTable');
+  assert.ok(written.c2, 'the other session is still in the table: ' + Object.keys(written).join(', '));
+  assert.deepEqual(written.c1.tabIds, [11, 12], 'and this session kept its tabs');
+});
+
+test('the restore runs once per worker, however many calls arrive together', async () => {
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+  await tabs.adoptTab('c1', 11);
+  tabs.resetSessionTable();
+
+  let reads = 0;
+  const inner = stub.storage.session.get;
+  stub.storage.session.get = async (key) => {
+    if (key === 'sessionTable') reads += 1;
+    return inner(key);
+  };
+
+  await Promise.all([tabs.getSessionGroupId('c1'), tabs.tabsContext('c1'), tabs.recordSession('c1')]);
+  stub.storage.session.get = inner;
+
+  assert.equal(reads, 1, 'the table was read once, not once per call');
+  assert.deepEqual(browser.activations, []);
+});
+
 test('a tab that did not survive the restart is reported once', async () => {
   tabs.resetSessionTable();
   const browser = scriptBrowser();

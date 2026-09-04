@@ -25,6 +25,18 @@ const sessionGroups = new Map();
 // The table is written on every change and read back at worker start. Tabs that
 // still exist are put back in the session's group, and the ones that are gone
 // are held for the first tabs_context to report.
+//
+// A worker restart Chrome decided on, rather than one an extension reload
+// caused, reaches the same code by a different route. Chrome stops an idle
+// worker after 30 s and starts it again for the next event, so the call that
+// wakes it runs against a worker whose maps are all empty, and storage.session
+// still holds the table because the extension itself was never reloaded. Every
+// entry point that reads or writes the table waits for the restore now, since
+// otherwise the waking call raced it: recordSession would persist a table
+// holding only its own session and drop the others, forgetRemovedTab would find
+// nothing to forget, and getSessionGroupId would answer for a group the restore
+// had not put back yet. Only a reload gave the restore a head start, which is
+// why the reload was the path that worked.
 
 /** @type {Map<string, {tabIds: number[], groupId: number|null, browserId: string|null, at: number}>} */
 const sessionTable = new Map();
@@ -87,6 +99,9 @@ async function readSessionTable() {
  */
 export async function recordSession(clientId) {
   if (!clientId) return;
+  // Without this the whole table would be rewritten from an empty map on the
+  // call that woke the worker, taking every other session's tabs with it.
+  await ensureRestored();
   const groupId = sessionGroups.has(clientId) ? sessionGroups.get(clientId) : null;
   let tabIds = [];
   if (groupId !== null && groupId !== undefined) {
@@ -104,6 +119,7 @@ export async function recordSession(clientId) {
 
 /** Drops a closed tab from the table, so a restart does not report it twice. */
 export async function forgetRemovedTab(tabId) {
+  await ensureRestored();
   let changed = false;
   for (const [clientId, entry] of sessionTable) {
     if (!entry.tabIds.includes(tabId)) continue;
@@ -229,6 +245,7 @@ async function groupExists(groupId) {
 }
 
 export async function getSessionGroupId(clientId) {
+  await ensureRestored();
   await loadGroups();
   const groupId = sessionGroups.get(clientId);
   if (await groupExists(groupId)) return groupId;
@@ -735,6 +752,7 @@ export function forgetAdopted(tabId) {
 
 /** The session whose group holds a tab, or null when no session owns it. */
 export async function sessionForTab(tabId) {
+  await ensureRestored();
   await loadGroups();
   let tab;
   try {
