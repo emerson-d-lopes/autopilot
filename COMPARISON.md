@@ -59,12 +59,11 @@ Round trips matter more than per-call latency for an agent, because every call i
 
 ## Where this project is behind
 
-- `find` resolves by wording. "Most viewed article link" cannot find links whose names share no word with the query. Claude in Chrome's nested model call can.
+- `find` resolves by wording first. A query like "most viewed article link", whose words share nothing with the link names, now escalates to a model call through MCP sampling, which only works on a client that offers the sampling capability.
 - No site-specific skills, scheduling, workflow recording, or a chat surface of its own. Those are product features of Claude in Chrome rather than automation features.
 - No performance traces, Lighthouse or heap analysis. Chrome DevTools MCP owns that ground.
 - Cross-origin iframes are leaves. Playwright and Puppeteer address frames directly.
 - Loading the extension is a manual click-through, since Chrome 137 and later ignore `--load-extension`. Claude in Chrome and Browser MCP install from the Web Store.
-- GIF overlays (click circles, labels) are accepted and ignored.
 
 ## Where this project is ahead
 

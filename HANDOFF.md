@@ -6,17 +6,16 @@ Copy everything below the line into a fresh agent session.
 
 You are picking up `C:\Users\edfl\workspace\chrome-mcp`, an MCP server that drives a real Chrome through a Manifest V3 extension and the Chrome DevTools Protocol. It was built to match Claude Code's own browser integration, Claude in Chrome. Read `README.md`, `STATUS.md`, `SPEC.md` and `COMPARISON.md` first. `STATUS.md` has the tool-by-tool parity table, the test coverage map, the bugs found and fixed, what was verified on the user's own Chrome on 2026-09-03, and the browser behaviours that shape the implementation.
 
-25 tools, 16 test files. Everything is staged in git, nothing is committed. Do not commit or push without being asked.
+26 tools, 29 test files. Everything is staged in git, nothing is committed. Do not commit or push without being asked.
 
 ## The plan and what is on `plan/integration`
 
-`docs/claude-in-chrome-comparison/PLAN.md` is the plan the current work follows: seven phases, each with its item codes (R, S, F, D, P from `IMPROVEMENTS.md`, C for the call contract, M for multi-profile, W for write actions) and a scorecard of measured numbers to hit. Phases 0 to 3 are merged on the `plan/integration` branch at extension version 0.1.11: the harness and fixtures, the call contract, attach recovery, input verification, and multi-profile selection. `STATUS.md` has the per-branch summary and the test counts under "Plan phases 0 to 3 integrated". None of it has been driven against a browser yet. The list of live checks the verification pass has to run, grouped by page, is in the integration agent's report, and each branch's own report carries its own copy.
+`docs/claude-in-chrome-comparison/PLAN.md` is the plan the current work follows: seven phases, each with its item codes (R, S, F, D, P from `IMPROVEMENTS.md`, C for the call contract, M for multi-profile, W for write actions) and a scorecard of measured numbers to hit. Phases 0 to 3 are merged on the `plan/integration` branch at extension version 0.1.11: the harness and fixtures, the call contract, attach recovery, input verification, and multi-profile selection. Phases 4 to 7 are merged on `plan/integration2` at extension version 0.1.13: screenshot cost, detectability, GIF overlays and semantic find, the acting indicator, and write actions with confirmation and plan mode. `STATUS.md` has the per-branch summaries and the test counts under "Plan phases 0 to 3 integrated" and "Plan wave 2 integrated". None of it has been driven against a browser yet. The list of live checks the verification pass has to run, grouped by page, is in the integration agents' reports, and each branch's own report carries its own copy.
 
 ## The goal the user set
 
 Copy everything Claude in Chrome does, including its behaviour, look for gaps, fix them, and implement what is missing. The real Claude in Chrome tool schemas are the reference: load them in a session with `ToolSearch` (`select:mcp__claude-in-chrome__*`) and compare against `host/schemas.js`. That comparison was done once and the gaps it found are closed (see `STATUS.md`, "Feature parity"). Things still open from that comparison:
 
-- The gif overlay options Claude in Chrome draws (click circles, action labels, progress bar, watermark) are accepted and ignored.
 - `list_connected_browsers` there reports OS platform and whether the browser is on this machine. Here it reports id, name and version.
 - `switch_browser` there broadcasts a pairing prompt to every connected extension and waits for a click. Here it is the same as `select_browser`.
 - `read_page` there says it returns non-visible elements by default. Here invisible elements are dropped except for the styled-radio case.
@@ -39,7 +38,7 @@ The extension is named Lantern (the package and the MCP server stay `chrome-mcp`
 
 - Test against reality. Every bug in `STATUS.md` was found by running something. When you claim something works, say what you ran. When something is untested, say so.
 - Do not run the full suite as a gate during development. It takes about five minutes with a browser up and the user considers it a blocker. Run the file you are touching, and verify behaviour by driving a browser directly. `npm run test:fast` skips the recovery tests.
-- **Bump `version` in `extension/manifest.json` with every change under `extension/`.** The user asked for this. `npm run doctor` prints the running version, so it is how a reload is proven. Current: 0.1.11.
+- **Bump `version` in `extension/manifest.json` with every change under `extension/`.** The user asked for this. `npm run doctor` prints the running version, so it is how a reload is proven. Current: 0.1.13.
 - The user's Chrome runs whatever extension build was last reloaded there. After editing extension code, either ask the user to reload it at `chrome://extensions` (then confirm with `npm run doctor`, which prints the extension version) or verify in the development browser.
 - The agent works in the background. Tabs open unselected in the user's current window, and nothing activates a tab or focuses a window, ever. Hidden tabs are woken through CDP (`cdp.wake`) and captured through a screencast frame (`captureHidden` in `cdp.js`). Both are deliberate differences from Claude in Chrome, at the user's request.
 - The user's Chrome does not yet have the `wait_for_page` fix (it was made after the second reload). Ask for a reload before relying on click-then-wait-then-read batches there.

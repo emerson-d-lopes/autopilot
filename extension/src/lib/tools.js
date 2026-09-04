@@ -95,14 +95,6 @@ async function ensureAttached(tabId) {
 }
 
 /**
- * Hooks that drive the on-page pointer alongside the real input events.
- *
- * Presentation only. The events the page receives come from CDP and are
- * identical whether or not this is drawn, so a page cannot tell the difference
- * from the pointer. Every call is fire and forget: drawing must never be able
- * to fail an action.
- */
-/**
  * Grabs a gif frame when a recording is open. Never allowed to fail an action.
  * `meta` carries the action name and any point/path (P1), so the frame gets
  * the right per-action delay, action label, and click or drag marker.
@@ -111,6 +103,14 @@ async function recordFrame(tabId, meta) {
   if (gif.isRecording(tabId)) await gif.captureFrame(tabId, meta).catch(() => {});
 }
 
+/**
+ * Hooks that drive the on-page pointer alongside the real input events.
+ *
+ * Presentation only. The events the page receives come from CDP and are
+ * identical whether or not this is drawn, so a page cannot tell the difference
+ * from the pointer. Every call is fire and forget: drawing must never be able
+ * to fail an action.
+ */
 function cursorHooks(tabId) {
   const send = (payload) => {
     pageCall(tabId, { type: 'CURSOR', ...payload }).catch(() => {});

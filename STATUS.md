@@ -20,7 +20,7 @@ Claude Code drives Chrome through Anthropic's `claude-in-chrome` extension, whic
 | `navigate` | `navigate` | Also reports load failures, which `chrome.tabs.update` cannot |
 | `read_page` | `read_page` | |
 | `get_page_text` | `get_page_text` | |
-| `find` | `find` | Local ranking rather than a nested model call, so it costs no inference |
+| `find` | `find` | Local ranking first, so a clear match costs no inference. A weak local score, or `semantic: true`, escalates to a model call through MCP sampling |
 | `form_input` | `form_input` | Also refuses disabled and read-only controls |
 | `computer` | `computer` | All 13 actions, plus `perKey` typing |
 | `javascript_tool` | `javascript` | |
@@ -29,7 +29,7 @@ Claude Code drives Chrome through Anthropic's `claude-in-chrome` extension, whic
 | `resize_window` | `resize_window` | |
 | `file_upload` | `file_upload` | Also handles drop zones with no file input |
 | `upload_image` | `upload_image` | Takes the `imageId` printed under each screenshot, a path, or `"last"` |
-| `gif_creator` | `gif_creator` | Own GIF89a encoder, no dependency. `start_recording` / `stop_recording` / `export` / `clear` and `filename` are accepted. The overlay `options` (click indicators, labels, watermark) are not drawn |
+| `gif_creator` | `gif_creator` | Own GIF89a encoder, no dependency. `start_recording` / `stop_recording` / `export` / `clear` and `filename` are accepted, and the overlay `options` (click indicators, drag paths, action labels, progress bar, watermark) are drawn |
 | `browser_batch` | `browser_batch` | |
 | `list_connected_browsers` | `list_connected_browsers` | |
 | `select_browser` | `select_browser` | |
@@ -81,7 +81,6 @@ Also live: same-origin iframes, open and closed shadow roots, non-ascii text thr
 - **Cross-origin iframes.** Reported as leaves by design. Reading inside one needs a frame-targeted call that does not exist yet.
 - **Two browsers at once.** The multi-browser path is built and `list_connected_browsers` / `select_browser` are tested against one live browser. Nothing has exercised Chrome and Edge connected simultaneously.
 - **The user's own Chrome, by the suite.** The automated files run against Chrome for Testing with an isolated profile, because Chrome 137 and later ignore `--load-extension` and loading unpacked is a manual click-through. The user's Chrome was driven by hand on 2026-09-03, see below.
-- **The gif overlay options** Claude in Chrome draws (click circles, action labels, progress bar) are accepted and ignored.
 - **Non-Windows platforms.** The code paths exist for macOS and Linux (unix sockets, per-browser manifest directories) and are unexercised.
 
 ## Bugs found and fixed
@@ -202,22 +201,9 @@ With more than one browser connected the browser-driven files pick, in order, `C
 - Cross-origin iframes are reported as leaves
 - A JavaScript modal dialog blocks all further extension calls until a human dismisses it, which is a Chrome constraint
 - The CDP debugger banner is visible on tabs the session has attached
-- A site probing for CDP automation can detect the session. On 0.1.7, `deviceandbrowserinfo.com/are_you_a_bot` returned `isBot: true` on all three runs with `isAutomatedWithCDP: true` as the only flag set, while every spoofable signal read clean: webdriver, Selenium, Playwright and headless markers `false`, and canvas, WebGL, plugin and user-agent fingerprints identical to the same Chrome driven by hand (`docs/claude-in-chrome-comparison/evidence/D-bot-detection.md` section 4). `browserscan.net/bot-detection` reported Normal on the same build, including its own CDP section, so vendors disagree on the heuristic. 0.1.12 makes console capture opt-in, so `Runtime.enable` is never issued on a tab that does not read the console, which reduces the surface without removing it
+- A site probing for CDP automation can detect the session. On 0.1.7, `deviceandbrowserinfo.com/are_you_a_bot` returned `isBot: true` on all three runs with `isAutomatedWithCDP: true` as the only flag set, while every spoofable signal read clean: webdriver, Selenium, Playwright and headless markers `false`, and canvas, WebGL, plugin and user-agent fingerprints identical to the same Chrome driven by hand (`docs/claude-in-chrome-comparison/evidence/D-bot-detection.md` section 4). `browserscan.net/bot-detection` reported Normal on the same build, including its own CDP section, so vendors disagree on the heuristic. 0.1.13 makes console capture opt-in, so `Runtime.enable` is never issued on a tab that does not read the console, which reduces the surface without removing it
 - Completely covering the browser window can stall input until the extension raises it again
 - `wait_for_page` cannot catch an update driven by a bare timer with no DOM or network activity, because it has nothing to wait on. `test/campaign.test.js` uses a retry loop for that case
-
-## Phase 7, detectability, 2026-09-04
-
-Branch `plan/detect`, extension 0.1.12. Items D1, D3, D4 and D5 from `docs/claude-in-chrome-comparison/IMPROVEMENTS.md`.
-
-- D1. `Runtime.enable` is no longer part of joining a session. A tab gets `Log`, `Network`, `Page` and `DOM`, and `Runtime` goes on when `read_console_messages` first runs on that tab, then off again on a read that passes `clear: true`. `browser_batch` arms it before the batch starts when a later item reads the console, so an action earlier in the same batch is still captured. The console output logged before the first read is lost, and that read carries a warning saying so. `only_errors` carries a second warning, because an uncaught exception needs the same domain. A `consoleCapture` setting in `chrome.storage.local`, on the options page, restores the always-on behaviour.
-- D3. `typeKeysReal` draws each inter-key interval from a distribution around a mean of 60 ms, plus or minus 40 percent, with a longer pause after roughly one space in seven. The mean is the interval the page sees, so the time the three key events took is subtracted from it, which is what keeps 500 characters inside the 30911 ms the campaign measured on 0.1.7. `computer type` takes a `cadence` argument to set the mean when `perKey` is true.
-- D4. A click or a hover moves the pointer along a bowed path of 3 to 6 `mouseMoved` events from the tab's last known pointer position, dispatched inside the hover gap that was already being spent, so the wall time is unchanged. Only the last point waits for an acknowledgement, since a hidden tab acknowledges nothing and awaiting each point would turn one 400 ms ack timeout per click into six. The last position is recorded in `sendInput` for every `mouseMoved`, so drags and hovers feed it too. A tab with no known position, or a target within 8 px, gets the single move it got before.
-- D5. The README and the list above record what the campaign measured.
-
-`tools/probe-detect.js` drives the campaign fixture and prints the keydown intervals and the mousemove path points the page recorded, so D3 and D4 can be measured rather than assumed. It uses `tools/mcp-client.js` when that file is present and an equivalent client of its own when it is not.
-
-Untested live at the time of writing: everything above is covered by `test/recorder.test.js` and `test/cdp.test.js` against the chrome stub. The CDP trace, the re-run of the four detector pages and the probe output belong to the verification pass.
 
 ## Plan phases 0 to 3 integrated, 2026-09-03
 
@@ -263,33 +249,56 @@ Test counts on 2026-09-03, `node --test` per file, no browser running:
 
 The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run, and neither was the live verification pass. Nothing in this merge has been driven against a browser.
 
-## Write actions, confirmation, plan mode, 2026-09-04
+## Plan wave 2 integrated, 2026-09-04
 
-Branch `plan/writes` off `plan/integration`. Extension version 0.1.12, which adds the `notifications` permission. Covers PLAN.md Phase 4 items W2, W4, W5 and W7, and Phase 6 items F5 and F6.
+Five branches off `plan/integration`, merged onto `plan/integration2` in the order screenshots, detect, gif-find, indicator, writes. Extension version 0.1.13, which adds the `notifications` permission and a second content script.
 
-What landed:
+What each branch landed:
 
-- **W2, submit verification.** A click on a submit-shaped control (`button[type=submit]`, a bare button inside a form, or an accessible name matching send, post, save, publish, reply or submit) and an Enter inside a composer or a form field get a 3 s window instead of 250 ms. Five signals are looked for and named individually under `evidence.submit.fired`: the composer emptied, a new node carrying the typed text, a 2xx from the page's own origin in the recorder's buffer, a `role=status`, `role=alert` or `aria-live` region that spoke, and a navigation. None of them means `effects: unknown` with the hint `re-read the page before retrying`. A submit is never re-dispatched by the throttle retry, since a submit that shows no local effect may still have reached the server.
-- **W4, confirm mode.** A fourth permission mode. A click or an Enter on a control the W3 classifier marks irreversible is refused once with `confirmation_required` carrying `{token, control, origin, screenshotId}`, and performed when the same call comes back with `confirm: <token>` inside 120 s. Tokens are single use and bound to the tab, the origin and the control name. The options page has a per-origin write allow-list that exempts named hosts, and a switch for in-browser approval, which shows a `chrome.notifications` notification with Allow and Deny and settles the pending call on the button. A notification activates no tab and focuses no window.
-- **W5, audit.** An irreversible action returns a `write` object, and the host copies it into the journal as its own field: the control, the origin, the id of the screenshot taken before the click, what the submit evidence found afterwards, and how it was confirmed. The typed value is kept only when the journal is not in redaction mode and the composer was not a sensitive field. `npm run log` prints a Writes section under the timeline.
-- **W7, undo hints.** A control whose name reads as an edit, a save or a comment is classified reversible, and the result carries `undo` naming a control on the page that would reverse it. A sent message reports `undo: none`.
-- **F5, plan mode.** `declare_plan({origins})` checks a list against the blocklist and grants it for the session. In plan mode every other origin is refused with `origin_blocked` and the hint to declare it, reads included, since the point of one approval is that the user saw the whole scope.
-- **F6, domain transitions.** The session's last acted origin is tracked per client. A call on a different origin is a warning on the result in allow and confirm mode, and needs its own grant in ask mode. A `navigate` is checked again after it lands, so a redirect into a third origin is caught.
+- `plan/screenshots` (R4, P2, P3): screenshots are JPEG at quality 0.75 by default with `format`, `quality` and `scale` arguments, a byte budget that lowers quality before it lowers size, a clip fast path that asks CDP for the crop instead of redrawing it on a canvas, a hidden-tab path that takes the screencast frame at the target size, and a batch frame held from `beginBatch` to `endBatch` so coordinates written against the pre-batch image still land. `npm run bench:screenshot` measures ten captures.
+- `plan/detect` (D1, D3, D4, D5): `Runtime.enable` is no longer part of joining a session, it goes on when `read_console_messages` first runs on a tab and off again on a read that clears the buffer, with an `always` setting on the options page and a pre-arm for a batch whose later step reads the console. Typing draws each inter-key interval around a mean of 60 ms (`cadence` on `computer type`), and a click or hover moves the pointer along a bowed 3 to 6 point path inside the gap it already spent. `tools/probe-detect.js` measures both against the campaign fixture.
+- `plan/gif-find` (P1, P6, P10, plus navigate and upload fixes): GIF frames carry click rings, action labels, a progress bar, a watermark and real elapsed time, `find` escalates to MCP sampling when the local score is weak or `semantic` is set, `pressKey` refuses the ctrl/cmd zoom chords, pressed and held mouse events carry `force`, `navigate back` and `forward` go through `Page.navigateToHistoryEntry` and wait for the load, and upload filenames are normalized.
+- `plan/indicator` (F4, D2): a three-state acting indicator drawn into the cursor overlay's closed shadow root, a pulsing border and Stop button on the tab being driven, a pill on the session's other tabs, and both hidden from screenshots by the existing hide and show pair. Stop halts a running batch and every later call with the `stopped` code until Resume. The overlay host id is random per install, and `file_upload` resolves its target without writing a marker attribute onto the page.
+- `plan/writes` (W2, W4, W5, W7, F5, F6): a submit-shaped click or Enter gets a 3 s window and five named signals under `evidence.submit.fired`, confirm mode refuses an irreversible click once with `confirmation_required` and a single-use token bound to tab, origin and control, an irreversible action returns a `write` row the host copies into the journal, a reversible one returns an `undo` hint, `declare_plan` grants a session's declared origins in plan mode, and a call on a new origin carries a transition warning.
 
-The before-screenshot goes through the existing capture path and is held in the extension under its id. Nothing fetches those bytes back yet: the id is a correlation handle in the journal and in the confirmation details, not something a tool can render.
+Cross-track work done at the merge:
 
-Tests, `node --test` per file on 2026-09-04, no browser running:
+- The batch runner in `background.js` runs one order for all four tracks: pre-validate, refuse to arm anything when the session is stopped, arm console reads, open the screenshot batch frame, check `isStopped` between steps, close the frame in a `finally`.
+- `cdp.js` keeps detect's `movePointerTo`, which records every `mouseMoved` and waits for an acknowledgement only on the final point, and carries gif-find's `force: 0.5` on any point of that path dispatched with a button held.
+- The click path in `tools.js` runs the confirm gate and the before-write capture, dispatches inside the submit window, records the GIF frame with the action name and the point, reads the submit evidence, then adds the undo hint and the audit row.
+- `computer` gained `format`, `quality`, `scale`, `cadence`, `confirm` and `replace`, `find` gained `semantic`, `gif_creator` gained `options`, and `declare_plan` was added. Nothing was renamed or removed, and `test/parity.test.js` passes.
+- The error catalogue gained `stopped` and `confirmation_required`. `extension/src/lib/errors.js` matches `host/errors.js`.
+- The options page renders and saves the browser label, the five permission modes, the ask-in-browser switch, the write allow-list and the console capture choice from one `options.html` and one `options.js`.
+
+Test counts on 2026-09-04, `node --test` per file, no browser running:
 
 | File | Tests | Pass |
 |---|---|---|
-| permissions.test.js | 29 | 29 |
-| verify.test.js | 30 | 30 |
-| journal.test.js | 24 | 24 |
+| a11y.test.js | 47 | 47 |
+| aliases.test.js | 6 | 6 |
+| batch.test.js | 8 | 8 |
 | campaign-server.test.js | 15 | 15 |
+| cdp.test.js | 48 | 48 |
+| errors.test.js | 33 | 33 |
+| find.test.js | 43 | 43 |
+| gif.test.js | 30 | 30 |
+| indicator.test.js | 9 | 9 |
+| ipc.test.js | 17 | 17 |
+| journal.test.js | 24 | 24 |
 | parity.test.js | 8 | 8 |
-| a11y, sensitive, batch, aliases, cdp, find, screenshot, sessions, tabs | 165 | 165 |
-| errors, ipc, protocol, redact, registry, profile | 137 | 137 |
+| permissions.test.js | 29 | 29 |
+| profile.test.js | 20 | 20 |
+| protocol.test.js | 14 | 14 |
+| redact.test.js | 19 | 19 |
+| recorder.test.js | 8 | 8 |
+| registry.test.js | 20 | 20 |
+| screenshot.test.js | 44 | 44 |
+| sensitive.test.js | 16 | 16 |
+| sessions.test.js | 14 | 14 |
+| tabs.test.js | 17 | 17 |
+| verify.test.js | 30 | 30 |
+| **Total** | **519** | **519** |
 
-`node tools/check-errors-copy.js` reports the copy matches. Nothing on this branch has been driven against a browser.
+`node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 41 files under `extension/src`, `host` and `tools`.
 
-The fixture at `/composer.html` gained a `role=status` toast, a POST to `/api/echo` after a send, and a Save draft control that leaves a Discard draft button behind, so all five submit signals and both undo branches can be rehearsed offline before a real site is touched.
+The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. Nothing in this merge has been driven against a browser, and the live checks each branch asked for are still open.
