@@ -13,6 +13,8 @@ import {
   extractRefs,
   parseModelFindResponse,
   validateModelMatches,
+  quotedLabels,
+  FIND_TREE_CHAR_BUDGET,
 } from '../extension/src/lib/find.js';
 
 const TREE = [
@@ -354,4 +356,69 @@ test('validateModelMatches against a capped tree drops a ref that was truncated 
   // what was actually sent can call real, which is the point of validating
   // against the sent text rather than the full page.
   assert.equal(valid.length + hallucinated.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Open bug 1: an exact label on a large page
+// ---------------------------------------------------------------------------
+
+const BIG_BUTTONS = Array.from(
+  { length: 3000 },
+  (_, i) => 'button "btn ' + i + '" [ref_' + (3000 + i) + ']'
+).join('\n');
+
+test('quotedLabels reads the label out of a query', () => {
+  assert.deepEqual(quotedLabels('the button labelled exactly "btn 2999"'), ['btn 2999']);
+  assert.deepEqual(quotedLabels('“Sign in” link'), ['sign in']);
+  assert.deepEqual(quotedLabels("it's the save button"), [], 'an apostrophe does not open a label');
+  assert.deepEqual(quotedLabels(''), []);
+});
+
+test('a quoted exact label outranks every fuzzy match on a 3000 button page', () => {
+  const matches = scoreCandidates(BIG_BUTTONS, 'the button labelled exactly "btn 2999"', 20);
+  assert.equal(matches[0].name, 'btn 2999');
+  assert.equal(matches[0].ref, 'ref_5999');
+  assert.ok(
+    matches[0].score > matches[1].score,
+    'the exact label wins outright, not on a tie: ' + matches[0].score + ' vs ' + matches[1].score
+  );
+});
+
+test('an exact label wins without quotes too', () => {
+  const matches = scoreCandidates(BIG_BUTTONS, 'the button labelled exactly btn 2999', 20);
+  assert.equal(matches[0].name, 'btn 2999');
+});
+
+test('the exact run has to be in the query order', () => {
+  // "20.50" shares both words with a query for "50.20" and used to tie with it.
+  const cells = [];
+  for (let row = 1; row <= 50; row++) {
+    for (let col = 1; col <= 50; col++) {
+      cells.push('cell "' + row + '.' + col + '" [ref_' + (row * 100 + col) + ']');
+    }
+  }
+  const matches = scoreCandidates(cells.join('\n'), 'the table cell containing 50.20', 20);
+  assert.equal(matches[0].name, '50.20');
+  assert.ok(matches[0].score > matches[1].score, 'reversed digits do not tie with the exact cell');
+});
+
+test('the exact bonus does not resurrect an unrelated node', () => {
+  assert.equal(scoreCandidates(BIG_BUTTONS, 'zyxwvu qqq').length, 0);
+});
+
+test('ranking a 9000 node tree stays under a few milliseconds', () => {
+  const lines = [];
+  for (let i = 0; i < 9000; i++) {
+    lines.push('  cell "row ' + i + ' value ' + (i * 7) + '" [ref_' + i + ']');
+  }
+  const tree = lines.join('\n');
+  const started = process.hrtime.bigint();
+  const matches = scoreCandidates(tree, 'the cell containing "row 8123 value 56861"', 20);
+  const ms = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.equal(matches[0].ref, 'ref_8123');
+  assert.ok(ms < 60, 'ranking took ' + ms.toFixed(1) + ' ms');
+});
+
+test('the ranking budget is large enough for the whole interactive tree of a 3000 row page', () => {
+  assert.ok(FIND_TREE_CHAR_BUDGET >= BIG_BUTTONS.length * 2, 'budget ' + FIND_TREE_CHAR_BUDGET);
 });

@@ -5,7 +5,7 @@ import * as shot from './screenshot.js';
 import * as perms from './permissions.js';
 import * as tabsLib from './tabs.js';
 import * as recorder from './recorder.js';
-import { scoreCandidates, shouldWiden, NARROW_SCOPE_RATIO } from './find.js';
+import { scoreCandidates, shouldWiden, NARROW_SCOPE_RATIO, FIND_TREE_CHAR_BUDGET } from './find.js';
 import * as gif from './gif.js';
 import * as shortcuts from './shortcuts.js';
 import { ToolError, withCode } from './errors.js';
@@ -1279,7 +1279,7 @@ export const handlers = {
         type: 'FIND_TREE',
         filter,
         depth: 30,
-        maxChars: 200000,
+        maxChars: FIND_TREE_CHAR_BUDGET,
         paymentCategory,
       });
       if (tree.error) throw new ToolError(tree.code || 'ref_stale', tree.error);
