@@ -395,12 +395,24 @@ if (notificationsAvailable() && chrome.notifications.onButtonClicked) {
 }
 
 /**
+ * How long an unanswered notification is waited for.
+ *
+ * Half the token's life, and half the host's 120s call timeout. With the two
+ * deadlines equal, the host gave up first and reported a renderer that never
+ * answered, and the notification was still open afterwards with nothing left to
+ * answer it. This expires first, so the call comes back saying what actually
+ * happened and the notification is closed on the way out.
+ */
+export const ASK_IN_BROWSER_TIMEOUT_MS = 60000;
+
+/**
  * Asks in the browser and waits for the answer.
  *
  * Returns `unavailable` when the switch is off or the API is missing, so the
- * caller falls back to the client-side token flow rather than failing.
+ * caller falls back to the client-side token flow rather than failing, and
+ * `timeout` when nobody answered inside the deadline.
  */
-export async function askInBrowser({ control, origin, timeoutMs = CONFIRM_TTL_MS } = {}) {
+export async function askInBrowser({ control, origin, timeoutMs = ASK_IN_BROWSER_TIMEOUT_MS } = {}) {
   const policy = await loadPolicy();
   if (!policy.confirmNotifications || !notificationsAvailable()) return 'unavailable';
 

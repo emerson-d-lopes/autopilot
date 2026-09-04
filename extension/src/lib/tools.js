@@ -455,8 +455,11 @@ function submitEvidence(report, network, outcome) {
  * Returns how it was approved, or throws `confirmation_required` carrying a
  * token bound to this tab, origin and control. Nothing is activated or focused:
  * the browser-side approval is a notification, which does neither.
+ *
+ * `askTimeoutMs` overrides the notification's own deadline, so a test does not
+ * have to wait a minute for the unanswered case.
  */
-async function confirmGate({ tabId, url, control, irreversible, confirm, screenshotId }) {
+export async function confirmGate({ tabId, url, control, irreversible, confirm, screenshotId, askTimeoutMs }) {
   const origin = perms.originOf(url);
   if (!(await perms.needsConfirmation({ url, irreversible }))) {
     return { required: false, origin, approvedBy: 'policy' };
@@ -478,10 +481,26 @@ async function confirmGate({ tabId, url, control, irreversible, confirm, screens
     );
   }
 
-  // The browser-side approval, when the options page turned it on. A denial is
-  // final for this call; a timeout falls through to the token flow.
-  const answer = await perms.askInBrowser({ control, origin });
+  // The browser-side approval, when the options page turned it on. A denial and
+  // an unanswered notification are both final for this call.
+  const answer = await perms.askInBrowser({ control, origin, ...(askTimeoutMs ? { timeoutMs: askTimeoutMs } : {}) });
   if (answer === 'allow') return { required: true, origin, approvedBy: 'notification', screenshotId };
+  if (answer === 'timeout') {
+    throw new ToolError(
+      'confirmation_required',
+      'The browser was asked to confirm pressing ' + JSON.stringify(control) + ' on ' + origin +
+        ' and nobody answered within ' + Math.round(perms.ASK_IN_BROWSER_TIMEOUT_MS / 1000) +
+        ' seconds. The notification was closed and nothing was clicked.',
+      {
+        hint:
+          'Ask the user to answer the notification, or turn browser confirmations off in the extension options ' +
+          'and confirm with a token instead. Repeating this call opens another notification and waits again.',
+        effects: 'none',
+        retryable: false,
+        details: { control, origin, screenshotId, unansweredInBrowser: true },
+      }
+    );
+  }
   if (answer === 'deny') {
     throw new ToolError(
       'confirmation_required',

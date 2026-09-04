@@ -334,3 +334,77 @@ test('askInBrowser reports unavailable when the switch is off', async () => {
     assert.equal(await perms.askInBrowser({ control: 'Send', origin: 'https://example.com' }), 'unavailable');
   });
 });
+
+// ---------------------------------------------------------------------------
+// An unanswered notification has its own deadline (W4)
+// ---------------------------------------------------------------------------
+
+/** A notifications API that shows the prompt and never gets an answer. */
+function silentNotifications() {
+  const created = [];
+  const cleared = [];
+  // The notification carries the extension's icon, which the base stub has no
+  // getURL for.
+  globalThis.chrome.runtime.getURL = (path) => 'chrome-extension://test/' + path;
+  globalThis.chrome.notifications = {
+    create(id, options, done) {
+      created.push({ id, options });
+      chrome.runtime.lastError = null;
+      if (done) done(id);
+    },
+    clear(id) {
+      cleared.push(id);
+    },
+    onButtonClicked: { addListener() {} },
+    onClosed: { addListener() {} },
+  };
+  return { created, cleared };
+}
+
+test('the notification deadline is half the token life and half the host timeout', () => {
+  assert.equal(perms.ASK_IN_BROWSER_TIMEOUT_MS, 60000);
+  assert.ok(
+    perms.ASK_IN_BROWSER_TIMEOUT_MS < perms.CONFIRM_TTL_MS,
+    'it has to expire before the token it would have approved'
+  );
+});
+
+test('an unanswered notification times out and is closed on the way out', async () => {
+  const notifications = silentNotifications();
+  await withPolicy({ mode: perms.MODES.CONFIRM, confirmNotifications: true }, async () => {
+    const answer = await perms.askInBrowser({ control: 'Send', origin: 'https://example.com', timeoutMs: 25 });
+    assert.equal(answer, 'timeout');
+    assert.equal(notifications.created.length, 1);
+    assert.deepEqual(notifications.cleared, [notifications.created[0].id], 'nothing is left open behind the refusal');
+  });
+  delete globalThis.chrome.notifications;
+});
+
+test('an unanswered confirmation comes back naming the browser, not the renderer', async () => {
+  silentNotifications();
+  const { confirmGate } = await import('../extension/src/lib/tools.js');
+  await withPolicy({ mode: perms.MODES.CONFIRM, confirmNotifications: true }, async () => {
+    await assert.rejects(
+      () => confirmGate({
+        tabId: 1,
+        url: 'https://example.com/thread',
+        control: 'Send',
+        irreversible: true,
+        screenshotId: 'write_1_ab3d',
+        askTimeoutMs: 25,
+      }),
+      (err) => {
+        assert.equal(err.code, 'confirmation_required');
+        assert.equal(err.effects, 'none');
+        assert.equal(err.retryable, false, 'a retry would wait for another unanswered notification');
+        assert.match(err.message, /nobody answered/);
+        assert.match(err.message, /notification was closed/);
+        assert.doesNotMatch(err.message, /renderer/);
+        assert.equal(err.details.unansweredInBrowser, true);
+        assert.equal(err.details.screenshotId, 'write_1_ab3d');
+        return true;
+      }
+    );
+  });
+  delete globalThis.chrome.notifications;
+});
