@@ -581,6 +581,9 @@ test('a png capture carries no quality, which CDP would reject', async () => {
 });
 
 test('a hidden tab asks the screencast for the target size instead of cropping in a canvas', async () => {
+  // The renderer capture is probed first and this stub answers it with nothing,
+  // so the screencast path below is the one under test.
+  cdp.resetRendererCaptureProbe();
   const listeners = [];
   const seen = scriptDebugger({
     'Page.getLayoutMetrics': () => ({ cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } }),
@@ -616,6 +619,34 @@ test('a hidden tab asks the screencast for the target size instead of cropping i
   assert.equal(start.params.quality, 70);
   assert.equal(start.params.format, 'jpeg');
   assert.ok(seen.some((c) => c.method === 'Page.stopScreencast'));
-  assert.ok(!seen.some((c) => c.method === 'Page.captureScreenshot'), 'no surface capture was attempted');
+  const surface = seen.filter((c) => c.method === 'Page.captureScreenshot' && c.params.fromSurface !== false);
+  assert.equal(surface.length, 0, 'no compositor surface capture was attempted on a hidden tab');
+  await cdp.detachAll();
+});
+
+test('a hidden tab whose renderer answers gets the clip and its scale, with no screencast', async () => {
+  cdp.resetRendererCaptureProbe();
+  const seen = scriptDebugger({
+    'Page.getLayoutMetrics': () => ({ cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } }),
+    'Page.captureScreenshot': () => ({ data: 'RENDERER' }),
+  });
+  globalThis.chrome.debugger.onEvent = { addListener() {}, removeListener() {} };
+  chrome.tabs.get = async () => ({ id: 64, active: false, windowId: 1, url: 'https://example.com/' });
+
+  await cdp.attach(64);
+  const data = await cdp.captureScreenshot(64, {
+    format: 'jpeg',
+    quality: 70,
+    clip: { x: 0, y: 640, width: 1600, height: 900, scale: 0.93 },
+    scroll: { x: 0, y: 640 },
+  });
+  assert.equal(data, 'RENDERER', 'the renderer capture is a fresh frame, so it is preferred');
+
+  const call = seen.find((c) => c.method === 'Page.captureScreenshot');
+  assert.equal(call.params.fromSurface, false, 'read from the renderer, not the compositor surface');
+  assert.equal(call.params.quality, 70);
+  assert.deepEqual(call.params.clip, { x: 0, y: 640, width: 1600, height: 900, scale: 0.93 });
+  assert.ok(!seen.some((c) => c.method === 'Page.startScreencast'), 'no screencast is opened when the renderer answers');
+  cdp.resetRendererCaptureProbe();
   await cdp.detachAll();
 });

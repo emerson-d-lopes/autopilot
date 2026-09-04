@@ -1,12 +1,12 @@
 # chrome-mcp: status, parity and test coverage
 
-State of the build as of 2026-09-03. 25 tools, 16 test files.
+State of the build as of 2026-09-04, extension 0.1.28. 26 tools, 29 test files.
 
-- Source: about 6,700 lines across the extension, host and tools
-- Tests: about 3,600 lines
+- Source: about 17,600 lines across the extension, host and tools
+- Tests: about 10,500 lines
 - Verified against Chrome for Testing 152 and against the user's own Chrome 152 on Windows 11
 
-Last full run of the browser-driven files was before the 2026-09-03 changes. On 2026-09-03 the eleven non-browser files (135 tests) pass, and the new behaviour was verified by driving the development browser and the user's Chrome directly, as described under Verification on real browsers.
+On 2026-09-04 the 23 non-browser files (529 tests) pass. The six browser-driven files were last run by the verification pass described under "Live verification of the merged build", which ran on `plan/integration` before wave 2 was merged in. The merged build has not been driven against a browser.
 
 ## Feature parity with Claude Code's browser integration
 
@@ -302,3 +302,70 @@ Test counts on 2026-09-04, `node --test` per file, no browser running:
 `node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 41 files under `extension/src`, `host` and `tools`.
 
 The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. Nothing in this merge has been driven against a browser, and the live checks each branch asked for are still open.
+
+## Live verification of the merged build, 2026-09-04
+
+The pass is written up in `docs/claude-in-chrome-comparison/evidence/VERIFY-0.1.11.md`, one entry per check with the call and the verbatim result. It ran entirely against the development browser started by `node tools/browser.js --interferer --detach`, with `test/fixtures/interferer` loaded so the attach recovery ladder fires on every page.
+
+Two tools were added for it. `tools/mcp-client.js` spawns `host/mcp-server.js` from the working tree and drives it over stdio, as a library and as a one-off CLI, because a Claude Code session's MCP tools are bound to whichever server process it started. `tools/browser.js --interferer` loads the second extension.
+
+Of the 57 checks: 39 passed, 5 passed after a fix made during the pass, 6 were partial, 2 failed, and 7 are deferred because they need a signed-in profile or a DevTools window opened by hand.
+
+Eleven fixes landed, each with a unit test and a manifest bump. Extension 0.1.11 to 0.1.27. The ones that changed behaviour a caller can see:
+
+- Screenshots of a hidden tab did not work at all. A sleeping tab emits no screencast frame, and once woken, the frame a screencast opens with is the surface as it was before the redraw that request forced. The capture now wakes the tab, waits two animation frames, and opens screencasts until two carry the same image. A window that stays barren is raised as `timeout`, which the read retry policy handles.
+- Per-key typing inserted every character twice, so `ja` arrived as `jjaa` and the jQuery UI autocomplete never opened. Both the keyDown and the char event carried the text.
+- A click on an inert element reported `effects: applied`, because focus falling back to the body counted as a focus change and the value comparison read whatever held focus at the end of the window.
+- A type with nothing able to hold text focused reported `ok`. It is now a `no_effect` naming what did have focus.
+- Chrome's `chrome://` refusals were classified as `internal` rather than `origin_blocked`.
+- A tab opened by a click was recorded after the click had already read the bookkeeping.
+
+Ten open bugs are listed at the end of the verification file with their reproductions. The ones worth reading first: a batch does not pre-validate refs the way it pre-validates tool names, a session does not survive `chrome.runtime.reload()`, and calls are serialized behind a frozen renderer so a long `javascript` blocks the next call for its whole duration.
+
+## Verification fixes merged into wave 2, 2026-09-04
+
+`plan/integration` was merged into `plan/integration2`, so the eleven fixes the verification pass made sit on top of the wave 2 work. Extension version 0.1.28.
+
+Four files conflicted. What each merged version does:
+
+- `cdp.js`, the hidden-tab capture. The tab is woken with `force: true`, then read from the renderer with `fromSurface: false`, which is a fresh frame of the current document and carries `clip` with its scale natively. Where a build refuses that, the screencast fallback keeps wave 2's sizing: a clip covering the whole viewport is asked for through `maxWidth` and `maxHeight` rather than cropped in a canvas, and a narrower clip is cropped against `scroll`. Both screencast routes go through `settledScreencastFrame`, which waits two animation frames and opens screencasts until two carry the same image, with a barren window raised as `timeout` so the read retry policy rescues it. The visible path is unchanged: one `Page.captureScreenshot` from the surface with `clip` and JPEG quality.
+- `cdp.js`, typing. `pressPrintable` sends one keyDown carrying the key identity and no text, then the char event that does the insert, so a character arrives once. `typeKeysReal` keeps the jittered cadence around a 60 ms mean and the `cadence` argument.
+- `tools.js`, the click and type paths. `dispatchVerified` takes both `ref`, so a write is watched on the element it names, and `retry`, so a submit-shaped click is never dispatched twice. The type path passes `input.cadence` and `{ ref: input.ref }`, records the GIF frame with its action name, and still fails with `no_effect` when nothing able to hold text had focus. The click path keeps the confirm gate, the before-write capture, the 3 s submit window, the undo hint, the audit row and the GIF frame with its point.
+- `manifest.json` and `STATUS.md`, version and section text.
+
+`agent.js`, `tabs.js`, `background.js`, `errors.js` and the test files merged without conflicts, and the behaviour each side added is present: a click on an inert element reports `effects: none` because focus falling back to the body is not counted and the value is compared on the element the watch was armed on, an opened tab is recorded synchronously before the click reads the bookkeeping, `chrome://` refusals classify as `origin_blocked`, and the indicator's stop state and the batch runner's arming order are unchanged.
+
+One assertion was rewritten. `test/screenshot.test.js`, "a hidden tab asks the screencast for the target size", asserted that no `Page.captureScreenshot` was attempted at all. It now asserts that no capture was taken from the compositor surface, which is what the assertion was about, since the renderer probe is a `Page.captureScreenshot` with `fromSurface: false`. A test was added beside it for the case the probe answers: the clip and its scale reach the renderer capture and no screencast is opened.
+
+Test counts on 2026-09-04, `node --test` per file, no browser running:
+
+| File | Tests | Pass |
+|---|---|---|
+| a11y.test.js | 47 | 47 |
+| aliases.test.js | 6 | 6 |
+| batch.test.js | 8 | 8 |
+| campaign-server.test.js | 15 | 15 |
+| cdp.test.js | 50 | 50 |
+| errors.test.js | 33 | 33 |
+| find.test.js | 43 | 43 |
+| gif.test.js | 30 | 30 |
+| indicator.test.js | 9 | 9 |
+| ipc.test.js | 17 | 17 |
+| journal.test.js | 24 | 24 |
+| parity.test.js | 8 | 8 |
+| permissions.test.js | 29 | 29 |
+| profile.test.js | 20 | 20 |
+| protocol.test.js | 14 | 14 |
+| recorder.test.js | 8 | 8 |
+| redact.test.js | 19 | 19 |
+| registry.test.js | 20 | 20 |
+| screenshot.test.js | 45 | 45 |
+| sensitive.test.js | 16 | 16 |
+| sessions.test.js | 14 | 14 |
+| tabs.test.js | 18 | 18 |
+| verify.test.js | 36 | 36 |
+| **Total** | **529** | **529** |
+
+`node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 42 files under `extension/src`, `host` and `tools`.
+
+The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. The merged build has not been driven against a browser: the verification pass ran on `plan/integration` before wave 2 was merged in, so its ten open bugs stand and the wave 2 live checks are still open.

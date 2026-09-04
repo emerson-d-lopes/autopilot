@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const EXTENSION = join(ROOT, 'extension');
+const INTERFERER = join(ROOT, 'test', 'fixtures', 'interferer');
 const PROFILE = join(ROOT, '.browsers', 'profile');
 const CACHE = join(ROOT, '.browsers', 'chrome');
 
@@ -64,10 +65,21 @@ for (const dir of ['Service Worker', 'Code Cache', 'Extension Scripts']) {
   }
 }
 
+// --interferer loads test/fixtures/interferer alongside the extension. It mounts
+// a chrome-extension:// iframe into every page, which is what makes
+// chrome.debugger.attach refuse, so the recovery ladder can be exercised without
+// x.com or a password manager.
+const withInterferer = process.argv.includes('--interferer');
+if (withInterferer && !existsSync(INTERFERER)) {
+  console.error('--interferer needs ' + INTERFERER + ', which is missing.');
+  process.exit(1);
+}
+const loaded = withInterferer ? EXTENSION + ',' + INTERFERER : EXTENSION;
+
 const args = [
   '--user-data-dir=' + PROFILE,
-  '--load-extension=' + EXTENSION,
-  '--disable-extensions-except=' + EXTENSION,
+  '--load-extension=' + loaded,
+  '--disable-extensions-except=' + loaded,
   '--no-first-run',
   '--no-default-browser-check',
   '--disable-search-engine-choice-screen',
@@ -86,6 +98,7 @@ args.unshift('--enable-logging', '--v=0', '--log-file=' + join(ROOT, '.browsers'
 
 console.log('launching ' + binary);
 console.log('extension  ' + EXTENSION);
+if (withInterferer) console.log('interferer ' + INTERFERER);
 console.log('profile    ' + PROFILE);
 
 const before = new Set((await listBrowsers()).map((b) => b.id));

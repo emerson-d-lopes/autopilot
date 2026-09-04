@@ -8,9 +8,11 @@ You are picking up `C:\Users\edfl\workspace\chrome-mcp`, an MCP server that driv
 
 26 tools, 29 test files. Everything is staged in git, nothing is committed. Do not commit or push without being asked.
 
-## The plan and what is on `plan/integration`
+## The plan and what is on `plan/integration2`
 
-`docs/claude-in-chrome-comparison/PLAN.md` is the plan the current work follows: seven phases, each with its item codes (R, S, F, D, P from `IMPROVEMENTS.md`, C for the call contract, M for multi-profile, W for write actions) and a scorecard of measured numbers to hit. Phases 0 to 3 are merged on the `plan/integration` branch at extension version 0.1.11: the harness and fixtures, the call contract, attach recovery, input verification, and multi-profile selection. Phases 4 to 7 are merged on `plan/integration2` at extension version 0.1.13: screenshot cost, detectability, GIF overlays and semantic find, the acting indicator, and write actions with confirmation and plan mode. `STATUS.md` has the per-branch summaries and the test counts under "Plan phases 0 to 3 integrated" and "Plan wave 2 integrated". None of it has been driven against a browser yet. The list of live checks the verification pass has to run, grouped by page, is in the integration agents' reports, and each branch's own report carries its own copy.
+`docs/claude-in-chrome-comparison/PLAN.md` is the plan the current work follows: seven phases, each with its item codes (R, S, F, D, P from `IMPROVEMENTS.md`, C for the call contract, M for multi-profile, W for write actions) and a scorecard of measured numbers to hit. All seven are merged on `plan/integration2` at extension version 0.1.28: the harness and fixtures, the call contract, attach recovery, input verification, multi-profile selection, screenshot cost, detectability, GIF overlays and semantic find, the acting indicator, and write actions with confirmation and plan mode. `STATUS.md` has the per-branch summaries and the test counts under "Plan phases 0 to 3 integrated", "Plan wave 2 integrated" and "Live verification of the merged build".
+
+Phases 0 to 3 were driven against a browser by the verification pass written up in `docs/claude-in-chrome-comparison/evidence/VERIFY-0.1.11.md`, which fixed eleven bugs and left ten open, listed at the end of that file with their reproductions. The wave 2 work (phases 4 to 7) has not been driven against a browser, so the live checks each of those branches asked for are still open, and the ten bugs from the verification pass are still open too.
 
 ## The goal the user set
 
@@ -38,9 +40,9 @@ The extension is named Lantern (the package and the MCP server stay `chrome-mcp`
 
 - Test against reality. Every bug in `STATUS.md` was found by running something. When you claim something works, say what you ran. When something is untested, say so.
 - Do not run the full suite as a gate during development. It takes about five minutes with a browser up and the user considers it a blocker. Run the file you are touching, and verify behaviour by driving a browser directly. `npm run test:fast` skips the recovery tests.
-- **Bump `version` in `extension/manifest.json` with every change under `extension/`.** The user asked for this. `npm run doctor` prints the running version, so it is how a reload is proven. Current: 0.1.13.
+- **Bump `version` in `extension/manifest.json` with every change under `extension/`.** The user asked for this. `npm run doctor` prints the running version, so it is how a reload is proven. Current: 0.1.28.
 - The user's Chrome runs whatever extension build was last reloaded there. After editing extension code, either ask the user to reload it at `chrome://extensions` (then confirm with `npm run doctor`, which prints the extension version) or verify in the development browser.
-- The agent works in the background. Tabs open unselected in the user's current window, and nothing activates a tab or focuses a window, ever. Hidden tabs are woken through CDP (`cdp.wake`) and captured through a screencast frame (`captureHidden` in `cdp.js`). Both are deliberate differences from Claude in Chrome, at the user's request.
+- The agent works in the background. Tabs open unselected in the user's current window, and nothing activates a tab or focuses a window, ever. Hidden tabs are woken through CDP (`cdp.wake`) and captured by `captureHidden` in `cdp.js`, which reads the renderer where the build allows it and falls back to a screencast frame. Both are deliberate differences from Claude in Chrome, at the user's request.
 - The user's Chrome does not yet have the `wait_for_page` fix (it was made after the second reload). Ask for a reload before relying on click-then-wait-then-read batches there.
 
 ## Environment traps

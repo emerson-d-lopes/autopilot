@@ -85,6 +85,9 @@ test('the matcher table maps the messages the extension produces today', () => {
     ['Navigation to https://a.example failed: net::ERR_NAME_NOT_RESOLVED. The tab is showing an error page, not the site.', 'nav_failed'],
     ['Cannot access a chrome-extension:// URL of different extension', 'attach_refused'],
     ['Cannot read tab 3. Chrome blocks extensions on chrome://, edge://, the Web Store, and other restricted pages.', 'origin_blocked'],
+    // Chrome's own wording, seen from read_page on chrome://settings.
+    ['Cannot access a chrome:// URL', 'origin_blocked'],
+    ['Cannot access contents of url "chrome://settings/". Extension manifest must request permission to access this host.', 'origin_blocked'],
     ['Browser did not respond within 120s.', 'timeout'],
     ['Connection to the browser bridge closed.', 'host_lost'],
     ['computer requires an action', 'bad_request'],

@@ -1312,6 +1312,35 @@
   }
 
   /**
+   * The value of one element, redacted when the field is sensitive.
+   *
+   * Returns null for anything that does not hold text, so a button is not
+   * treated as a control with an empty value.
+   */
+  function fieldValue(el) {
+    if (!el || el === document.body || el === document.documentElement) return null;
+    let value = null;
+    if (isEditableHost(el)) value = String(el.textContent || '');
+    else if (isTextControl(el)) value = el.value;
+    if (value === null) return null;
+    return isSensitiveField(el) ? 'len:' + value.length : value;
+  }
+
+  /** A control whose value moves when a person types into it. */
+  function isTextControl(el) {
+    if (!el || !('value' in el) || typeof el.value !== 'string') return false;
+    const tag = el.tagName;
+    if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (tag !== 'INPUT') return false;
+    // A button, submit, checkbox or radio carries a value attribute that has
+    // nothing to do with what the user typed. Counting it made every click that
+    // moved focus onto one report a value change.
+    return !['button', 'submit', 'reset', 'image', 'checkbox', 'radio', 'file'].includes(
+      String(el.type || 'text').toLowerCase()
+    );
+  }
+
+  /**
    * Reads the focused control without echoing anything sensitive. A password
    * field reports the length of its value, which is enough to see that a type
    * landed and never enough to reconstruct it.
@@ -1322,17 +1351,16 @@
       return { present: false, value: null, sensitive: false };
     }
     const sensitive = isSensitiveField(el);
-    let value = null;
-    if (isEditableHost(el)) value = String(el.textContent || '');
-    else if ('value' in el && typeof el.value === 'string') value = el.value;
+    const value = fieldValue(el);
     return {
       present: true,
       ref: elementToRef.get(el) || null,
       tag: el.tagName,
       name: accessibleName(el, roleOf(el), true),
       sensitive,
-      // The comparison value never leaves this function unredacted.
-      value: value === null ? null : sensitive ? 'len:' + value.length : value,
+      // fieldValue already replaced a sensitive value with its length, so the
+      // comparison value never leaves this function unredacted.
+      value,
     };
   }
 
@@ -1358,8 +1386,13 @@
     return n;
   }
 
-  function armWatch(point) {
+  function armWatch(point, ref) {
     if (watch && watch.observer) watch.observer.disconnect();
+    // The element whose value is worth watching. A tool that names the element
+    // it is about to write to gives it here, because a value set through the
+    // page's own setter never moves focus, and the focused element at arm time
+    // is then the body.
+    const named = ref ? resolveRef(ref) : null;
     const state = {
       mutations: 0,
       observer: null,
@@ -1367,6 +1400,8 @@
       // different focus targets. It is never serialized.
       focusEl: document.activeElement,
       focus: focusSnapshot(),
+      valueEl: named || document.activeElement,
+      valueBefore: fieldValue(named || document.activeElement),
       scroll: scrollOffsets(point && point.x, point && point.y),
       point: point || null,
       url: location.href,
@@ -1403,8 +1438,16 @@
       url: location.href,
     };
 
-    const focusChanged = state.focusEl !== document.activeElement;
-    const valueChanged = state.focus.value !== after.focus.value;
+    // Focus landing on a real element proves an input reached something.
+    // Focus falling back to <body> is what a click on an inert element does, so
+    // it is reported through focusedAfter and does not count as an effect.
+    const focusMoved = state.focusEl !== document.activeElement;
+    const focusChanged = focusMoved && after.focus.present;
+
+    // The value of the element the watch was armed on, read again now.
+    // Comparing against whatever holds focus at the end reported a value change
+    // on every click that moved focus between two controls.
+    const valueChanged = state.valueBefore !== fieldValue(state.valueEl);
 
     const scrollDelta = {
       pageX: after.scroll.page.x - state.scroll.page.x,
@@ -1430,12 +1473,20 @@
       ok: true,
       mutations: state.mutations,
       focusChanged,
+      focusBlurred: focusMoved && !after.focus.present,
       focusedBefore: state.focus.present ? state.focus.name || state.focus.tag : null,
       focusedAfter: after.focus.present ? after.focus.name || after.focus.tag : null,
       valueChanged,
       // Whether there was a value to watch at all. A type dispatched with no
       // text control focused cannot be judged by whether a value moved.
-      valueTracked: state.focus.value !== null,
+      valueTracked: state.valueBefore !== null,
+      // Whether whatever holds focus now could take typed text at all. A type
+      // aimed at a button or at nothing has no value to compare, so this is the
+      // only thing that separates it from a type that worked.
+      focusedEditable: Boolean(
+        document.activeElement &&
+          (isEditableHost(document.activeElement) || isTextControl(document.activeElement))
+      ),
       valueSensitive: Boolean(state.focus.sensitive || after.focus.sensitive),
       scroll: { before: state.scroll, after: after.scroll, delta: scrollDelta },
       scrolled,
@@ -1972,7 +2023,7 @@
 
     // --- verification (C3) ----------------------------------------------------
 
-    VERIFY_ARM: (msg) => armWatch(msg.point),
+    VERIFY_ARM: (msg) => armWatch(msg.point, msg.ref),
 
     VERIFY_REPORT: async (msg) => {
       const wait = Math.max(0, Math.min(5000, msg.window ?? 250));

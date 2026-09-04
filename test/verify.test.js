@@ -79,6 +79,93 @@ test('a type with nothing focused reports that there was no value to watch', asy
   assert.equal(report.valueTracked, false, 'so a type here is not judged by a value that never existed');
 });
 
+test('focus falling back to the body is not counted as a change', async () => {
+  // Clicking an inert cell blurs whatever was focused. Counting that as a focus
+  // change made an inert click report effects applied on the /big fixture.
+  const { call, window } = loadPage('<!doctype html><body><button id="b">Go</button><td id="c">row 12</td></body>');
+  window.document.getElementById('b').focus();
+
+  await call({ type: 'VERIFY_ARM' });
+  window.document.getElementById('b').blur();
+  const report = await call({ type: 'VERIFY_REPORT', window: 40 });
+
+  assert.equal(report.focusChanged, false);
+  assert.equal(report.focusBlurred, true, 'the blur is still reported');
+  assert.equal(report.valueChanged, false);
+  assert.equal(report.changed, false, 'so an inert click reports effects none');
+});
+
+test('focus moving from a control onto a button is not a value change', async () => {
+  // A button carries a value property, so comparing the value of whatever holds
+  // focus at the end of the window reported a change on every such click.
+  const { call, window } = loadPage('<!doctype html><body><input id="a" value="kept"><button id="b">Go</button></body>');
+  window.document.getElementById('a').focus();
+
+  await call({ type: 'VERIFY_ARM' });
+  window.document.getElementById('b').focus();
+  const report = await call({ type: 'VERIFY_REPORT', window: 40 });
+
+  assert.equal(report.focusChanged, true, 'the click did land on the button');
+  assert.equal(report.valueChanged, false, 'nothing was typed');
+});
+
+test('a value change is read from the element that was focused when the watch was armed', async () => {
+  const { call, window } = loadPage('<!doctype html><body><input id="a"><button id="b">Go</button></body>');
+  const field = window.document.getElementById('a');
+  field.focus();
+
+  await call({ type: 'VERIFY_ARM' });
+  field.value = 'typed';
+  window.document.getElementById('b').focus();
+  const report = await call({ type: 'VERIFY_REPORT', window: 40 });
+
+  assert.equal(report.valueChanged, true);
+  assert.equal(report.valueTracked, true);
+});
+
+test('a checkbox gaining focus does not read as a value change', async () => {
+  const { call, window } = loadPage('<!doctype html><body><input id="t" value="text"><input id="c" type="checkbox" value="on"></body>');
+  window.document.getElementById('t').focus();
+
+  await call({ type: 'VERIFY_ARM' });
+  window.document.getElementById('c').focus();
+  const report = await call({ type: 'VERIFY_REPORT', window: 40 });
+
+  assert.equal(report.valueChanged, false);
+});
+
+test('a watch armed on a named ref tracks that element rather than whatever has focus', async () => {
+  // form_input sets a value through the page's own setter, which never moves
+  // focus, so the focused element at arm time is the body and there would be no
+  // value to compare.
+  const { call, window } = loadPage('<!doctype html><body><input id="a"></body>');
+  const read = await call({ type: 'READ_PAGE', filter: 'all', depth: 15, maxChars: 50000 });
+  const ref = (JSON.stringify(read).match(/ref_\d+/) || [])[0];
+  assert.ok(ref, 'the input has a ref');
+
+  await call({ type: 'VERIFY_ARM', ref });
+  window.document.getElementById('a').value = 'set by the page';
+  const report = await call({ type: 'VERIFY_REPORT', window: 40 });
+
+  assert.equal(report.valueTracked, true);
+  assert.equal(report.valueChanged, true);
+  assert.equal(report.focusChanged, false, 'nothing was focused, and that is not the evidence here');
+});
+
+test('the watch says whether anything that can hold text has focus', async () => {
+  const { call, window } = loadPage('<!doctype html><body><input id="a"><button id="b">Go</button></body>');
+
+  window.document.getElementById('b').focus();
+  await call({ type: 'VERIFY_ARM' });
+  let report = await call({ type: 'VERIFY_REPORT', window: 20 });
+  assert.equal(report.focusedEditable, false, 'a button cannot take typed text');
+
+  window.document.getElementById('a').focus();
+  await call({ type: 'VERIFY_ARM' });
+  report = await call({ type: 'VERIFY_REPORT', window: 20 });
+  assert.equal(report.focusedEditable, true);
+});
+
 test('reporting without arming says so rather than inventing a result', async () => {
   const { call } = loadPage('<!doctype html><body></body>');
   const report = await call({ type: 'VERIFY_REPORT', window: 10 });
@@ -506,11 +593,14 @@ test('typeKeysReal sends a virtual key code and a code for every character', asy
   assert.equal(downs[0].key, 'j');
   assert.equal(downs[0].code, 'KeyJ', 'the physical code an autocomplete reads');
   assert.equal(downs[0].windowsVirtualKeyCode, 74, 'and a real keyCode rather than zero');
-  assert.equal(downs[0].text, 'j');
+  assert.equal(downs[0].text, undefined, 'the keyDown carries no text, or the character lands twice');
+  const chars = sent.filter((e) => e.type === 'char');
+  assert.equal(chars.length, 2, 'each character gets the char event that inserts it');
+  assert.equal(chars[0].text, 'j');
   assert.equal(
-    sent.filter((e) => e.type === 'char').length,
-    2,
-    'each character also gets the char event that inserts it'
+    sent.filter((e) => e.text === 'j').length,
+    1,
+    'the character is carried by exactly one event, which is what stops "ja" arriving as "jjaa"'
   );
   await cdp.detachAll();
 });

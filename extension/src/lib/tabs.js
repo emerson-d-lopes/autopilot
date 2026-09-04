@@ -403,12 +403,35 @@ const adoptedByOpener = new Map();
  *
  * @returns {Promise<{openerTabId: number, tabId: number, tabGroupId: number}|null>}
  */
+/**
+ * Records which tab opened this one, before anything is awaited.
+ *
+ * The click that opened the tab reads the bookkeeping 250 ms later. Filling it
+ * only after the session lookup and the group call had the read beat the write
+ * every time: measured on the fixture, a click on a target="_blank" link
+ * returned no newTabId even though the tab existed and Chrome had already put
+ * it in the session's group.
+ *
+ * An opener that turns out not to be a session tab is dropped again by
+ * adoptOpenedTab, so this cannot grow without bound.
+ */
+export function noteOpenedTab(tab) {
+  const openerTabId = tab && tab.openerTabId;
+  if (typeof openerTabId !== 'number' || typeof (tab && tab.id) !== 'number') return;
+  const seen = adoptedByOpener.get(openerTabId) || [];
+  if (!seen.includes(tab.id)) seen.push(tab.id);
+  adoptedByOpener.set(openerTabId, seen);
+}
+
 export async function adoptOpenedTab(tab) {
   const openerTabId = tab && tab.openerTabId;
   if (typeof openerTabId !== 'number' || typeof (tab && tab.id) !== 'number') return null;
 
   const found = await sessionForTab(openerTabId);
-  if (!found) return null;
+  if (!found) {
+    adoptedByOpener.delete(openerTabId);
+    return null;
+  }
 
   if (tab.groupId !== found.groupId) {
     try {
