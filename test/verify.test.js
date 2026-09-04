@@ -579,11 +579,14 @@ test('typeKeysReal sends a virtual key code and a code for every character', asy
   assert.equal(downs[0].key, 'j');
   assert.equal(downs[0].code, 'KeyJ', 'the physical code an autocomplete reads');
   assert.equal(downs[0].windowsVirtualKeyCode, 74, 'and a real keyCode rather than zero');
-  assert.equal(downs[0].text, 'j');
+  assert.equal(downs[0].text, undefined, 'the keyDown carries no text, or the character lands twice');
+  const chars = sent.filter((e) => e.type === 'char');
+  assert.equal(chars.length, 2, 'each character gets the char event that inserts it');
+  assert.equal(chars[0].text, 'j');
   assert.equal(
-    sent.filter((e) => e.type === 'char').length,
-    2,
-    'each character also gets the char event that inserts it'
+    sent.filter((e) => e.text === 'j').length,
+    1,
+    'the character is carried by exactly one event, which is what stops "ja" arriving as "jjaa"'
   );
   await cdp.detachAll();
 });

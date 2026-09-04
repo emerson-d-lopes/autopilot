@@ -1305,13 +1305,18 @@ export async function pressPrintable(tabId, ch, modifiers = 0) {
     code: spec.code || undefined,
     key: spec.key,
   };
+  // A keyDown carrying text inserts the character on its own, and so does the
+  // char event. Sending both typed everything twice: measured on the jQuery UI
+  // autocomplete, typing "ja" per key left the field holding "jjaa" and the
+  // widget never opened its menu. The keyDown here carries the key identity an
+  // autocomplete listens for and no text, and the char event does the insert.
+  await send(tabId, 'Input.dispatchKeyEvent', { ...base, type: 'keyDown' });
   await send(tabId, 'Input.dispatchKeyEvent', {
     ...base,
-    type: 'keyDown',
+    type: 'char',
     text: spec.text,
     unmodifiedText: spec.text,
   });
-  await send(tabId, 'Input.dispatchKeyEvent', { ...base, type: 'char', text: spec.text });
   await send(tabId, 'Input.dispatchKeyEvent', { ...base, type: 'keyUp' });
 }
 
