@@ -1220,23 +1220,51 @@
    * field reports the length of its value, which is enough to see that a type
    * landed and never enough to reconstruct it.
    */
+  /**
+   * The value of one element, redacted when the field is sensitive.
+   *
+   * Returns null for anything that does not hold text, so a button is not
+   * treated as a control with an empty value.
+   */
+  function fieldValue(el) {
+    if (!el || el === document.body || el === document.documentElement) return null;
+    let value = null;
+    if (isEditableHost(el)) value = String(el.textContent || '');
+    else if (isTextControl(el)) value = el.value;
+    if (value === null) return null;
+    return isSensitiveField(el) ? 'len:' + value.length : value;
+  }
+
+  /** A control whose value moves when a person types into it. */
+  function isTextControl(el) {
+    if (!el || !('value' in el) || typeof el.value !== 'string') return false;
+    const tag = el.tagName;
+    if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (tag !== 'INPUT') return false;
+    // A button, submit, checkbox or radio carries a value attribute that has
+    // nothing to do with what the user typed. Counting it made every click that
+    // moved focus onto one report a value change.
+    return !['button', 'submit', 'reset', 'image', 'checkbox', 'radio', 'file'].includes(
+      String(el.type || 'text').toLowerCase()
+    );
+  }
+
   function focusSnapshot() {
     const el = document.activeElement;
     if (!el || el === document.body || el === document.documentElement) {
       return { present: false, value: null, sensitive: false };
     }
     const sensitive = isSensitiveField(el);
-    let value = null;
-    if (isEditableHost(el)) value = String(el.textContent || '');
-    else if ('value' in el && typeof el.value === 'string') value = el.value;
+    const value = fieldValue(el);
     return {
       present: true,
       ref: elementToRef.get(el) || null,
       tag: el.tagName,
       name: accessibleName(el, roleOf(el), true),
       sensitive,
-      // The comparison value never leaves this function unredacted.
-      value: value === null ? null : sensitive ? 'len:' + value.length : value,
+      // fieldValue already replaced a sensitive value with its length, so the
+      // comparison value never leaves this function unredacted.
+      value,
     };
   }
 
@@ -1307,8 +1335,16 @@
       url: location.href,
     };
 
-    const focusChanged = state.focusEl !== document.activeElement;
-    const valueChanged = state.focus.value !== after.focus.value;
+    // Focus landing on a real element proves an input reached something.
+    // Focus falling back to <body> is what a click on an inert element does, so
+    // it is reported through focusedAfter and does not count as an effect.
+    const focusMoved = state.focusEl !== document.activeElement;
+    const focusChanged = focusMoved && after.focus.present;
+
+    // The value of the element that held focus when the watch was armed, read
+    // again now. Comparing against whatever holds focus at the end reported a
+    // value change on every click that moved focus between two controls.
+    const valueChanged = state.focus.value !== fieldValue(state.focusEl);
 
     const scrollDelta = {
       pageX: after.scroll.page.x - state.scroll.page.x,
@@ -1334,6 +1370,7 @@
       ok: true,
       mutations: state.mutations,
       focusChanged,
+      focusBlurred: focusMoved && !after.focus.present,
       focusedBefore: state.focus.present ? state.focus.name || state.focus.tag : null,
       focusedAfter: after.focus.present ? after.focus.name || after.focus.tag : null,
       valueChanged,
