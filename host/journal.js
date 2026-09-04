@@ -9,8 +9,12 @@
 import { mkdirSync, appendFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { envVar } from './env.js';
 
-export const JOURNAL_DIR = process.env.CHROME_MCP_LOG_DIR || join(tmpdir(), 'chrome-mcp-logs');
+export const JOURNAL_DIR = envVar('LOG_DIR') || join(tmpdir(), 'autopilot-logs');
+
+/** Where the journal lived before the rename. `npm run log` still reads it. */
+export const LEGACY_JOURNAL_DIR = join(tmpdir(), 'chrome-mcp-logs');
 
 const MAX_STRING = 160;
 
@@ -19,11 +23,11 @@ export const DEFAULT_RETENTION_DAYS = 14;
 
 /** True when the host was told to keep the shape of each call and none of the strings. */
 export function redactionOn() {
-  return process.env.CHROME_MCP_JOURNAL_REDACT === '1';
+  return envVar('JOURNAL_REDACT') === '1';
 }
 
 export function retentionDays() {
-  const raw = Number(process.env.CHROME_MCP_JOURNAL_DAYS);
+  const raw = Number(envVar('JOURNAL_DAYS'));
   return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_RETENTION_DAYS;
 }
 

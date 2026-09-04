@@ -14,8 +14,9 @@ import { writeEntry, removeEntry } from './registry.js';
 import { detectProfile } from './profile.js';
 import { record as journal, makeEntry, noteEntry, pruneJournal, JOURNAL_DIR, redactionOn, retentionDays } from './journal.js';
 import { ResponseQueue } from './response-queue.js';
+import { envVar, deprecatedEnvNames } from './env.js';
 
-const LOG_PATH = path.join(os.tmpdir(), 'chrome-mcp-host.log');
+const LOG_PATH = path.join(os.tmpdir(), 'autopilot-host.log');
 const PING_INTERVAL = 20000;
 const REQUEST_TIMEOUT = 120000;
 
@@ -162,8 +163,8 @@ setInterval(() => {
 /**
  * What this process does with the journal.
  *
- * The host is spawned by Chrome, so CHROME_MCP_JOURNAL_REDACT and
- * CHROME_MCP_JOURNAL_DAYS have to be in the browser's environment. A tool
+ * The host is spawned by Chrome, so AUTOPILOT_JOURNAL_REDACT and
+ * AUTOPILOT_JOURNAL_DAYS have to be in the browser's environment. A tool
  * reading them in its own process printed "redaction off" while the host was
  * redacting, and the other way round, so the state travels with the status
  * message instead of being guessed locally.
@@ -381,9 +382,15 @@ process.on('SIGINT', () => {
 // With an explicit socket the path does not depend on which browser this is, so
 // listening can start at once. That keeps "host up, extension not attached" a
 // state a client can see and report, which is what the tests exercise.
-if (process.env.CHROME_MCP_SOCKET) {
+if (envVar('SOCKET')) {
   startListening();
   pruneJournalOnce();
+}
+
+// One release of grace for the pre-rename variable names.
+const legacyEnv = deprecatedEnvNames();
+if (legacyEnv.length) {
+  log('deprecated environment variables in use, rename them to AUTOPILOT_*:', legacyEnv.join(', '));
 }
 
 process.on('uncaughtException', (err) => {

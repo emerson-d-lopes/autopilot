@@ -12,6 +12,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { probe } from './ipc.js';
 import { ToolFailure } from './errors.js';
+import { envVar } from './env.js';
 import { registrableDomain } from '../extension/src/lib/sessions.js';
 
 /** Where the development launcher records the id of the browser it started. */
@@ -26,7 +27,7 @@ export function devBrowserId() {
 }
 
 export const REGISTRY_DIR =
-  process.env.CHROME_MCP_REGISTRY_DIR || join(tmpdir(), 'chrome-mcp-browsers');
+  envVar('REGISTRY_DIR') || join(tmpdir(), 'autopilot-browsers');
 
 function entryPath(browserId) {
   return join(REGISTRY_DIR, browserId.replace(/[^\w.-]/g, '_') + '.json');
@@ -152,7 +153,7 @@ export function matchesSelector(entry, selector, { devId = devBrowserId() } = {}
 }
 
 /**
- * Turns a CHROME_MCP_BROWSER value or a --browser argument into a selector.
+ * Turns an AUTOPILOT_BROWSER value or a --browser argument into a selector.
  *
  * "site=linkedin.com" and "site:linkedin.com" name the field. A bare value is
  * tried against every identity field, and falls back to a site match when it
@@ -241,19 +242,18 @@ export function pickDefault(browsers, preferredId) {
  * bridge is up. Honours the test override.
  *
  * With several browsers connected the order is: the one named by
- * CHROME_MCP_BROWSER_ID, then the development browser started by
+ * AUTOPILOT_BROWSER_ID, then the development browser started by
  * npm run browser, then the earliest connected. Sorting by connection time
  * alone made the suite land on the user's own Chrome, which runs whatever
  * extension build was last reloaded there rather than the code on disk.
  */
 export async function anyBridge() {
-  if (process.env.CHROME_MCP_SOCKET) {
-    return (await probe(process.env.CHROME_MCP_SOCKET, 600))
-      ? { id: 'override', name: 'Browser', socket: process.env.CHROME_MCP_SOCKET }
-      : null;
+  const override = envVar('SOCKET');
+  if (override) {
+    return (await probe(override, 600)) ? { id: 'override', name: 'Browser', socket: override } : null;
   }
   const browsers = await listBrowsers();
-  for (const wanted of [process.env.CHROME_MCP_BROWSER_ID, devBrowserId()]) {
+  for (const wanted of [envVar('BROWSER_ID'), devBrowserId()]) {
     const match = wanted && browsers.find((b) => b.id === wanted);
     if (match) return match;
   }

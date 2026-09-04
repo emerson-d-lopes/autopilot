@@ -43,8 +43,9 @@ import {
   ToolFailure,
 } from './errors.js';
 import { applyCaps } from './redact.js';
+import { envVar } from './env.js';
 
-const CLIENT_ID = process.env.CHROME_MCP_CLIENT_ID || randomUUID();
+const CLIENT_ID = envVar('CLIENT_ID') || randomUUID();
 
 let link = null;
 let browserConnected = false;
@@ -53,11 +54,11 @@ let requestSeq = 0;
 const pending = new Map();
 
 /** The browser this session drives. Chosen on first use, changeable at any time. */
-let selectedBrowser = process.env.CHROME_MCP_BROWSER_ID || null;
+let selectedBrowser = envVar('BROWSER_ID') || null;
 let activeBrowser = null;
 
 /**
- * A default asked for at startup, by CHROME_MCP_BROWSER or --browser.
+ * A default asked for at startup, by AUTOPILOT_BROWSER or --browser.
  *
  * It cannot be resolved here because no browser may be connected yet, so it is
  * held until the first call that needs a browser and resolved against the live
@@ -69,7 +70,8 @@ function startupSelector() {
     if (argv[i] === '--browser' && argv[i + 1]) return parseSelectorString(argv[i + 1]);
     if (argv[i].startsWith('--browser=')) return parseSelectorString(argv[i].slice('--browser='.length));
   }
-  if (process.env.CHROME_MCP_BROWSER) return parseSelectorString(process.env.CHROME_MCP_BROWSER);
+  const wanted = envVar('BROWSER');
+  if (wanted) return parseSelectorString(wanted);
   return null;
 }
 
@@ -197,8 +199,9 @@ async function resolveSelector(selector) {
  */
 async function resolveBrowser() {
   // An explicit socket override means a single fixed bridge, used by tests.
-  if (process.env.CHROME_MCP_SOCKET) {
-    return { id: 'override', name: 'Browser', socket: process.env.CHROME_MCP_SOCKET };
+  const socketOverride = envVar('SOCKET');
+  if (socketOverride) {
+    return { id: 'override', name: 'Browser', socket: socketOverride };
   }
 
   if (!selectedBrowser && pendingSelector) {
@@ -281,13 +284,13 @@ async function ensureLink() {
 }
 
 const NOT_RUNNING =
-  'The chrome-mcp bridge is not running.\n\n' +
+  'The Autopilot bridge is not running.\n\n' +
   'Checklist:\n' +
   '  1. Chrome is running.\n' +
   '  2. The extension is installed and enabled at chrome://extensions.\n' +
   '  3. The native messaging host is registered (npm run install-host).\n' +
   '  4. Chrome was restarted after registering the host.\n\n' +
-  'Run `npm run doctor` in the chrome-mcp directory to check all four.';
+  'Run `npm run doctor` in the autopilot directory to check all four.';
 
 /**
  * One call against a browser this session is not driving.
@@ -676,7 +679,7 @@ function formatGif(result, filename) {
   }
 }
 
-const SHOT_DIR = process.env.CHROME_MCP_SCREENSHOT_DIR || joinPath(tmpdir(), 'chrome-mcp-screenshots');
+const SHOT_DIR = envVar('SCREENSHOT_DIR') || joinPath(tmpdir(), 'autopilot-screenshots');
 
 /** Drops the current connection so the next call reconnects to the chosen browser. */
 function dropLink() {
@@ -813,7 +816,7 @@ function rememberImage(image) {
 /**
  * Normalizes a filename the page will see (P11). The official extension
  * refuses a name carrying a directory and caps it at 255 chars, the ext4/NTFS
- * filename ceiling; chrome-mcp takes real filesystem paths for file_upload, so
+ * filename ceiling; Autopilot takes real filesystem paths for file_upload, so
  * the only place a caller hands over a free-form name is upload_image's
  * `filename` argument, which is what this guards.
  */
@@ -975,7 +978,7 @@ function needsContractLine(toolName, result) {
 // ---------------------------------------------------------------------------
 
 const server = new Server(
-  { name: 'chrome-mcp', version: '0.1.0' },
+  { name: 'autopilot', version: '0.2.0' },
   { capabilities: { tools: {} } }
 );
 
