@@ -7,7 +7,7 @@ import * as shortcuts from './lib/shortcuts.js';
 import * as tabsLib from './lib/tabs.js';
 import * as recorder from './lib/recorder.js';
 import * as cdp from './lib/cdp.js';
-import { PermissionDenied } from './lib/permissions.js';
+import { PermissionDenied, checkPermission } from './lib/permissions.js';
 import * as sessions from './lib/sessions.js';
 import { ToolError, isToolError } from './lib/errors.js';
 
@@ -393,9 +393,18 @@ async function armConsoleReads(actions) {
     if (input && typeof input.tabId === 'number') tabIds.add(input.tabId);
   }
   for (const tabId of tabIds) {
-    // Best effort: a tab that cannot be armed here still arms itself on the
-    // read, and a failure must not stop the batch from running.
-    await recorder.startCapture(tabId).then(() => recorder.enableConsole(tabId)).catch(() => {});
+    try {
+      // The same check the read itself runs, so a blocked origin is not
+      // attached to and does not get Runtime enabled ahead of the refusal.
+      // read_console_messages is read-only, so this consumes no grant.
+      const tab = await chrome.tabs.get(tabId);
+      await checkPermission({ tool: 'read_console_messages', url: tab.url });
+      await recorder.startCapture(tabId);
+      await recorder.enableConsole(tabId);
+    } catch {
+      // A tab that cannot be armed here still arms itself on the read, and a
+      // failure must not stop the batch from running.
+    }
   }
 }
 
