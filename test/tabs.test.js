@@ -171,10 +171,19 @@ test('a tab opened by a session tab joins that session group, unselected', async
   assert.deepEqual(tabs.adopted(11), [], 'reading clears, so the next click reports only its own tabs');
 });
 
+test('the opener is recorded before anything is awaited', async () => {
+  // The click that opened the tab reads this 250 ms later. Filling it only
+  // after the session lookup and the group call had the read beat the write.
+  scriptSession();
+  tabs.noteOpenedTab({ id: 91, openerTabId: 11, groupId: -1, windowId: 3 });
+  assert.deepEqual(tabs.adopted(11), [91], 'available without awaiting the grouping');
+});
+
 test('a tab opened by a tab no session owns is left alone', async () => {
   scriptSession({ groupId: 43, tab: { id: 11, url: 'https://x.test/', groupId: 99, windowId: 3, index: 0 } });
+  tabs.noteOpenedTab({ id: 78, openerTabId: 11, groupId: -1 });
   assert.equal(await tabs.adoptOpenedTab({ id: 78, openerTabId: 11, groupId: -1 }), null);
-  assert.deepEqual(tabs.adopted(11), []);
+  assert.deepEqual(tabs.adopted(11), [], 'the note is dropped once the opener turns out not to be a session tab');
 });
 
 test('a tab with no opener is not adopted', async () => {

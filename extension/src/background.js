@@ -664,6 +664,9 @@ tabsLib.resetGroupStatuses().catch(() => {});
 // opened it can name it and the caller can act on it. Unselected, never
 // activated.
 chrome.tabs.onCreated.addListener((tab) => {
+  // Recorded first and synchronously, so the click that opened the tab can name
+  // it even when the grouping below has not finished yet.
+  tabsLib.noteOpenedTab(tab);
   tabsLib.adoptOpenedTab(tab).catch(() => {});
 });
 
