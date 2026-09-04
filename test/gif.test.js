@@ -303,7 +303,11 @@ test('stop() reports the real elapsed time from frame timestamps, and applies th
 
   const result = stop(901);
   assert.equal(result.ok, true);
-  assert.equal(result.durationMs, 15300, 'a 15.3s recording reports 15.3s, not a constant');
+  assert.equal(result.recordedMs, 15300, 'a 15.3s recording reports 15.3s, not a constant');
+  // The field a recording reports its span in has to be one runTool does not
+  // already own. `durationMs` is stamped with the stop call's own latency, so
+  // a recording that used it reported about 0.8s whatever it had spanned.
+  assert.equal(result.durationMs, undefined, 'stop() must not answer in the field runTool overwrites');
   assert.equal(result.frames[result.frames.length - 1].delayMs, 1500 + LAST_FRAME_BONUS_MS);
   // The earlier frames' delayMs are untouched by the bonus.
   assert.equal(result.frames[0].delayMs, 1500);

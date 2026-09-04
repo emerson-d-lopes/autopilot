@@ -628,10 +628,15 @@ function formatGif(result, filename) {
     const name = wanted ? (/\.gif$/i.test(wanted) ? wanted : wanted + '.gif') : 'recording-' + new Date().toISOString().replace(/[:.]/g, '-') + '.gif';
     const file = joinPath(SHOT_DIR, name);
     writeFileSync(file, encodeGif(result));
-    const seconds = (result.durationMs / 1000).toFixed(1);
+    // recordedMs is the span the recording covered. It is deliberately not
+    // called durationMs, which every result carries as the calling tool's own
+    // latency and which used to overwrite this number.
+    const span = Number.isFinite(result.recordedMs)
+      ? ' over ' + (result.recordedMs / 1000).toFixed(1) + 's'
+      : '';
     return [
       textBlock(
-        'Recorded ' + result.frames.length + ' frames over ' + seconds + 's at ' +
+        'Recorded ' + result.frames.length + ' frames' + span + ' at ' +
           result.width + 'x' + result.height + '.\nsaved: ' + file
       ),
     ];

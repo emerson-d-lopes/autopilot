@@ -439,7 +439,10 @@ export function stop(tabId) {
   if (!rec || !rec.frames.length) {
     return { error: 'no frames were recorded. Start a recording, act on the page, then stop.' };
   }
-  const durationMs = durationFromFrames(rec.frames, rec.startedAt, rec.lastAt);
+  // Not `durationMs`: runTool stamps that field with how long the stop call
+  // itself took, so a recording reported its own stop latency, about 0.8s,
+  // whatever it had actually spanned.
+  const recordedMs = durationFromFrames(rec.frames, rec.startedAt, rec.lastAt);
 
   // The last frame gets extra time on screen so a viewer can read the final
   // state before the gif loops back to the start.
@@ -452,7 +455,7 @@ export function stop(tabId) {
     height: rec.height,
     palette: PALETTE,
     frames: rec.frames,
-    durationMs,
+    recordedMs,
   };
 }
 
