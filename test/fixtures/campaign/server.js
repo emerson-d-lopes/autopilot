@@ -161,6 +161,14 @@ send.addEventListener('click', (e) => {
   e.preventDefault();
   form.dispatchEvent(new Event('submit'));
 });
+// A composer sends on Enter and breaks the line on shift+Enter. A form does
+// not submit implicitly from a contenteditable, so the page has to do it, the
+// same way a real composer does.
+box.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.shiftKey) return;
+  e.preventDefault();
+  form.dispatchEvent(new Event('submit'));
+});
 </script>
 </body></html>`;
 
