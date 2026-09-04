@@ -1,6 +1,6 @@
-# Live verification of 0.1.11
+# Live verification of the merged build
 
-Branch `plan/integration`, extension version 0.1.11, run 2026-09-03 and 2026-09-04.
+Branch `plan/integration`. The pass started on extension 0.1.11 and ended on 0.1.27, because eleven fixes landed while it ran. Run 2026-09-03 and 2026-09-04.
 
 ## How this pass was driven
 
