@@ -5,11 +5,15 @@
 // bypass: an origin blocklist, hard-blocked action categories, and a re-check
 // that the tab is still on the origin the call was authorized against.
 
+import { ToolError } from './errors.js';
+
 const STORAGE_KEY = 'permissionPolicy';
 
 export const MODES = {
   ALLOW: 'allow', // blocklist only, default
   ASK: 'ask', // origin must hold a grant
+  CONFIRM: 'confirm', // allow mode, plus a token before an irreversible click
+  PLAN: 'plan', // only the origins declared by declare_plan
   SKIP: 'skip_all_permission_checks',
 };
 
@@ -56,6 +60,12 @@ const DEFAULT_POLICY = {
   blockedHosts: DEFAULT_BLOCKED_HOSTS,
   allowedHosts: [],
   grants: {}, // origin -> { duration: 'always'|'once', toolUseId?, createdAt }
+  // Hosts whose irreversible controls may be clicked without a confirmation
+  // token, for a user who has decided that messaging on one site is routine.
+  writeAllowlist: [],
+  // Ask in the browser as well as through the client: a Chrome notification
+  // with Allow and Deny. Off by default, since it needs someone at the machine.
+  confirmNotifications: false,
 };
 
 let cache = null;
@@ -130,12 +140,315 @@ export class PermissionDenied extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// F5. Plan mode
+// ---------------------------------------------------------------------------
+//
+// One approval for a declared list of origins instead of a prompt per origin.
+// The declaration is per session (per MCP client), lives in memory, and is
+// checked against the blocklist when it is made, so a blocked host cannot enter
+// a plan and pass later.
+
+/** @type {Map<string, {origins: string[], declaredAt: number}>} */
+const plans = new Map();
+
+export function planFor(clientId = 'default') {
+  return plans.get(clientId) || null;
+}
+
+export function clearPlan(clientId = 'default') {
+  plans.delete(clientId);
+}
+
+/** Normalizes what a caller declared: bare hosts, URLs and origins all land as origins. */
+export function planOriginOf(entry) {
+  const raw = String(entry || '').trim();
+  if (!raw) return null;
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : 'https://' + raw;
+  try {
+    return new URL(withScheme).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Declares the origins a session will act on.
+ *
+ * Returns the grant set. A blocked host is reported rather than silently
+ * dropped, because a plan that quietly lost an origin looks like a working plan
+ * until the first call on it fails.
+ */
+export async function declarePlan(clientId = 'default', origins = []) {
+  const policy = await loadPolicy();
+  const list = Array.isArray(origins) ? origins : [origins];
+  const granted = [];
+  const blocked = [];
+  const rejected = [];
+
+  for (const entry of list) {
+    const origin = planOriginOf(entry);
+    if (!origin) {
+      rejected.push(String(entry));
+      continue;
+    }
+    const hostname = hostnameOf(origin);
+    const isBlocked = (policy.blockedHosts || []).some((p) => hostMatches(hostname, p));
+    const allowed = (policy.allowedHosts || []).some((p) => hostMatches(hostname, p));
+    if (isBlocked && !allowed) blocked.push(origin);
+    else if (!granted.includes(origin)) granted.push(origin);
+  }
+
+  plans.set(clientId, { origins: granted, declaredAt: Date.now() });
+  return { origins: granted, blocked, rejected, mode: policy.mode };
+}
+
+export function planCovers(clientId, origin) {
+  const plan = plans.get(clientId || 'default');
+  if (!plan || !origin) return false;
+  return plan.origins.includes(origin);
+}
+
+// ---------------------------------------------------------------------------
+// F6. Domain transitions
+// ---------------------------------------------------------------------------
+//
+// verifyOriginUnchanged catches the involuntary case, where the page moved
+// under the call. This catches the voluntary one: a navigate, or a redirect
+// chain, that lands the session on an origin it has not acted on before.
+
+/** @type {Map<string, string>} */
+const lastActed = new Map();
+
+export function lastActedOrigin(clientId = 'default') {
+  return lastActed.get(clientId) || null;
+}
+
+export function noteActedOrigin(clientId = 'default', url) {
+  const origin = originOf(url);
+  if (origin) lastActed.set(clientId, origin);
+  return origin;
+}
+
+export function forgetActedOrigin(clientId = 'default') {
+  lastActed.delete(clientId);
+}
+
+/**
+ * Compares the origin a call acts on with the one the session last acted on.
+ *
+ * In allow and confirm mode a move is a warning on the result. In ask mode it
+ * needs its own grant, through the same grant path a first visit uses. Reads
+ * and localhost are exempt, matching the rest of this file.
+ */
+export async function checkDomainTransition({ clientId = 'default', url, tool, note = true }) {
+  const policy = await loadPolicy();
+  const origin = originOf(url);
+  if (!origin) return { changed: false };
+
+  const previous = lastActed.get(clientId) || null;
+  const changed = Boolean(previous && previous !== origin);
+  const remember = () => {
+    if (note) lastActed.set(clientId, origin);
+  };
+
+  if (!changed) {
+    remember();
+    return { changed: false, origin, previous };
+  }
+
+  const hostname = hostnameOf(url);
+  const exempt =
+    policy.mode === MODES.SKIP ||
+    READ_ONLY_TOOLS.has(tool) ||
+    (hostname && isLocalhost(hostname)) ||
+    planCovers(clientId, origin);
+
+  if (!exempt && policy.mode === MODES.ASK && !policy.grants[origin]) {
+    throw new ToolError(
+      'origin_blocked',
+      'This session last acted on ' + previous + ' and this call acts on ' + origin +
+        '. A move to another origin needs its own grant.',
+      {
+        hint: 'Grant ' + origin + ' in the extension options, or switch the mode to allow.',
+        effects: 'none',
+        details: { from: previous, to: origin, tool },
+      }
+    );
+  }
+
+  remember();
+  return {
+    changed: true,
+    origin,
+    previous,
+    warning:
+      'this call acts on ' + origin + ', and the session last acted on ' + previous +
+      '. Confirm the new origin is the one you meant before acting further.',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// W4. Confirmation tokens
+// ---------------------------------------------------------------------------
+//
+// A token is single use and bound to the tab, the origin and the control, so a
+// token minted for a Send button cannot be spent on a Delete button, on another
+// tab, or twice. Tokens live in the worker's memory: a worker restart drops
+// them, which is the safe direction, since the effect is one more confirmation.
+
+export const CONFIRM_TTL_MS = 120000;
+
+/** @type {Map<string, {tabId: number, origin: string, control: string, screenshotId: string|null, createdAt: number}>} */
+const confirmations = new Map();
+let confirmSeq = 0;
+
+function pruneConfirmations(now = Date.now()) {
+  for (const [token, record] of confirmations) {
+    if (now - record.createdAt > CONFIRM_TTL_MS) confirmations.delete(token);
+  }
+}
+
+export function createConfirmation({ tabId, origin, control, screenshotId = null }) {
+  pruneConfirmations();
+  confirmSeq += 1;
+  const token = 'cx_' + confirmSeq + '_' + Math.random().toString(36).slice(2, 10);
+  confirmations.set(token, {
+    tabId,
+    origin,
+    control: String(control || ''),
+    screenshotId,
+    createdAt: Date.now(),
+  });
+  return token;
+}
+
+/**
+ * Spends a token, or says why it cannot be spent.
+ *
+ * @returns {{ok: true, record: object} | {ok: false, reason: string}}
+ */
+export function consumeConfirmation(token, { tabId, origin, control }) {
+  pruneConfirmations();
+  const record = confirmations.get(String(token || ''));
+  if (!record) return { ok: false, reason: 'that token is unknown or has expired' };
+  if (record.tabId !== tabId) return { ok: false, reason: 'that token was issued for tab ' + record.tabId };
+  if (record.origin !== origin) return { ok: false, reason: 'that token was issued for ' + record.origin };
+  if (record.control !== String(control || '')) {
+    return { ok: false, reason: 'that token was issued for ' + JSON.stringify(record.control) };
+  }
+  confirmations.delete(token);
+  return { ok: true, record };
+}
+
+export function pendingConfirmations() {
+  pruneConfirmations();
+  return confirmations.size;
+}
+
+/** True when this origin is on the per-origin write allow-list. */
+export function writeAllowed(policy, url) {
+  const hostname = hostnameOf(url);
+  if (!hostname) return false;
+  return (policy.writeAllowlist || []).some((p) => hostMatches(hostname, p));
+}
+
+/**
+ * Whether an irreversible control on this page needs a token first.
+ *
+ * Only confirm mode asks. The allow-list is per origin, so a user who has
+ * decided that messaging on one site is routine is not asked there and is still
+ * asked everywhere else.
+ */
+export async function needsConfirmation({ url, irreversible }) {
+  const policy = await loadPolicy();
+  if (policy.mode !== MODES.CONFIRM) return false;
+  if (!irreversible) return false;
+  return !writeAllowed(policy, url);
+}
+
+// ---------------------------------------------------------------------------
+// W4. In-browser approval
+// ---------------------------------------------------------------------------
+//
+// A Chrome notification with Allow and Deny. It does not activate a tab and
+// does not focus a window, so background mode survives it.
+
+const pendingNotifications = new Map();
+
+function notificationsAvailable() {
+  return Boolean(globalThis.chrome && chrome.notifications && chrome.notifications.create);
+}
+
+if (notificationsAvailable() && chrome.notifications.onButtonClicked) {
+  chrome.notifications.onButtonClicked.addListener((id, index) => {
+    const pending = pendingNotifications.get(id);
+    if (!pending) return;
+    pending.settle(index === 0 ? 'allow' : 'deny');
+  });
+  if (chrome.notifications.onClosed) {
+    chrome.notifications.onClosed.addListener((id) => {
+      const pending = pendingNotifications.get(id);
+      if (pending) pending.settle('dismissed');
+    });
+  }
+}
+
+/**
+ * Asks in the browser and waits for the answer.
+ *
+ * Returns `unavailable` when the switch is off or the API is missing, so the
+ * caller falls back to the client-side token flow rather than failing.
+ */
+export async function askInBrowser({ control, origin, timeoutMs = CONFIRM_TTL_MS } = {}) {
+  const policy = await loadPolicy();
+  if (!policy.confirmNotifications || !notificationsAvailable()) return 'unavailable';
+
+  const id = 'chrome-mcp-confirm-' + Math.random().toString(36).slice(2, 10);
+  return new Promise((resolve) => {
+    let done = false;
+    const settle = (answer) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      pendingNotifications.delete(id);
+      try {
+        chrome.notifications.clear(id);
+      } catch {
+        /* already gone */
+      }
+      resolve(answer);
+    };
+    const timer = setTimeout(() => settle('timeout'), timeoutMs);
+    pendingNotifications.set(id, { settle });
+
+    try {
+      chrome.notifications.create(
+        id,
+        {
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
+          title: 'Confirm an irreversible action',
+          message: 'Press ' + JSON.stringify(String(control || 'this control')) + ' on ' + origin + '?',
+          buttons: [{ title: 'Allow' }, { title: 'Deny' }],
+          requireInteraction: true,
+        },
+        () => {
+          if (chrome.runtime.lastError) settle('unavailable');
+        }
+      );
+    } catch {
+      settle('unavailable');
+    }
+  });
+}
+
 /**
  * Decides whether a tool may run against a URL.
  * Read-only tools bypass grant checks but not the blocklist, since reading a
  * banking page still exfiltrates it into the transcript.
  */
-export async function checkPermission({ tool, url, toolUseId }) {
+export async function checkPermission({ tool, url, toolUseId, clientId = 'default' }) {
   const policy = await loadPolicy();
   const hostname = hostnameOf(url);
 
@@ -157,9 +470,49 @@ export async function checkPermission({ tool, url, toolUseId }) {
   }
 
   if (policy.mode === MODES.SKIP) return { allowed: true, reason: 'skip_all' };
-  if (READ_ONLY_TOOLS.has(tool)) return { allowed: true, reason: 'read-only' };
-  if (isLocalhost(hostname)) return { allowed: true, reason: 'localhost' };
-  if (policy.mode === MODES.ALLOW) return { allowed: true, reason: 'allow mode' };
+
+  // Plan mode is checked before the read-only bypass. The point of declaring a
+  // list is that the user sees the whole scope of the task, and a read of an
+  // undeclared site is part of that scope.
+  if (policy.mode === MODES.PLAN) {
+    const planned = originOf(url);
+    if (!isLocalhost(hostname) && !planCovers(clientId, planned)) {
+      const plan = planFor(clientId);
+      throw new ToolError(
+        'origin_blocked',
+        (plan
+          ? 'This session declared ' + (plan.origins.join(', ') || 'no origins') + ' and ' + planned + ' is not among them.'
+          : 'The extension is in plan mode and this session has not declared the origins it will act on.'),
+        {
+          hint: 'Call declare_plan with every origin the task needs, including ' + planned + '.',
+          effects: 'none',
+          details: { origin: planned, declared: plan ? plan.origins : [] },
+        }
+      );
+    }
+    const transitionPlanned = await checkDomainTransition({ clientId, url, tool });
+    return { allowed: true, reason: 'plan mode', transition: transitionPlanned };
+  }
+
+  if (READ_ONLY_TOOLS.has(tool)) {
+    return {
+      allowed: true,
+      reason: 'read-only',
+      transition: await checkDomainTransition({ clientId, url, tool }),
+    };
+  }
+  if (isLocalhost(hostname)) {
+    return { allowed: true, reason: 'localhost', transition: await checkDomainTransition({ clientId, url, tool }) };
+  }
+  // Confirm mode is allow mode until an irreversible control is pressed, which
+  // is decided at the click itself, where the control's name is known.
+  if (policy.mode === MODES.ALLOW || policy.mode === MODES.CONFIRM) {
+    return {
+      allowed: true,
+      reason: policy.mode === MODES.CONFIRM ? 'confirm mode' : 'allow mode',
+      transition: await checkDomainTransition({ clientId, url, tool }),
+    };
+  }
 
   // ask mode
   const origin = originOf(url);
@@ -179,7 +532,7 @@ export async function checkPermission({ tool, url, toolUseId }) {
     delete next[origin];
     await savePolicy({ grants: next });
   }
-  return { allowed: true, reason: 'granted' };
+  return { allowed: true, reason: 'granted', transition: await checkDomainTransition({ clientId, url, tool }) };
 }
 
 export async function grant(origin, duration = 'always', toolUseId = null) {

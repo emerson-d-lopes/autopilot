@@ -133,8 +133,13 @@ export const CODES = {
     effects: 'none',
   },
   confirmation_required: {
-    message: 'This action is irreversible and needs confirmation first.',
-    hint: 'Repeat the same call with confirm set to {token} within two minutes.',
+    message: 'This action is irreversible and needs confirmation first. Nothing was clicked.',
+    // The details carry {token, control, origin, screenshotId}. The token is
+    // single use, expires in two minutes, and only works on the tab, origin and
+    // control it was issued for, so it cannot be spent on a different button.
+    hint:
+      'Show the user what is about to happen, then repeat this exact call with confirm set to {token} within ' +
+      'two minutes.',
     retryable: false,
     effects: 'none',
   },

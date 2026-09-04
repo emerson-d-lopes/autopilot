@@ -111,6 +111,32 @@ export function summarizeResult(tool, response = {}) {
 }
 
 /**
+ * The audit row for an irreversible action (W5).
+ *
+ * The extension supplies the control, the origin, the id of the screenshot it
+ * took before the click and what the submit evidence found afterwards. The
+ * typed value is kept only when the journal is not in redaction mode and the
+ * field was not sensitive, so a message written into a password-shaped field is
+ * never on disk whatever the switch says.
+ */
+export function writeEvidence(result = {}, { redact = redactionOn() } = {}) {
+  const write = result && result.write;
+  if (!write || typeof write !== 'object') return null;
+  const row = {
+    control: clip(write.control || 'unknown', 120),
+    origin: write.origin || null,
+    before: write.before || null,
+    after: Array.isArray(write.after) ? write.after : write.after ? [String(write.after)] : [],
+  };
+  if (write.confirmedBy) row.confirmedBy = write.confirmedBy;
+  if (write.undo) row.undo = write.undo;
+  if (write.value !== undefined && write.value !== null) {
+    row.value = redact || write.sensitive ? '[value redacted]' : clip(String(write.value), 200);
+  }
+  return row;
+}
+
+/**
  * Builds the journal entry for one completed call.
  *
  * With redaction on the entry keeps the tool, the correlation id, the outcome
@@ -135,6 +161,11 @@ export function makeEntry({ request, response, startedAt, finishedAt }) {
 
   if (redactionOn()) entry.redacted = true;
   else entry.args = summarizeArgs(tool, args, { deny: deniedKeys(tool, { sensitive: result.sensitive }) });
+
+  // A write keeps its own field whatever the redaction switch says, because the
+  // point of the switch is to drop values, not to hide that a write happened.
+  const write = writeEvidence(result);
+  if (write) entry.write = write;
 
   return { ...entry, ...summarizeResult(tool, response || {}) };
 }
@@ -161,7 +192,20 @@ export function noteEntry(note = {}, at = Date.now()) {
   return entry;
 }
 
-const OUTCOME_SKIP = ['at', 'ms', 'client', 'tool', 'tab', 'args', 'ok', 'callId', 'redacted'];
+const OUTCOME_SKIP = ['at', 'ms', 'client', 'tool', 'tab', 'args', 'ok', 'callId', 'redacted', 'write'];
+
+/** The write column: what was pressed, where, and what proved it landed. */
+export function formatWrite(write) {
+  if (!write) return '';
+  const parts = [JSON.stringify(write.control)];
+  if (write.origin) parts.push('on ' + write.origin);
+  parts.push('before=' + (write.before || 'none'));
+  parts.push('after=' + (write.after && write.after.length ? write.after.join('+') : 'none'));
+  if (write.confirmedBy) parts.push('confirmed=' + write.confirmedBy);
+  if (write.undo) parts.push('undo=' + write.undo);
+  if (write.value !== undefined) parts.push('value=' + JSON.stringify(write.value));
+  return parts.join(' ');
+}
 
 /** One Markdown line per call, readable without tooling. */
 export function formatMarkdown(entry) {
@@ -181,7 +225,8 @@ export function formatMarkdown(entry) {
         .join(' ')
     : 'FAILED ' + entry.error + (entry.code ? ' (' + entry.code + ')' : '');
   const id = entry.callId ? ' id=' + entry.callId : '';
-  return '- ' + time + ' **' + entry.tool + '**' + where + (args ? ' `' + args + '`' : '') + ' (' + entry.ms + 'ms)' + (outcome ? ' ' + outcome : '') + id;
+  const write = entry.write ? ' WRITE ' + formatWrite(entry.write) : '';
+  return '- ' + time + ' **' + entry.tool + '**' + where + (args ? ' `' + args + '`' : '') + ' (' + entry.ms + 'ms)' + (outcome ? ' ' + outcome : '') + write + id;
 }
 
 function dayStamp(date) {

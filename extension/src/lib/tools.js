@@ -64,11 +64,28 @@ async function activeUrl(tabId) {
   return tab.url;
 }
 
+/**
+ * Adds a warning that belongs to the call rather than to one step of it.
+ *
+ * A domain transition is noticed inside the permission gate, which returns a
+ * URL and not a result, so the warning is parked on the call context and
+ * `execute` folds it into whatever the tool returns.
+ */
+function noteCallWarning(ctx, warning) {
+  if (!ctx || !warning) return;
+  if (!Array.isArray(ctx.warnings)) ctx.warnings = [];
+  if (!ctx.warnings.includes(warning)) ctx.warnings.push(warning);
+}
+
 /** Runs the permission gate for a page-acting tool. */
-async function gate(clientId, tool, tabId, toolUseId) {
+async function gate(ctx, tool, tabId) {
+  const clientId = ctx.clientId;
   await tabsLib.assertTabInSession(clientId, tabId);
   const url = await activeUrl(tabId);
-  await perms.checkPermission({ tool, url, toolUseId });
+  const decision = await perms.checkPermission({ tool, url, toolUseId: ctx.toolUseId, clientId });
+  if (decision && decision.transition && decision.transition.warning) {
+    noteCallWarning(ctx, decision.transition.warning);
+  }
   return url;
 }
 
@@ -204,13 +221,17 @@ async function readVerify(tabId, armed, { window = VERIFY_WINDOW_MS } = {}) {
  * The retry is conditional on the verification finding no change, so a click
  * that landed is never sent twice.
  */
-async function dispatchVerified(tabId, dispatch, { point, window } = {}) {
+async function dispatchVerified(tabId, dispatch, { point, window, retry = true } = {}) {
   cdp.clearThrottleFlag(tabId);
   shot.noteInput(tabId);
   let armed = await armVerify(tabId, point);
   await dispatch();
   let outcome = await readVerify(tabId, armed, { window });
 
+  // A write is never sent twice on a guess. The throttle retry exists to
+  // recover a click that provably did nothing, and a submit that provably did
+  // nothing still may have reached the server.
+  if (!retry) return outcome;
   if (outcome.effects === 'applied' || !cdp.rendererLooksThrottled(tabId)) return outcome;
 
   await cdp.wake(tabId, { force: true }).catch(() => {});
@@ -258,6 +279,186 @@ async function waitForPaint(tabId) {
     .screencastFrameAfter(tabId, since, { timeout: shot.PAINT_CEILING_MS })
     .catch(() => null);
   return { path: 'screencastFrame', painted: Boolean(frame && frame.painted) };
+}
+
+// ---------------------------------------------------------------------------
+// Write actions (W2, W4, W5, W7)
+// ---------------------------------------------------------------------------
+//
+// A submit is the click whose effect shows up somewhere other than where it was
+// pressed, and often a second or two later, so it gets a longer window and its
+// own evidence. An irreversible one is photographed before it runs and, in
+// confirm mode, refused until a token comes back.
+
+/** The window a submit-shaped action is given to show its effect. */
+export const SUBMIT_WINDOW_MS = 3000;
+
+/** Screenshots taken before an irreversible action, by id, for the audit trail. */
+const writeShots = new Map();
+let writeShotSeq = 0;
+
+/**
+ * Photographs the page about to be written to.
+ *
+ * Goes through the same capture path a screenshot does, so a hidden tab is
+ * served by a screencast frame and nothing is activated. A capture that fails
+ * costs the id, never the action.
+ */
+async function captureBeforeWrite(tabId) {
+  try {
+    const image = await shot.capture(tabId, { maxTokens: 800 });
+    writeShotSeq += 1;
+    const id = 'write_' + writeShotSeq + '_' + Math.random().toString(36).slice(2, 6);
+    writeShots.set(id, { tabId, at: Date.now(), image });
+    while (writeShots.size > 10) writeShots.delete(writeShots.keys().next().value);
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+/** The before-screenshot behind an id, for a caller that wants the bytes. */
+export function writeScreenshot(id) {
+  const held = writeShots.get(id);
+  return held ? held.image : null;
+}
+
+/** Request ids the recorder is holding for a tab, so a submit can diff them. */
+function networkSnapshot(tabId) {
+  try {
+    return new Set(recorder.readNetwork(tabId, { limit: 500 }).requests.map((r) => r.requestId));
+  } catch {
+    return new Set();
+  }
+}
+
+/** Requests that started after the snapshot, answered 2xx, and went to this site. */
+function networkSince(tabId, before, url) {
+  if (!before) return [];
+  const origin = perms.originOf(url);
+  try {
+    return recorder
+      .readNetwork(tabId, { limit: 500 })
+      .requests.filter(
+        (r) =>
+          !before.has(r.requestId) &&
+          typeof r.status === 'number' &&
+          r.status >= 200 &&
+          r.status < 300 &&
+          perms.originOf(r.url) === origin
+      )
+      .slice(-3)
+      .map((r) => ({ method: r.method, status: r.status, url: String(r.url).slice(0, 160) }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * What proved the submit landed.
+ *
+ * Five signals, named individually rather than folded into one boolean, so a
+ * caller can tell a toast apart from a network answer and judge for itself.
+ */
+function submitEvidence(report, network, outcome) {
+  const fired = [];
+  const detail = {};
+  if (report && report.ok) {
+    if (report.composerEmptied) {
+      fired.push('composer emptied');
+      detail.composerEmptied = true;
+    }
+    if (report.newNode) {
+      fired.push('a new node carries the text');
+      detail.newNode = report.newNode;
+    }
+    if (report.status) {
+      fired.push('status region');
+      detail.status = report.status;
+    }
+    detail.windowMs = report.windowMs;
+  }
+  if (network && network.length) {
+    fired.push('2xx from the site');
+    detail.network = network;
+  }
+  const navigation = outcome && outcome.evidence && outcome.evidence.navigation;
+  if (navigation) {
+    fired.push('navigation');
+    detail.navigation = navigation;
+  }
+  return { fired, ...detail };
+}
+
+/**
+ * The confirmation gate for an irreversible control (W4).
+ *
+ * Returns how it was approved, or throws `confirmation_required` carrying a
+ * token bound to this tab, origin and control. Nothing is activated or focused:
+ * the browser-side approval is a notification, which does neither.
+ */
+async function confirmGate({ tabId, url, control, irreversible, confirm, screenshotId }) {
+  const origin = perms.originOf(url);
+  if (!(await perms.needsConfirmation({ url, irreversible }))) {
+    return { required: false, origin, approvedBy: 'policy' };
+  }
+
+  if (confirm) {
+    const spent = perms.consumeConfirmation(confirm, { tabId, origin, control });
+    if (spent.ok) {
+      return { required: true, origin, approvedBy: 'token', screenshotId: spent.record.screenshotId || screenshotId };
+    }
+    throw new ToolError(
+      'confirmation_required',
+      'The confirmation token was not accepted: ' + spent.reason + '. Nothing was clicked.',
+      {
+        hint: 'Repeat the call without confirm to get a fresh token, then send that token back.',
+        effects: 'none',
+        details: { control, origin, reason: spent.reason },
+      }
+    );
+  }
+
+  // The browser-side approval, when the options page turned it on. A denial is
+  // final for this call; a timeout falls through to the token flow.
+  const answer = await perms.askInBrowser({ control, origin });
+  if (answer === 'allow') return { required: true, origin, approvedBy: 'notification', screenshotId };
+  if (answer === 'deny') {
+    throw new ToolError(
+      'confirmation_required',
+      'The action on ' + JSON.stringify(control) + ' was denied in the browser. Nothing was clicked.',
+      {
+        hint: 'Ask the user what to do instead. A denied action is not retried.',
+        effects: 'none',
+        retryable: false,
+        details: { control, origin, deniedInBrowser: true, screenshotId },
+      }
+    );
+  }
+
+  const token = perms.createConfirmation({ tabId, origin, control, screenshotId });
+  throw new ToolError(
+    'confirmation_required',
+    'Pressing ' + JSON.stringify(control) + ' on ' + origin + ' is irreversible and needs confirmation first. ' +
+      'Nothing was clicked.',
+    {
+      hint:
+        'Show the user what is about to happen, then repeat this exact call with confirm set to ' + token +
+        ' within ' + Math.round(perms.CONFIRM_TTL_MS / 1000) + ' seconds. The token works once, on this tab, ' +
+        'origin and control.',
+      effects: 'none',
+      details: { token, control, origin, screenshotId },
+    }
+  );
+}
+
+/** The control that reverses the write just made, when the site offers one (W7). */
+async function undoHint(tabId, undoClass) {
+  if (undoClass === 'sent') return 'none';
+  if (undoClass !== 'reversible') return undefined;
+  const found = await pageCall(tabId, { type: 'UNDO_CONTROL' }).catch(() => null);
+  if (found && found.ok && found.control && found.control.name) return found.control.name;
+  return undefined;
 }
 
 /** True when the page's host sits in the permission policy's payment category (W3). */
@@ -360,7 +561,7 @@ async function computerTool(ctx, input) {
 
   const readOnlyActions = new Set(['screenshot', 'zoom', 'wait']);
   const toolName = readOnlyActions.has(action) ? 'read_page' : 'computer';
-  const url = await gate(ctx.clientId, toolName, tabId, ctx.toolUseId);
+  const url = await gate(ctx, toolName, tabId);
   await ensureAttached(tabId);
 
   // Input dispatch and surface capture both need a rendered tab. When the last
@@ -446,14 +647,39 @@ async function computerTool(ctx, input) {
       await perms.verifyOriginUnchanged(tabId, url);
       const paymentCategory = await isPaymentCategory(url);
       const point = await resolvePoint(tabId, input, { requireHit: true, paymentCategory });
+      const element = point.element || {};
+      const irreversible = Boolean(element.irreversible);
+      const submitShaped = Boolean(element.submitShaped);
+      const control =
+        element.name || (input.ref ? 'the element at ' + input.ref : 'the control at ' + point.x + ',' + point.y);
+
+      // The state about to be written, taken before anything is pressed, so the
+      // journal can show what the click was aimed at.
+      const beforeShot = irreversible ? await captureBeforeWrite(tabId) : null;
+      const confirmation = irreversible
+        ? await confirmGate({ tabId, url, control, irreversible, confirm: input.confirm, screenshotId: beforeShot })
+        : null;
+
+      const submitting = submitShaped || irreversible;
+      const netBefore = submitting ? networkSnapshot(tabId) : null;
+      const armedSubmit = submitting
+        ? await pageCall(tabId, { type: 'SUBMIT_ARM', ref: input.ref || null }).catch(() => null)
+        : null;
+
       const spec = CLICK_ACTIONS[action];
       const outcome = await dispatchVerified(
         tabId,
         () => cdp.mouseClick(tabId, point.x, point.y, { ...spec, modifiers, ...cursorHooks(tabId) }),
-        { point }
+        { point, window: submitting ? SUBMIT_WINDOW_MS : undefined, retry: !submitting }
       );
       await recordFrame(tabId);
-      const irreversible = Boolean(point.element && point.element.irreversible);
+
+      let submit = null;
+      if (submitting) {
+        const report = await pageCall(tabId, { type: 'SUBMIT_REPORT', window: 0 }).catch(() => null);
+        submit = submitEvidence(report, networkSince(tabId, netBefore, url), outcome);
+      }
+
       const result = {
         ok: true,
         at: { x: point.x, y: point.y, source: point.source },
@@ -461,11 +687,39 @@ async function computerTool(ctx, input) {
         evidence: outcome.evidence,
         warnings: outcome.warnings,
       };
+
+      if (submit) {
+        result.evidence = { ...result.evidence, submit };
+        if (submit.fired.length) {
+          result.effects = 'applied';
+          result.warnings = result.warnings.filter((w) => !/no observable change/.test(w));
+        } else {
+          result.effects = 'unknown';
+          result.hint = 're-read the page before retrying';
+          result.warnings = result.warnings
+            .filter((w) => !/no observable change/.test(w))
+            .concat('no submit evidence within ' + SUBMIT_WINDOW_MS + 'ms: re-read the page before retrying');
+        }
+        const undo = await undoHint(tabId, element.undoClass);
+        if (undo) result.undo = undo;
+      }
+
       if (irreversible) {
         result.irreversible = true;
         result.warnings = result.warnings.concat(
           'this control is classified as irreversible, so clicking it again would repeat the action'
         );
+        // W5. The audit row for this write, which the host copies into the
+        // journal beside the correlation id.
+        result.write = {
+          control,
+          origin: perms.originOf(url),
+          before: beforeShot,
+          after: submit ? submit.fired : [],
+          confirmedBy: confirmation && confirmation.required ? confirmation.approvedBy : undefined,
+          value: armedSubmit && armedSubmit.text ? armedSubmit.text : undefined,
+          sensitive: armedSubmit ? Boolean(armedSubmit.sensitive) : undefined,
+        };
       }
       // The official shape, so the model can act on the new tab without a
       // tabs_context round trip.
@@ -564,13 +818,40 @@ async function computerTool(ctx, input) {
     case 'key': {
       if (!input.text) throw new ToolError('bad_request', 'key requires text, e.g. "Enter" or "ctrl+a"');
       await perms.verifyOriginUnchanged(tabId, url);
-      const outcome = await dispatchVerified(tabId, () =>
-        // The loose sequence accepts a single punctuation character, so "/" and
-        // "?" reach a page the same way a named key does.
-        cdp.pressKeySequenceLoose(tabId, input.text, input.repeat || 1)
+
+      // An Enter inside a composer or a form field is a submit with no target
+      // of its own, so the page is asked what it would press (W2, W4).
+      const pressesEnter = /(^|[\s+])enter([\s+]|$)/i.test(String(input.text));
+      const target = pressesEnter
+        ? await pageCall(tabId, { type: 'SUBMIT_TARGET', paymentCategory: await isPaymentCategory(url) }).catch(
+            () => null
+          )
+        : null;
+      const submitting = Boolean(target && target.present && target.submitShaped);
+      const irreversible = Boolean(target && target.present && target.irreversible);
+      const control = (target && target.name) || 'Enter';
+
+      const beforeShot = irreversible ? await captureBeforeWrite(tabId) : null;
+      const confirmation = irreversible
+        ? await confirmGate({ tabId, url, control, irreversible, confirm: input.confirm, screenshotId: beforeShot })
+        : null;
+
+      const netBefore = submitting ? networkSnapshot(tabId) : null;
+      const armedSubmit = submitting
+        ? await pageCall(tabId, { type: 'SUBMIT_ARM', ref: null }).catch(() => null)
+        : null;
+
+      const outcome = await dispatchVerified(
+        tabId,
+        () =>
+          // The loose sequence accepts a single punctuation character, so "/" and
+          // "?" reach a page the same way a named key does.
+          cdp.pressKeySequenceLoose(tabId, input.text, input.repeat || 1),
+        { window: submitting ? SUBMIT_WINDOW_MS : undefined, retry: !submitting }
       );
       await recordFrame(tabId);
-      return {
+
+      const result = {
         ok: true,
         keys: input.text,
         repeat: input.repeat || 1,
@@ -578,6 +859,38 @@ async function computerTool(ctx, input) {
         evidence: outcome.evidence,
         warnings: outcome.warnings,
       };
+
+      if (submitting) {
+        const report = await pageCall(tabId, { type: 'SUBMIT_REPORT', window: 0 }).catch(() => null);
+        const submit = submitEvidence(report, networkSince(tabId, netBefore, url), outcome);
+        result.evidence = { ...result.evidence, submit };
+        if (submit.fired.length) {
+          result.effects = 'applied';
+          result.warnings = result.warnings.filter((w) => !/no observable change/.test(w));
+        } else {
+          result.effects = 'unknown';
+          result.hint = 're-read the page before retrying';
+          result.warnings = result.warnings
+            .filter((w) => !/no observable change/.test(w))
+            .concat('no submit evidence within ' + SUBMIT_WINDOW_MS + 'ms: re-read the page before retrying');
+        }
+        const undo = await undoHint(tabId, target && target.undoClass);
+        if (undo) result.undo = undo;
+        if (irreversible) {
+          result.irreversible = true;
+          result.write = {
+            control,
+            origin: perms.originOf(url),
+            before: beforeShot,
+            after: submit.fired,
+            confirmedBy: confirmation && confirmation.required ? confirmation.approvedBy : undefined,
+            value: armedSubmit && armedSubmit.text ? armedSubmit.text : undefined,
+            sensitive: armedSubmit ? Boolean(armedSubmit.sensitive) : undefined,
+          };
+        }
+      }
+
+      return result;
     }
 
     case 'scroll': {
@@ -793,11 +1106,31 @@ export const handlers = {
     shot.clearScalingContext(tabId);
     await recordFrame(tabId);
     const tab = await chrome.tabs.get(tabId);
+
+    // F6. Where the tab landed, which a redirect chain can make different from
+    // the URL that was checked before the navigation started.
+    try {
+      const transition = await perms.checkDomainTransition({
+        clientId: ctx.clientId,
+        url: tab.url,
+        tool: 'navigate',
+      });
+      if (transition.warning) noteCallWarning(ctx, transition.warning);
+    } catch (err) {
+      // The navigation already happened, so the refusal describes a tab that
+      // has moved rather than one that stayed put.
+      if (err instanceof ToolError) {
+        err.effects = 'applied';
+        err.message = err.message + ' The tab did navigate, so it is now on ' + tab.url + '.';
+      }
+      throw err;
+    }
+
     return { tabId, url: tab.url, title: tab.title, status: tab.status };
   },
 
   read_page: async (ctx, input) => {
-    const url = await gate(ctx.clientId, 'read_page', input.tabId, ctx.toolUseId);
+    const url = await gate(ctx, 'read_page', input.tabId);
     const filter = input.filter || 'all';
     // The interactive filter carries its own default, because it is the one
     // reached for on a page too big to read whole.
@@ -835,7 +1168,7 @@ export const handlers = {
   },
 
   get_page_text: async (ctx, input) => {
-    await gate(ctx.clientId, 'get_page_text', input.tabId, ctx.toolUseId);
+    await gate(ctx, 'get_page_text', input.tabId);
     const result = await pageCall(input.tabId, {
       type: 'GET_PAGE_TEXT',
       maxChars: input.max_chars ?? 50000,
@@ -869,7 +1202,7 @@ export const handlers = {
   },
 
   find: async (ctx, input) => {
-    const url = await gate(ctx.clientId, 'find', input.tabId, ctx.toolUseId);
+    const url = await gate(ctx, 'find', input.tabId);
     if (!input.query) throw new ToolError('bad_request', 'find requires a query');
     const paymentCategory = await isPaymentCategory(url);
     const readTree = async (filter) => {
@@ -929,7 +1262,7 @@ export const handlers = {
   },
 
   form_input: async (ctx, input) => {
-    const url = await gate(ctx.clientId, 'form_input', input.tabId, ctx.toolUseId);
+    const url = await gate(ctx, 'form_input', input.tabId);
     await perms.verifyOriginUnchanged(input.tabId, url);
 
     // A rich editor needs the events a real edit produces. Replacing textContent
@@ -964,6 +1297,46 @@ export const handlers = {
 
   computer: computerTool,
 
+  /**
+   * F5. Declares the origins this session will act on.
+   *
+   * One approval for the whole task instead of a prompt per origin. The list is
+   * checked against the blocklist as it is declared, so a blocked host cannot
+   * enter a plan and pass later, and the result says which entries were kept.
+   */
+  declare_plan: async (ctx, input) => {
+    const origins = Array.isArray(input.origins) ? input.origins : [];
+    if (!origins.length) {
+      throw new ToolError('bad_request', 'declare_plan requires a non-empty origins array', {
+        hint: 'Pass every site the task will touch, for example ["github.com", "https://linkedin.com"].',
+      });
+    }
+    const declared = await perms.declarePlan(ctx.clientId, origins);
+    const warnings = [];
+    if (declared.blocked.length) {
+      warnings.push(
+        'these origins are on the extension blocklist and were not granted: ' + declared.blocked.join(', ')
+      );
+    }
+    if (declared.rejected.length) {
+      warnings.push('these entries are not origins and were ignored: ' + declared.rejected.join(', '));
+    }
+    if (declared.mode !== perms.MODES.PLAN) {
+      warnings.push(
+        'the extension is in ' + declared.mode + ' mode, so this plan is recorded but no origin was gated by it'
+      );
+    }
+    return {
+      ok: true,
+      origins: declared.origins,
+      blocked: declared.blocked,
+      mode: declared.mode,
+      effects: 'none',
+      evidence: { granted: declared.origins.length, blocked: declared.blocked.length },
+      warnings,
+    };
+  },
+
   file_upload: async (ctx, input) => {
     const { tabId, ref, coordinate, paths } = input;
     if (!ref && !coordinate) throw new ToolError('bad_request', 'file_upload requires a ref or a coordinate');
@@ -971,7 +1344,7 @@ export const handlers = {
       throw new ToolError('bad_request', 'file_upload requires a non-empty paths array');
     }
 
-    const url = await gate(ctx.clientId, 'file_upload', tabId, ctx.toolUseId);
+    const url = await gate(ctx, 'file_upload', tabId);
     await perms.verifyOriginUnchanged(tabId, url);
     await ensureAttached(tabId);
     await tabsLib.ensureVisible(tabId);
@@ -1041,7 +1414,7 @@ export const handlers = {
 
   gif_creator: async (ctx, input) => {
     const { tabId, action } = input;
-    await gate(ctx.clientId, 'gif_creator', tabId, ctx.toolUseId);
+    await gate(ctx, 'gif_creator', tabId);
     await ensureAttached(tabId);
 
     if (action === 'start') {
@@ -1067,7 +1440,7 @@ export const handlers = {
   },
 
   javascript: async (ctx, input) => {
-    const url = await gate(ctx.clientId, 'javascript', input.tabId, ctx.toolUseId);
+    const url = await gate(ctx, 'javascript', input.tabId);
     await perms.verifyOriginUnchanged(input.tabId, url);
     await ensureAttached(input.tabId);
     const result = await cdp.evaluate(input.tabId, input.code);
@@ -1078,7 +1451,7 @@ export const handlers = {
   },
 
   read_console_messages: async (ctx, input) => {
-    await gate(ctx.clientId, 'read_console_messages', input.tabId, ctx.toolUseId);
+    await gate(ctx, 'read_console_messages', input.tabId);
     await ensureAttached(input.tabId);
     return recorder.readConsole(input.tabId, {
       onlyErrors: input.only_errors,
@@ -1089,7 +1462,7 @@ export const handlers = {
   },
 
   read_network_requests: async (ctx, input) => {
-    await gate(ctx.clientId, 'read_network_requests', input.tabId, ctx.toolUseId);
+    await gate(ctx, 'read_network_requests', input.tabId);
     await ensureAttached(input.tabId);
     return recorder.readNetwork(input.tabId, {
       urlPattern: input.url_pattern,
@@ -1112,7 +1485,7 @@ export const handlers = {
   },
 
   page_state: async (ctx, input) => {
-    await gate(ctx.clientId, 'page_state', input.tabId, ctx.toolUseId);
+    await gate(ctx, 'page_state', input.tabId);
     const tab = await chrome.tabs.get(input.tabId);
     try {
       const state = await pageCall(input.tabId, { type: 'PAGE_STATE' });
@@ -1132,7 +1505,7 @@ export const handlers = {
   },
 
   wait_for_page: async (ctx, input) => {
-    await gate(ctx.clientId, 'read_page', input.tabId, ctx.toolUseId);
+    await gate(ctx, 'read_page', input.tabId);
     const timeout = input.timeout ?? 15000;
     const started = Date.now();
     const navigated = await tabsLib.waitForNavigationStart(input.tabId);
@@ -1239,8 +1612,16 @@ export const TOOL_NAMES = Object.keys(handlers);
 export async function execute(name, input, ctx) {
   const handler = handlers[name];
   if (!handler) throw new ToolError('bad_request', 'unknown tool: ' + name);
+  const context = ctx || {};
+  context.warnings = [];
   try {
-    return await handler(ctx, input || {});
+    const result = await handler(context, input || {});
+    // Warnings the gate raised belong to the call, not to one step of it. A
+    // domain transition is the case that produces them.
+    if (context.warnings.length && result && typeof result === 'object' && !Array.isArray(result)) {
+      return { ...result, warnings: [...(Array.isArray(result.warnings) ? result.warnings : []), ...context.warnings] };
+    }
+    return result;
   } catch (err) {
     if (err instanceof perms.PermissionDenied) throw err;
     throw withCode(err, 'internal', { effects: 'unknown' });
