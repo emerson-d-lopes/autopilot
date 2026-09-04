@@ -383,7 +383,12 @@ export async function capture(tabId, options = {}) {
       scroll,
     });
     const decoded = decodeImageSize(raw);
-    if (decoded && within(decoded.width, plan.target.width) && within(decoded.height, plan.target.height)) {
+    // Two pixels of slack: a hidden tab is sized through the screencast's
+    // maxWidth and maxHeight, which rounds the aspect ratio its own way. A size
+    // that ignored the scale altogether is off by far more than that, which is
+    // what this check is for. The decoded size, not the asked size, is what the
+    // coordinate context records.
+    if (decoded && within(decoded.width, plan.target.width, 2) && within(decoded.height, plan.target.height, 2)) {
       data = raw;
       path = 'clip';
       width = decoded.width;
