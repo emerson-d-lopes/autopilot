@@ -59,14 +59,46 @@ function bufferFor(tabId) {
       consoleOn: false,
       consoleNotice: false,
       consoleMissed: false,
+      // When the buffer was last emptied by a read, when Runtime was last
+      // armed, and whether Chrome replayed history into it after that arming.
+      consoleClearedAt: 0,
+      consoleArmedAt: 0,
+      consoleReplayed: false,
     };
     buffers.set(tabId, buf);
   }
   return buf;
 }
 
+/**
+ * Whether an entry's timestamp can be compared with a wall clock reading.
+ *
+ * Runtime.consoleAPICalled and Log.entryAdded both stamp milliseconds since the
+ * epoch. Anything else in the buffer (the navigation marker writes seconds) is
+ * left alone rather than judged against the wrong scale.
+ */
+function epochMs(entry) {
+  const at = entry && entry.timestamp;
+  return typeof at === 'number' && Number.isFinite(at) && at > 1e12 ? at : null;
+}
+
+/**
+ * Buffers one console entry, dropping what Chrome replayed from before a clear.
+ *
+ * `Runtime.enable` replays the console history the page has retained, so the
+ * read after a clearing read got the same messages back and the clear looked
+ * like it had done nothing. An entry stamped before the clear is that history
+ * and is dropped here, where both the replay and live output arrive.
+ */
 function pushConsole(tabId, entry) {
   const buf = bufferFor(tabId);
+  const at = epochMs(entry);
+  if (at !== null) {
+    if (buf.consoleClearedAt && at < buf.consoleClearedAt) return;
+    // Output that predates the arming was replayed rather than captured live,
+    // which is what the first read has to say instead of claiming it was lost.
+    if (buf.consoleArmedAt && at < buf.consoleArmedAt) buf.consoleReplayed = true;
+  }
   buf.console.push(entry);
   if (buf.console.length > CONSOLE_LIMIT) buf.console.splice(0, buf.console.length - CONSOLE_LIMIT);
 }
@@ -101,7 +133,11 @@ function formatRemoteObject(arg) {
   return arg.description || arg.className || arg.type || '';
 }
 
-function onDebuggerEvent(source, method, params) {
+/**
+ * The debugger event listener. Exported so a suite can replay what Chrome
+ * sends, including the console history Runtime.enable hands over.
+ */
+export function onDebuggerEvent(source, method, params) {
   const tabId = source.tabId;
   if (tabId === undefined) return;
 
@@ -236,6 +272,10 @@ export async function startCapture(tabId) {
 export async function enableConsole(tabId, { notice = true } = {}) {
   const buf = bufferFor(tabId);
   if (buf.consoleOn) return false;
+  // Stamped before the command goes out, so a replayed entry that arrives while
+  // it is in flight is still recognised as history rather than live output.
+  buf.consoleArmedAt = Date.now();
+  buf.consoleReplayed = false;
   await enableDomains(tabId, ['Runtime']);
   buf.consoleOn = true;
   if (notice) {
@@ -279,6 +319,25 @@ const LATE_CAPTURE_WARNING =
   'recorded. Set console capture to always in the extension options to capture from the moment a tab joins the ' +
   'session, at the cost of leaving Runtime enabled, which is what a CDP detector reads.';
 
+/**
+ * What to say when Runtime.enable replayed the page's console history.
+ *
+ * The old wording claimed output from before the call was not recorded while
+ * the same result listed output from page load, which the caller could see was
+ * untrue. Chrome keeps a bounded history and hands it over on enable, so what
+ * is missing is whatever fell out of that history, not everything before now.
+ */
+const REPLAYED_HISTORY_WARNING =
+  'console capture started with this call. Chrome replayed the console history it had kept for this tab, so ' +
+  'entries from before this call are included; anything older than that history is not. Set console capture to ' +
+  'always in the extension options to capture live from the moment a tab joins the session, at the cost of ' +
+  'leaving Runtime enabled, which is what a CDP detector reads.';
+
+/** What to say when an earlier read cleared the buffer and this one re-armed capture. */
+const REARMED_AFTER_CLEAR_WARNING =
+  'console capture was re-armed by this call after an earlier read cleared the buffer. The history Chrome replayed ' +
+  'from before that clear is filtered out, so this result holds output from after it.';
+
 const MISSED_ERRORS_WARNING =
   'uncaught exceptions need console capture, which was off on this tab until now, so an error thrown earlier is ' +
   'not in this result even when only_errors is set.';
@@ -287,9 +346,13 @@ export function readConsole(tabId, { onlyErrors = false, pattern = null, limit =
   const buf = bufferFor(tabId);
   const warnings = [];
   // Consumed here, so the notice rides on the read that started capture and
-  // not on every read after it.
+  // not on every read after it. Which of the three it is depends on what
+  // actually happened: a clear this read is filtering, history Chrome replayed,
+  // or a tab that logged nothing before capture started.
   if (buf.consoleNotice) {
-    warnings.push(LATE_CAPTURE_WARNING);
+    if (buf.consoleClearedAt) warnings.push(REARMED_AFTER_CLEAR_WARNING);
+    else if (buf.consoleReplayed) warnings.push(REPLAYED_HISTORY_WARNING);
+    else warnings.push(LATE_CAPTURE_WARNING);
     buf.consoleNotice = false;
   }
   if (onlyErrors && buf.consoleMissed) warnings.push(MISSED_ERRORS_WARNING);
@@ -308,7 +371,13 @@ export function readConsole(tabId, { onlyErrors = false, pattern = null, limit =
 
   const total = entries.length;
   const sliced = entries.slice(-Math.max(1, limit));
-  if (clear) buf.console = [];
+  if (clear) {
+    buf.console = [];
+    // The moment the buffer was emptied, so the history Chrome replays on the
+    // next Runtime.enable does not refill it with the same messages.
+    buf.consoleClearedAt = Date.now();
+    buf.consoleReplayed = false;
+  }
   return {
     entries: sliced,
     total,
