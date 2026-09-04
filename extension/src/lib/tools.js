@@ -524,7 +524,7 @@ async function computerTool(ctx, input) {
       }
       const text = String(input.text);
       const outcome = await dispatchVerified(tabId, async () => {
-        if (input.perKey) await cdp.typeKeysReal(tabId, text);
+        if (input.perKey) await cdp.typeKeysReal(tabId, text, input.cadence);
         else await cdp.insertText(tabId, text);
       });
       await recordFrame(tabId);
@@ -1080,7 +1080,9 @@ export const handlers = {
   read_console_messages: async (ctx, input) => {
     await gate(ctx.clientId, 'read_console_messages', input.tabId, ctx.toolUseId);
     await ensureAttached(input.tabId);
-    return recorder.readConsole(input.tabId, {
+    // Arms Runtime on this tab if it is not already on, and disarms it again
+    // when the read clears the buffer (D1).
+    return recorder.readConsoleMessages(input.tabId, {
       onlyErrors: input.only_errors,
       pattern: input.pattern,
       limit: input.limit ?? 100,

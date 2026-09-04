@@ -377,9 +377,32 @@ export async function validateBatch(actions, ctx) {
  * Runs a sequence in one round trip. Stops at the first error so a batch cannot
  * keep acting on a page after a step failed to land.
  */
+/**
+ * Turns console capture on before a sequence that ends in a console read (D1).
+ *
+ * A quick script that runs an action and then reads the console would otherwise
+ * arm the capture after the action it wanted to see. The tab ids are known
+ * before anything runs, so the arming happens up front and the rest of the
+ * script produces console output into a live buffer.
+ */
+async function armConsoleReads(actions) {
+  const tabIds = new Set();
+  for (const action of actions) {
+    const { name, input } = normalizeCall(action.name, action.input);
+    if (name !== 'read_console_messages') continue;
+    if (input && typeof input.tabId === 'number') tabIds.add(input.tabId);
+  }
+  for (const tabId of tabIds) {
+    // Best effort: a tab that cannot be armed here still arms itself on the
+    // read, and a failure must not stop the batch from running.
+    await recorder.startCapture(tabId).then(() => recorder.enableConsole(tabId)).catch(() => {});
+  }
+}
+
 export async function runBatch(actions, ctx) {
   const invalid = await validateBatch(actions, ctx);
   if (invalid) throw invalid;
+  await armConsoleReads(actions);
 
   const results = [];
   let lastCreatedTab = null;
