@@ -30,6 +30,8 @@ import {
   isToolError,
   withCode,
   codeForMessage,
+  isRendererFrozen,
+  RENDERER_FROZEN_HINT,
 } from '../host/errors.js';
 import { TOOLS } from '../host/schemas.js';
 
@@ -202,6 +204,30 @@ test('a read retries on timeout and host_lost even though their effects are unkn
 test('a screenshot counts as a read', () => {
   const decision = retryDecision({ tool: 'computer', args: { action: 'screenshot' }, error: throttled, attempt: 1 });
   assert.equal(decision.retry, true);
+});
+
+test('a timeout the renderer caused is not retried by a read', () => {
+  // The read would wait the freeze out and answer ok, and the caller would see
+  // the timeout only as a retry note. Bug 1 from the third live pass.
+  const frozen = { code: 'timeout', effects: 'none', retryable: true, hint: RENDERER_FROZEN_HINT };
+  const decision = retryDecision({ tool: 'read_page', error: frozen, attempt: 1 });
+  assert.equal(decision.retry, false);
+  assert.match(decision.reason, /frozen renderer/);
+});
+
+test('a timeout from anywhere else is still retried by a read', () => {
+  const slow = { code: 'timeout', effects: 'none', retryable: true, hint: CODES.timeout.hint };
+  assert.equal(retryDecision({ tool: 'read_page', error: slow, attempt: 1 }).retry, true);
+  assert.equal(retryDecision({ tool: 'get_page_text', error: { code: 'timeout', effects: 'none' }, attempt: 1 }).retry, true);
+});
+
+test('isRendererFrozen reads the hint and only on a timeout', () => {
+  assert.equal(isRendererFrozen({ code: 'timeout', hint: RENDERER_FROZEN_HINT }), true);
+  assert.equal(isRendererFrozen({ code: 'timeout', hint: 'x ' + RENDERER_FROZEN_HINT + ' y' }), true);
+  assert.equal(isRendererFrozen({ code: 'timeout' }), false);
+  assert.equal(isRendererFrozen({ code: 'timeout', hint: CODES.timeout.hint }), false);
+  assert.equal(isRendererFrozen({ code: 'renderer_throttled', hint: RENDERER_FROZEN_HINT }), false);
+  assert.equal(isRendererFrozen(null), false);
 });
 
 test('a read does not retry a code that is not transient', () => {

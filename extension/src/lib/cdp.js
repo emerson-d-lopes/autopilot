@@ -4,7 +4,7 @@
 // Synthetic DOM events are rejected by file inputs, native drag and drop, and
 // most bot detection, so there is no synthetic fallback path.
 
-import { ToolError } from './errors.js';
+import { ToolError, RENDERER_FROZEN_HINT } from './errors.js';
 
 const PROTOCOL_VERSION = '1.3';
 
@@ -578,7 +578,7 @@ function safeToRepeat(method) {
 function frozenError(tabId, method, ms) {
   return new ToolError('timeout', 'CDP ' + method + ' did not answer within ' + ms + 'ms on tab ' + tabId + '.', {
     cause: 'the renderer produced no reply',
-    hint: 'the renderer did not respond, reload the tab with navigate',
+    hint: RENDERER_FROZEN_HINT,
     effects: 'unknown',
     retryable: false,
   });
@@ -614,7 +614,7 @@ export function queuedTimeoutError(tabId, method, ms, ahead) {
     'CDP ' + method + ' waited ' + ms + 'ms on tab ' + tabId + blame + '. The renderer is not answering.',
     {
       cause: 'the renderer has not answered an earlier command',
-      hint: 'the renderer did not respond, reload the tab with navigate',
+      hint: RENDERER_FROZEN_HINT,
       // The queued command was never dispatched, so nothing it would have done
       // happened. The command it waited behind is still running.
       effects: 'none',

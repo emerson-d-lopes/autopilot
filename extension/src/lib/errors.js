@@ -579,6 +579,29 @@ export const MAX_ATTEMPTS = { read: 3, input: 2 };
 export const BACKOFF_MS = [250, 750];
 
 /**
+ * The hint a CDP timeout carries when the renderer itself is the reason.
+ *
+ * `frozenError` and `queuedTimeoutError` in extension/src/lib/cdp.js both set
+ * it. It is the marker the retry policy reads, so a change here has to be made
+ * there too.
+ */
+export const RENDERER_FROZEN_HINT = 'the renderer did not respond, reload the tab with navigate';
+
+/**
+ * True for a `timeout` the renderer caused, as opposed to one the transport or
+ * the host caused.
+ *
+ * A read behind a 50 s busy loop used to time out at 20 s per CDP command, get
+ * sent again by the read retry policy, land once the renderer freed up, and
+ * report ok after 49.8 s. The timeout and the reload hint reached the caller
+ * only as a retry note, so nothing in the reply said the page had been frozen.
+ */
+export function isRendererFrozen(error) {
+  if (!error || error.code !== 'timeout') return false;
+  return String(error.hint || '').includes(RENDERER_FROZEN_HINT);
+}
+
+/**
  * A call that carries a confirmation token, or is flagged irreversible, is
  * never repeated by the host. Repeating it would be a second real write.
  */
@@ -610,6 +633,10 @@ export function retryDecision({ tool, args = {}, error, attempt = 1 }) {
 
   if (read) {
     if (!READ_RETRY_CODES.includes(error.code)) return no('code ' + error.code + ' is not transient');
+    // A frozen renderer is not transient. Sending the read again waits the
+    // freeze out and answers ok, which hides both the timeout and the reload
+    // hint from the caller. The hint is the answer, so it is returned.
+    if (isRendererFrozen(error)) return no('timeout from a frozen renderer, the reload hint is the answer');
     return { retry: true, delayMs: BACKOFF_MS[attempt - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1], reason: 'read, ' + error.code };
   }
 
@@ -625,7 +652,7 @@ export function retryTable() {
       kind: 'read',
       tools: [...READ_TOOLS].join(', ') + ', computer screenshot',
       attempts: MAX_ATTEMPTS.read,
-      on: READ_RETRY_CODES.join(', '),
+      on: READ_RETRY_CODES.join(', ') + ', except a timeout the renderer caused',
       backoffMs: BACKOFF_MS.join(', '),
     },
     {
