@@ -109,6 +109,19 @@ test('a direct call carrying every required argument is not refused by the check
   assert.ok(result);
 });
 
+test('a screenshot asked for an unknown stored image says where ids come from', async () => {
+  const { execute } = await import('../extension/src/lib/tools.js');
+  await assert.rejects(
+    () => execute('computer', { tabId: 1, action: 'screenshot', imageId: 'write_nope' }, ctx),
+    (err) => {
+      assert.equal(err.code, 'bad_request');
+      assert.match(err.message, /No stored image with id "write_nope"/);
+      assert.match(err.message, /confirmation_required/);
+      return true;
+    }
+  );
+});
+
 test('an unknown computer action is caught before anything is dispatched', async () => {
   await assert.rejects(
     () => background.runBatch([item('computer', { tabId: 1, action: 'left_clik', ref: 'ref_1' })], ctx),

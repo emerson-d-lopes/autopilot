@@ -654,6 +654,28 @@ async function computerTool(ctx, input) {
 
   switch (action) {
     case 'screenshot': {
+      // W4. The capture taken before an irreversible click, fetched by the id
+      // the confirmation_required error names, so the caller can look at what
+      // it is about to submit before it sends the token back.
+      if (input.imageId) {
+        const id = String(input.imageId);
+        const held = writeScreenshot(id);
+        if (!held) {
+          throw new ToolError(
+            'bad_request',
+            'No stored image with id ' + JSON.stringify(id) + '. Ids come from a confirmation_required error and ' +
+              'are kept for the ten most recent writes in this browser.',
+            { effects: 'none', hint: 'Repeat the call that was refused to get a fresh token and a fresh image id.' }
+          );
+        }
+        return {
+          image: held,
+          saveToDisk: Boolean(input.save_to_disk),
+          effects: 'none',
+          evidence: { capture: { path: 'stored', imageId: id } },
+          warnings: ['this is the capture taken before the write, not the page as it is now'],
+        };
+      }
       const paint = await waitForPaint(tabId);
       await pageCall(tabId, { type: 'HIDE_FOR_TOOL_USE' }).catch(() => {});
       try {

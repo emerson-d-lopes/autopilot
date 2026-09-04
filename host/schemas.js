@@ -275,6 +275,13 @@ export const TOOLS = [
             'Show the user what is about to happen first. A token works once, within two minutes, and only for the ' +
             'same tab, origin and control it was issued for.',
         },
+        imageId: {
+          type: 'string',
+          description:
+            'For "screenshot": return the stored capture with this id instead of taking a new one. The id comes ' +
+            'from the screenshotId on a confirmation_required error, and the image is the page as it was just ' +
+            'before the write that was refused, so you can show the user what the token would submit.',
+        },
         browser: browserProp,
       },
       required: ['action', 'tabId'],
