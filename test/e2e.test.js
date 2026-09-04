@@ -622,4 +622,44 @@ test('network URLs are clipped and the total is reported', async (t) => {
   assert.ok(!text.includes('p'.repeat(400)), 'the URL was clipped');
   assert.match(text, /showing 1 of 500 requests/);
   assert.match(text, /clipped to 300 characters/);
+  assert.match(text, /1 URL clipped to 300 characters, the longest was 624/, 'the reply says how much was clipped');
+});
+
+test('an unclipped network read still prints the row count', async (t) => {
+  // Open bug 8: the reply carried no row count at all unless something was
+  // dropped, so a reader could not tell a complete list from a partial one.
+  const stack = await startStack('net-count', (extension, message) => {
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      result: { requests: [{ url: 'https://a.test/x', status: 200, method: 'GET' }], total: 1, returned: 1 },
+    });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'read_network_requests',
+    arguments: { tabId: 1 },
+  });
+  const text = response.result.content.map((b) => b.text).join('\n');
+  assert.match(text, /\[1 requests\]/);
+});
+
+test('a clipped console read names how long the message really was', async (t) => {
+  const long = 'e'.repeat(4210);
+  const stack = await startStack('console-caps', (extension, message) => {
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      result: { entries: [{ level: 'error', text: long }], total: 1, returned: 1, capturing: true },
+    });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'read_console_messages',
+    arguments: { tabId: 1 },
+  });
+  const text = response.result.content.map((b) => b.text).join('\n');
+  assert.match(text, /1 message clipped to 500 characters, the longest was 4210/);
 });

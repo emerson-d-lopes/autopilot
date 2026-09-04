@@ -237,21 +237,40 @@ export function capNetworkResult(result) {
   if (!result || !Array.isArray(result.requests)) return { result, warnings: [] };
   const warnings = [];
   let clippedUrls = 0;
+  let longestClipped = 0;
 
   const requests = result.requests.map((entry) => {
     if (!entry || typeof entry.url !== 'string') return entry;
     const { text, clipped } = clipTo(entry.url, URL_CAP);
     if (!clipped) return entry;
     clippedUrls += 1;
+    longestClipped = Math.max(longestClipped, entry.url.length);
     return { ...entry, url: text, urlLength: entry.url.length };
   });
 
   const returned = result.returned ?? requests.length;
   const total = result.total ?? returned;
-  if (clippedUrls) warnings.push(clippedUrls + ' URL(s) clipped to ' + URL_CAP + ' characters.');
+  // How much was clipped, not just that something was: a reader could not tell
+  // a URL cut by three characters from one cut by five hundred.
+  if (clippedUrls) {
+    warnings.push(
+      clippedUrls + ' URL(s) clipped to ' + URL_CAP + ' characters, the longest was ' + longestClipped + '.'
+    );
+  }
   if (total > returned) warnings.push('showing ' + returned + ' of ' + total + ' captured requests.');
 
-  return { result: { ...result, requests, returned, total }, warnings };
+  return {
+    result: {
+      ...result,
+      requests,
+      returned,
+      total,
+      clipped: clippedUrls,
+      clippedTo: URL_CAP,
+      longestClipped: clippedUrls ? longestClipped : undefined,
+    },
+    warnings,
+  };
 }
 
 /** Caps each message and fills in total and returned when the extension omitted them. */
@@ -259,21 +278,38 @@ export function capConsoleResult(result) {
   if (!result || !Array.isArray(result.entries)) return { result, warnings: [] };
   const warnings = [];
   let clipped = 0;
+  let longestClipped = 0;
 
   const entries = result.entries.map((entry) => {
     if (!entry || typeof entry.text !== 'string') return entry;
     const capped = clipTo(entry.text, MESSAGE_CAP);
     if (!capped.clipped) return entry;
     clipped += 1;
+    longestClipped = Math.max(longestClipped, entry.text.length);
     return { ...entry, text: capped.text, textLength: entry.text.length };
   });
 
   const returned = result.returned ?? entries.length;
   const total = result.total ?? returned;
-  if (clipped) warnings.push(clipped + ' message(s) clipped to ' + MESSAGE_CAP + ' characters.');
+  if (clipped) {
+    warnings.push(
+      clipped + ' message(s) clipped to ' + MESSAGE_CAP + ' characters, the longest was ' + longestClipped + '.'
+    );
+  }
   if (total > returned) warnings.push('showing ' + returned + ' of ' + total + ' captured messages.');
 
-  return { result: { ...result, entries, returned, total }, warnings };
+  return {
+    result: {
+      ...result,
+      entries,
+      returned,
+      total,
+      clipped,
+      clippedTo: MESSAGE_CAP,
+      longestClipped: clipped ? longestClipped : undefined,
+    },
+    warnings,
+  };
 }
 
 /**
