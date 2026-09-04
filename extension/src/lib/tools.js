@@ -149,6 +149,37 @@ function adoptedTabs(openerTabId) {
   return [];
 }
 
+/** The same read without consuming it, for polling. */
+function peekAdoptedTabs(openerTabId) {
+  try {
+    if (typeof tabsLib.peekAdopted !== 'function') return [];
+    const ids = tabsLib.peekAdopted(openerTabId);
+    return Array.isArray(ids) ? ids.filter((id) => typeof id === 'number') : [];
+  } catch {
+    /* the hook is not wired up on this build */
+  }
+  return [];
+}
+
+/**
+ * How long a click that looks like it opens a tab waits for the tab.
+ *
+ * Chrome creates the tab well after the 250 ms verification window closes. Only
+ * a click the watch flagged waits this long, so an ordinary click still costs
+ * the ordinary window.
+ */
+export const NEW_TAB_WINDOW_MS = 1500;
+
+/** How often the wait for an opened tab checks the adoption bookkeeping. */
+const NEW_TAB_POLL_MS = 50;
+
+/**
+ * A plain timer, not cdp.sleep. The poll reads worker-side bookkeeping, so
+ * sending 30 Runtime.evaluate calls into the tab to time it would queue behind
+ * whatever the renderer is doing and measure that instead.
+ */
+const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function armVerify(tabId, point, ref) {
   const armed = await pageCall(tabId, { type: 'VERIFY_ARM', point: point || null, ref: ref || null }).catch(() => null);
   let url = null;
@@ -158,7 +189,7 @@ async function armVerify(tabId, point, ref) {
   } catch {
     /* the tab is reported gone by the action itself */
   }
-  return { armed: Boolean(armed && armed.ok), url, at: Date.now() };
+  return { armed: Boolean(armed && armed.ok), opensTab: Boolean(armed && armed.opensTab), url, at: Date.now() };
 }
 
 /**
@@ -192,12 +223,28 @@ async function readVerify(tabId, armed, { window = VERIFY_WINDOW_MS } = {}) {
     }
   }
 
+  // A click on target="_blank", or on an inline handler that calls
+  // window.open, gets its tab after the ordinary window has closed. The watch
+  // said so at arm time, so only that click waits.
+  let waitedForTab = false;
+  if (armed.opensTab && !peekAdoptedTabs(tabId).length) {
+    const deadline = armed.at + NEW_TAB_WINDOW_MS;
+    while (Date.now() < deadline) {
+      await waitMs(NEW_TAB_POLL_MS);
+      windowMs = Date.now() - armed.at;
+      if (peekAdoptedTabs(tabId).length) break;
+    }
+    waitedForTab = true;
+  }
+
   const newTabIds = adoptedTabs(tabId);
   const newTabId = newTabIds.length ? newTabIds[0] : null;
   const watched = Boolean(report && report.ok);
   const evidence = {
     windowMs,
     watched,
+    opensTab: armed.opensTab || undefined,
+    waitedForTab: waitedForTab || undefined,
     mutations: watched ? report.mutations : undefined,
     focusChanged: watched ? report.focusChanged : undefined,
     focusedAfter: watched ? report.focusedAfter : undefined,

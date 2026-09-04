@@ -461,6 +461,14 @@ export function adopted(openerTabId) {
   return ids;
 }
 
+/**
+ * The same ids without clearing them, so a click can poll for the tab it opened
+ * and still leave the read that reports it to `adopted`.
+ */
+export function peekAdopted(openerTabId) {
+  return (adoptedByOpener.get(openerTabId) || []).slice();
+}
+
 /** Drops a closed tab from the adoption bookkeeping. */
 export function forgetAdopted(tabId) {
   adoptedByOpener.delete(tabId);
