@@ -419,19 +419,27 @@ export async function captureFrame(tabId, meta = {}) {
   }
 }
 
+/**
+ * P2: the real span of the recording is what the first and last frame
+ * timestamps say, not Date.now() at the moment stop() happens to run, which
+ * reported a constant "0.0s" because start() takes its own first frame and
+ * stop() takes its last, so the interesting time already lives on the frames.
+ * Exported standalone so it is testable without a live capture pipeline.
+ */
+export function durationFromFrames(frames, fallbackFirst, fallbackLast) {
+  if (!frames || !frames.length) return 0;
+  const first = frames[0].timestamp ?? fallbackFirst;
+  const last = frames[frames.length - 1].timestamp ?? fallbackLast;
+  return Math.max(0, last - first);
+}
+
 export function stop(tabId) {
   const rec = recordings.get(tabId);
   recordings.delete(tabId);
   if (!rec || !rec.frames.length) {
     return { error: 'no frames were recorded. Start a recording, act on the page, then stop.' };
   }
-  // P2: the real span of the recording is what the first and last frame
-  // timestamps say, not Date.now() at the moment stop() happens to run, which
-  // reported a constant "0.0s" because start() takes its own first frame and
-  // stop() takes its last, so the interesting time already lives on the frames.
-  const first = rec.frames[0].timestamp ?? rec.startedAt;
-  const last = rec.frames[rec.frames.length - 1].timestamp ?? rec.lastAt;
-  const durationMs = Math.max(0, last - first);
+  const durationMs = durationFromFrames(rec.frames, rec.startedAt, rec.lastAt);
 
   // The last frame gets extra time on screen so a viewer can read the final
   // state before the gif loops back to the start.
@@ -450,4 +458,14 @@ export function stop(tabId) {
 
 export function discard(tabId) {
   recordings.delete(tabId);
+}
+
+/**
+ * Test-only seam: captureFrame is the sole writer of `recordings` and it
+ * needs a real CDP session and OffscreenCanvas, neither available under
+ * node --test, so this lets a test build a recording with known frame
+ * timestamps and drive stop()/discard() against it directly.
+ */
+export function __setRecordingForTest(tabId, rec) {
+  recordings.set(tabId, rec);
 }
