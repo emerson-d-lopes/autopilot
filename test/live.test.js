@@ -607,8 +607,12 @@ test('live browser automation', options, async (t) => {
 
     const probe = await callTool(mcp, 'javascript', {
       tabId,
+      // D2: the host id is random per session now, not a fixed, greppable
+      // string, so it is found structurally instead: a direct child of <html>
+      // marked aria-hidden, which is what both the cursor and the indicator
+      // overlay share.
       code: `(() => {
-        const host = document.getElementById('__chrome_mcp_cursor__');
+        const host = document.querySelector('html > div[aria-hidden="true"]');
         if (!host) return { present: false };
         const r = document.getElementById('submit').getBoundingClientRect();
         return {
@@ -630,13 +634,13 @@ test('live browser automation', options, async (t) => {
 
     // It must not reach the model either, as a tree node or in a screenshot.
     const all = await callTool(mcp, 'read_page', { tabId, filter: 'all', max_chars: 80000 });
-    assert.equal(/chrome_mcp_cursor/.test(all.text), false, 'absent from the tree');
+    assert.equal(/chrome_mcp_cursor|__cmcp_/.test(all.text), false, 'absent from the tree');
 
     // A capture hides the cursor and must put it back afterwards.
     await callTool(mcp, 'computer', { tabId, action: 'screenshot' });
     const after = await callTool(mcp, 'javascript', {
       tabId,
-      code: '(() => { const h = document.getElementById("__chrome_mcp_cursor__"); return h ? h.style.display : "missing"; })()',
+      code: '(() => { const h = document.querySelector(\'html > div[aria-hidden="true"]\'); return h ? h.style.display : "missing"; })()',
     });
     assert.notEqual(JSON.parse(after.text).result, 'none', 'the cursor is restored after a capture');
     assert.notEqual(JSON.parse(after.text).result, 'missing');

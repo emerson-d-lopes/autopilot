@@ -133,6 +133,92 @@ export async function listGroupTabs(clientId) {
   return tabs;
 }
 
+// ---------------------------------------------------------------------------
+// Stop/Resume and the acting-indicator broadcast (F4)
+// ---------------------------------------------------------------------------
+//
+// Which tab a session's running call is acting on, and whether the user has
+// stopped the session, live here alongside the rest of the per-session state
+// this module already tracks. Driving the indicator content script
+// (indicator.js) from here, rather than from background.js, keeps the change
+// to background.js itself down to wiring: two message cases and the calls
+// around a tool_request's try block.
+
+/** @type {Map<string, number>} clientId -> the tabId a call is acting on right now */
+const activeTab = new Map();
+/** @type {Set<string>} clientIds the user has stopped, until resume() */
+const stoppedSessions = new Set();
+/** @type {Map<string, number>} clientId -> the tab to show the stopped pill on */
+const stoppedTab = new Map();
+
+function sendIndicatorState(tabId, state) {
+  if (typeof tabId !== 'number') return;
+  chrome.tabs.sendMessage(tabId, { type: 'INDICATOR_STATE', state }).catch(() => {
+    // No content script on this tab (a chrome:// page, a not-yet-loaded tab,
+    // or one this browser closed). Nothing to show there either way.
+  });
+}
+
+/** Sends every tab in the session's group the indicator state it should show right now. */
+async function broadcastIndicator(clientId) {
+  const tabs = await listGroupTabs(clientId).catch(() => []);
+  const acting = activeTab.get(clientId);
+  const stopped = stoppedSessions.has(clientId);
+  const pillTab = stopped ? stoppedTab.get(clientId) : null;
+  for (const tab of tabs) {
+    if (typeof acting === 'number' && tab.id === acting) sendIndicatorState(tab.id, 'pulsing');
+    else if (stopped && tab.id === pillTab) sendIndicatorState(tab.id, 'stopped');
+    else if (typeof acting === 'number') sendIndicatorState(tab.id, 'static');
+    else sendIndicatorState(tab.id, 'none');
+  }
+}
+
+/** Marks a tab as the one a call is acting on, and shows it on every session tab. */
+export function beginActive(clientId, tabId) {
+  if (typeof tabId !== 'number') return Promise.resolve();
+  activeTab.set(clientId, tabId);
+  return broadcastIndicator(clientId).catch(() => {});
+}
+
+/** Clears the active tab once the call finishes. A stopped pill, if any, stays until resume(). */
+export function endActive(clientId) {
+  activeTab.delete(clientId);
+  return broadcastIndicator(clientId).catch(() => {});
+}
+
+/** True while a call is running for this session, for the popup's Stop button. */
+export function isSessionActive(clientId) {
+  return activeTab.has(clientId);
+}
+
+/** True while this session is stopped: every call fails fast until resume(). */
+export function isStopped(clientId) {
+  return stoppedSessions.has(clientId);
+}
+
+/**
+ * Stops a session. The running batch or quick script notices on its next
+ * step and aborts (background.js checks isStopped between actions).
+ *
+ * The indicator switches from the pulsing border to the stopped pill right
+ * away rather than waiting for the loop to unwind, since the user's Stop
+ * click should read back immediately.
+ */
+export function stopSession(clientId) {
+  stoppedSessions.add(clientId);
+  const tab = activeTab.get(clientId);
+  if (typeof tab === 'number') stoppedTab.set(clientId, tab);
+  activeTab.delete(clientId);
+  return broadcastIndicator(clientId);
+}
+
+/** Clears the stopped state, so the next call runs normally. */
+export function resumeSession(clientId) {
+  stoppedSessions.delete(clientId);
+  stoppedTab.delete(clientId);
+  return broadcastIndicator(clientId);
+}
+
 /**
  * Returns the tab context for a session, creating a group and a blank tab when
  * createIfEmpty is set and none exists.

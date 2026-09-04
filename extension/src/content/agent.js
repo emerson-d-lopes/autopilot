@@ -1493,8 +1493,16 @@
   // is hidden before any screenshot so the model never sees its own cursor and
   // mistakes it for page content.
 
-  const CURSOR_HOST_ID = '__chrome_mcp_cursor__';
+  // D2: a fixed id on an element appended to every page is trivially
+  // greppable and names the extension to any page that looks. One random id
+  // is generated per content-script installation (so it is stable across the
+  // page's lifetime but different from every other tab and every other
+  // browsing session) and held in this module-level variable, which is the
+  // one place any other code in this file, or the indicator overlay sharing
+  // this shadow root, looks the host up by id.
+  const CURSOR_HOST_ID = '__cmcp_' + Math.random().toString(36).slice(2, 10) + '__';
   let cursorRoot = null;
+  let cursorShadow = null;
   let cursorEl = null;
   let cursorEnabled = true;
   let cursorAt = null;
@@ -1550,8 +1558,20 @@
 
     document.documentElement.appendChild(host);
     cursorRoot = host;
+    cursorShadow = shadow;
     cursorEl = shadow.querySelector('.c');
     return cursorEl;
+  }
+
+  /**
+   * The closed shadow root the cursor draws into, creating the host first if
+   * this is the first thing to need it. The indicator overlay (F4) shares
+   * this root rather than appending a second host element, so a single
+   * `HIDE_FOR_TOOL_USE` / `SHOW_AFTER_TOOL_USE` pair hides both.
+   */
+  function overlayShadow() {
+    cursorLayer();
+    return cursorShadow;
   }
 
   function moveCursor(x, y, { instant = false } = {}) {
@@ -1616,6 +1636,7 @@
       if (msg.paymentCategory !== undefined) paymentCategoryPage = Boolean(msg.paymentCategory);
       const role = roleOf(el);
       const name = accessibleName(el, role, true);
+      const isFileInput = el.tagName === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'file';
       return {
         ok: true,
         geometry: geometryOf(el),
@@ -1627,6 +1648,10 @@
         contentEditable: isEditableHost(el),
         sensitive: isSensitiveField(el),
         irreversible: isIrreversibleControl(el, role, name),
+        // D2: file_upload reads these to decide whether the ref names a real
+        // file input, without ever writing a marker attribute onto it.
+        isFileInput,
+        multiple: isFileInput ? el.multiple : false,
       };
     },
 
@@ -1704,33 +1729,6 @@
 
     SHOW_AFTER_TOOL_USE: () => {
       setCursorVisible(true);
-      return { ok: true };
-    },
-
-    /**
-     * Tags an element so CDP can find it by selector. The ref map lives in this
-     * isolated world, and CDP addresses nodes from its own tree, so a marker
-     * attribute is the bridge between the two.
-     */
-    MARK_ELEMENT: (msg) => {
-      const el = resolveRef(msg.ref);
-      if (!el) return { error: 'ref ' + msg.ref + ' is no longer on the page. Re-read the page.' };
-      el.setAttribute('data-chrome-mcp-mark', msg.token);
-      scrollIntoView(el);
-      const isFileInput = el.tagName === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'file';
-      return {
-        ok: true,
-        selector: '[data-chrome-mcp-mark="' + msg.token + '"]',
-        isFileInput,
-        multiple: isFileInput ? el.multiple : false,
-        tag: el.tagName,
-        geometry: geometryOf(el),
-      };
-    },
-
-    UNMARK_ELEMENT: (msg) => {
-      const el = document.querySelector('[data-chrome-mcp-mark="' + msg.token + '"]');
-      if (el) el.removeAttribute('data-chrome-mcp-mark');
       return { ok: true };
     },
 
@@ -1845,6 +1843,11 @@
     isSensitiveField,
     isIrreversibleControl,
     scrollableAncestor,
+    // D2: the per-session overlay host id, and the shared shadow root the
+    // indicator overlay (indicator.js, a separate content script sharing this
+    // isolated world) draws its own elements into.
+    cursorHostId: CURSOR_HOST_ID,
+    overlayShadow,
   };
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

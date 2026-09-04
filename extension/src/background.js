@@ -307,6 +307,23 @@ function describeItem(index, action) {
 }
 
 /**
+ * The tab the indicator (F4) should show as being driven for this call.
+ *
+ * Most tools carry `tabId` directly. `browser_batch` and `quick` scripts do
+ * not always name one at the top level, so the first action that does stands
+ * in. A batch that fans out across several tabs will only show the border on
+ * one of them, which is an approximation, not a per-action tracker.
+ */
+function activeTabIdFor(tool, args) {
+  if (args && typeof args.tabId === 'number') return args.tabId;
+  if (tool === 'browser_batch' && args && Array.isArray(args.actions)) {
+    const first = args.actions.find((a) => a && a.input && typeof a.input.tabId === 'number');
+    if (first) return first.input.tabId;
+  }
+  return undefined;
+}
+
+/**
  * Checks every item before the first one runs.
  *
  * Validating as the batch went meant a typo in item five cost the side effects
@@ -431,6 +448,16 @@ async function runSteps(actions, ctx, results, lastCreatedTab) {
   for (let i = 0; i < actions.length; i++) {
     const { lineNo, command } = actions[i];
     const { name, input } = normalizeCall(actions[i].name, actions[i].input);
+    // F4: the user pressed Stop while this batch or quick script was
+    // mid-sequence. The step that was about to run does not, and everything
+    // already run stands.
+    if (tabsLib.isStopped(ctx.clientId)) {
+      const err = new ToolError('stopped', 'The user stopped this session before ' + describeItem(i, actions[i]) + ' ran.', {
+        effects: 'none',
+      });
+      results.push({ index: i, name, lineNo, command, ok: false, error: serializeError(err) });
+      return { results, stoppedAt: i, completed: false };
+    }
     // A tab created earlier in the same batch has no id at authoring time, so
     //  stands for it. That is what lets quick's NT be followed by actions.
     if (input && input.tabId === '$last') {
@@ -530,6 +557,19 @@ async function handleMessage(message) {
       const bornAt = generation;
       const { name: tool, input: args } = normalizeCall(message.tool, message.args);
       const ctx = { clientId: clientId || 'default', toolUseId, callId };
+
+      // F4: a stopped session fails every call fast, without running it,
+      // until the user presses Resume on the tab indicator or the popup.
+      if (tabsLib.isStopped(ctx.clientId)) {
+        const err = new ToolError(
+          'stopped',
+          'This session is stopped. Press Resume on the tab indicator or the popup to continue.',
+          { effects: 'none' }
+        );
+        respond({ type: 'tool_response', id, callId, error: serializeError(err) }, bornAt, tool);
+        return;
+      }
+
       // The page a call acted on, for the host's action journal. Read after
       // the call so a navigation is reported by where it landed.
       const tabMeta = async (tabId) => {
@@ -548,6 +588,10 @@ async function handleMessage(message) {
       const marks = tool !== 'tabs_context';
       const mark = (status) => (marks ? tabsLib.setGroupStatus(ctx.clientId, status).catch(() => {}) : Promise.resolve());
       mark('working');
+      // F4: shows the pulsing border and Stop button on the tab this call
+      // acts on, and the static "driving this tab" pill on the session's
+      // other tabs, for as long as the call runs.
+      if (marks) tabsLib.beginActive(ctx.clientId, activeTabIdFor(tool, args));
       inFlight++;
       cdp.beginCall();
       try {
@@ -570,6 +614,7 @@ async function handleMessage(message) {
         respond({ type: 'tool_response', id, callId, error, tab }, bornAt, tool);
       } finally {
         inFlight--;
+        if (marks) tabsLib.endActive(ctx.clientId);
       }
       return;
     }
@@ -675,7 +720,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           version: chrome.runtime.getManifest().version,
           connected: Boolean(port),
           working: inFlight > 0,
-          sessions,
+          // F4: lets the popup offer Stop while a call is running and Resume
+          // once the user has stopped one.
+          sessions: sessions.map((s) => ({
+            ...s,
+            stopped: tabsLib.isStopped(s.clientId),
+            active: tabsLib.isSessionActive(s.clientId),
+          })),
           recent,
         }),
       () => sendResponse({ version: chrome.runtime.getManifest().version, connected: Boolean(port), working: inFlight > 0, sessions: [], recent })
@@ -695,6 +746,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       sendResponse({ closed });
     });
+    return true;
+  }
+  // F4: Stop arrives either from the indicator overlay's button (a message
+  // from the driven tab's content script, so the session is the one that tab
+  // belongs to) or from the popup (which names the clientId directly, since
+  // a popup has no tab of its own).
+  if (message.type === 'stop') {
+    (async () => {
+      const clientId = sender.tab ? (await tabsLib.sessionForTab(sender.tab.id) || {}).clientId : message.clientId;
+      if (!clientId) return sendResponse({ ok: false });
+      await tabsLib.stopSession(clientId);
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+  if (message.type === 'resume') {
+    (async () => {
+      const clientId = sender.tab ? (await tabsLib.sessionForTab(sender.tab.id) || {}).clientId : message.clientId;
+      if (!clientId) return sendResponse({ ok: false });
+      await tabsLib.resumeSession(clientId);
+      sendResponse({ ok: true });
+    })();
     return true;
   }
   return false;

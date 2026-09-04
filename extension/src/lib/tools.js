@@ -11,6 +11,7 @@ import * as shortcuts from './shortcuts.js';
 import { ToolError, withCode } from './errors.js';
 
 const CONTENT_SCRIPT = 'src/content/agent.js';
+const CONTENT_SCRIPTS = [CONTENT_SCRIPT, 'src/content/indicator.js'];
 
 /**
  * Default character budget for the interactive filter (S4).
@@ -41,7 +42,7 @@ async function pageCall(tabId, message, { retry = true } = {}) {
     if (!missing || !retry) {
       throw new Error(describePageError(text, tabId));
     }
-    await chrome.scripting.executeScript({ target: { tabId }, files: [CONTENT_SCRIPT] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_SCRIPTS });
     return pageCall(tabId, message, { retry: false });
   }
 }
@@ -1034,51 +1035,53 @@ export const handlers = {
       };
     }
 
-    const token = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    const marked = await pageCall(tabId, { type: 'MARK_ELEMENT', ref, token });
-    if (marked.error) throw new ToolError(marked.code || 'ref_stale', marked.error);
+    // D2: no marker attribute is written onto the page. The element is
+    // resolved and scrolled into view the same way a click resolves its
+    // target, and CDP finds the actual `<input type=file>` node afterward
+    // through a stable structural selector (see cdp.setFileInputFiles).
+    let resolved = await pageCall(tabId, { type: 'RESOLVE_REF', ref });
+    if (resolved.error) throw new ToolError(resolved.code || 'ref_stale', resolved.error);
+    await pageCall(tabId, { type: 'SCROLL_TO', ref }).catch(() => {});
+    resolved = await pageCall(tabId, { type: 'RESOLVE_REF', ref });
+    if (resolved.error) throw new ToolError(resolved.code || 'ref_stale', resolved.error);
 
-    try {
-      if (marked.isFileInput) {
-        if (paths.length > 1 && !marked.multiple) {
-          throw new ToolError('bad_request', 'this input accepts one file, ' + paths.length + ' were given');
-        }
-        const outcome = await dispatchVerified(tabId, () => cdp.setFileInputFiles(tabId, marked.selector, paths));
-        return {
-          ok: true,
-          mode: 'input',
-          files: paths.length,
-          effects: outcome.effects,
-          evidence: outcome.evidence,
-          warnings: outcome.warnings,
-        };
+    if (resolved.isFileInput) {
+      if (paths.length > 1 && !resolved.multiple) {
+        throw new ToolError('bad_request', 'this input accepts one file, ' + paths.length + ' were given');
       }
-
-      // No file input behind this ref, so treat it as a drop target. Upload
-      // areas built on dragover/drop have no input to set.
-      const geo = marked.geometry;
-      if (!geo.width && !geo.height) {
-        throw new ToolError(
-          'ref_stale',
-          'element ' + ref + ' is a ' + marked.tag + ' with no size, and is not a file input'
-        );
-      }
-      const outcome = await dispatchVerified(
-        tabId,
-        () => cdp.dropFiles(tabId, geo.centerX, geo.centerY, paths),
-        { point: { x: geo.centerX, y: geo.centerY } }
-      );
+      const outcome = await dispatchVerified(tabId, () => cdp.setFileInputFiles(tabId, resolved.geometry, paths));
       return {
         ok: true,
-        mode: 'drop',
+        mode: 'input',
         files: paths.length,
         effects: outcome.effects,
         evidence: outcome.evidence,
         warnings: outcome.warnings,
       };
-    } finally {
-      await pageCall(tabId, { type: 'UNMARK_ELEMENT', token }).catch(() => {});
     }
+
+    // No file input behind this ref, so treat it as a drop target. Upload
+    // areas built on dragover/drop have no input to set.
+    const geo = resolved.geometry;
+    if (!geo.width && !geo.height) {
+      throw new ToolError(
+        'ref_stale',
+        'element ' + ref + ' is a ' + resolved.tag + ' with no size, and is not a file input'
+      );
+    }
+    const outcome = await dispatchVerified(
+      tabId,
+      () => cdp.dropFiles(tabId, geo.centerX, geo.centerY, paths),
+      { point: { x: geo.centerX, y: geo.centerY } }
+    );
+    return {
+      ok: true,
+      mode: 'drop',
+      files: paths.length,
+      effects: outcome.effects,
+      evidence: outcome.evidence,
+      warnings: outcome.warnings,
+    };
   },
 
   gif_creator: async (ctx, input) => {
