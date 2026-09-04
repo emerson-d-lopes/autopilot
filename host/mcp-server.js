@@ -23,6 +23,13 @@ import {
 import { SESSION_DOMAINS, registrableDomain } from '../extension/src/lib/sessions.js';
 import { TOOLS, TOOL_NAMES } from './schemas.js';
 import { encodeGif } from './gif.js';
+import {
+  shouldEscalateToModel,
+  capTreeForModel,
+  parseModelFindResponse,
+  validateModelMatches,
+  MODEL_TREE_CHAR_CAP,
+} from '../extension/src/lib/find.js';
 import { normalizeCall } from '../extension/src/lib/aliases.js';
 import {
   toError,
@@ -400,6 +407,98 @@ async function callWithRetry(tool, args, callId, route = null) {
 }
 
 // ---------------------------------------------------------------------------
+// P6. find's model escalation through MCP sampling
+//
+// Local scoring runs first and stays in the result unless the model call
+// actually produces something. The tree is read separately from find's own
+// local pass (find.js scores against a tree the extension already read) so
+// this can ask for the exact scope find used, uncapped, and cap it here
+// where the 60000-char ceiling is enforced regardless of how big the page is.
+// ---------------------------------------------------------------------------
+
+/**
+ * The MCP sampling escalation for one `find` call. Never throws: any failure
+ * along the way (no sampling capability, the tree read failing, the model
+ * call erroring, an empty or all-hallucinated answer) resolves to
+ * `{escalated: false, warning}` and the caller keeps the local result, per P6.
+ */
+async function runFindEscalation({ query, tabId, scope, route, findResult, semantic }) {
+  const because = shouldEscalateToModel({ matches: findResult.matches, semantic });
+  if (!because) return { escalated: false };
+
+  const clientCaps = server.getClientCapabilities ? server.getClientCapabilities() : null;
+  if (!clientCaps || !clientCaps.sampling) {
+    return {
+      escalated: false,
+      warning: 'would have escalated to a model call (' + because + '), but this client does not support MCP sampling',
+    };
+  }
+
+  let treeText = '';
+  try {
+    const treeCall = await callWithRetry(
+      'read_page',
+      { tabId, filter: scope === 'all' ? 'all' : 'interactive', max_chars: 200000 },
+      newCallId(),
+      route
+    );
+    treeText = (treeCall.result && treeCall.result.text) || '';
+  } catch (err) {
+    return { escalated: false, warning: 'could not read the tree for the model call: ' + (err && err.message) };
+  }
+
+  const capped = capTreeForModel(treeText, MODEL_TREE_CHAR_CAP);
+
+  const prompt =
+    'You are helping find elements on a web page. The user wants to find: "' + query + '"\n\n' +
+    'Here is the accessibility tree of the page:\n' + capped.text + '\n\n' +
+    "Find ALL elements that match the user's query. Return up to 20 most relevant matches, ordered by relevance.\n\n" +
+    'Return your findings in this exact format (one line per matching element):\n\n' +
+    'FOUND: <total_number_of_matching_elements>\nSHOWING: <number_shown_up_to_20>\n---\n' +
+    'ref_X | role | name | type | reason why this matches';
+
+  let response;
+  try {
+    response = await server.createMessage({
+      messages: [{ role: 'user', content: { type: 'text', text: prompt } }],
+      maxTokens: 800,
+    });
+  } catch (err) {
+    return { escalated: false, warning: 'the model call failed (' + (err && err.message) + '); returning the local result' };
+  }
+
+  const text = response && response.content && response.content.type === 'text' ? response.content.text : '';
+  const parsed = parseModelFindResponse(text);
+  const { valid, hallucinated } = validateModelMatches(parsed, capped.text);
+
+  if (!valid.length) {
+    return { escalated: false, warning: 'the model call returned no valid refs; returning the local result' };
+  }
+
+  const matches = valid.map((m) => ({
+    ref: m.ref,
+    role: m.role || '',
+    name: m.name || '',
+    attrs: m.type ? 'type=' + m.type : undefined,
+    reason: m.reason,
+    source: 'model',
+  }));
+
+  const warnings = [];
+  if (hallucinated.length) {
+    warnings.push('the model named ' + hallucinated.length + ' ref(s) not present in the tree; they were dropped');
+  }
+  if (capped.capped) {
+    warnings.push(
+      'the tree sent to the model was capped at ' + MODEL_TREE_CHAR_CAP + ' chars' +
+        (capped.droppedOffscreen ? ' (' + capped.droppedOffscreen + ' offscreen line(s) dropped first)' : '')
+    );
+  }
+
+  return { escalated: true, because, matches, warnings };
+}
+
+// ---------------------------------------------------------------------------
 // Result formatting
 // ---------------------------------------------------------------------------
 
@@ -470,9 +569,12 @@ function formatFind(result) {
     if (m.offscreen) parts.push('(offscreen)');
     if (m.attrs) parts.push(m.attrs);
     if (m.count > 1) parts.push('(and ' + (m.count - 1) + ' more like it)');
+    if (m.source === 'model') parts.push('(model' + (m.reason ? ': ' + m.reason : '') + ')');
     return parts.join(' ');
   });
-  return [textBlock(result.matches.length + ' match(es):\n' + lines.join('\n'))];
+  const header = result.matches.length + ' match(es)' +
+    (result.escalatedBecause ? ', from a model call (' + result.escalatedBecause + ')' : '') + ':';
+  return [textBlock(header + '\n' + lines.join('\n'))];
 }
 
 /**
@@ -913,6 +1015,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       name = 'file_upload';
     }
     const call = await callWithRetry(name, args, callId, route);
+
+    // P6: local ranking already ran inside the extension call above. Only
+    // when it came back weak, or the caller asked for semantic: true, does
+    // this reach for a model call, and only when the client actually offers
+    // MCP sampling.
+    if (name === 'find' && call.result && Array.isArray(call.result.matches)) {
+      const escalation = await runFindEscalation({
+        query: args.query,
+        tabId: args.tabId,
+        scope: call.result.scope,
+        route,
+        findResult: call.result,
+        semantic: Boolean(args.semantic),
+      });
+      if (escalation.escalated) {
+        call.result = {
+          ...call.result,
+          matches: escalation.matches,
+          localMatches: call.result.matches,
+          escalatedBecause: escalation.because,
+        };
+        call.notes.push(...escalation.warnings);
+      } else if (escalation.warning) {
+        call.notes.push(escalation.warning);
+      }
+    }
 
     // S5, S6 and F2 run here, on the read path, so capture in the extension
     // stays passive and every tool gets the same treatment whatever build the

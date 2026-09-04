@@ -263,3 +263,97 @@ export function shouldWiden({ query, matches, searched }) {
   if (searched < 10) return 'the interactive filter left almost nothing to search';
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// P6. Model escalation through MCP sampling
+//
+// Local scoring stays the default: it answers in under a millisecond and
+// resolves the queries find actually receives. When the best local score is
+// low, or the caller asks for it outright, the host asks the MCP client's
+// model to pick refs out of the tree, the same call the official extension
+// makes on every single find, at the cost of a median 13735ms it pays whether
+// or not the query needed it (R6 measurement in the campaign). Escalating
+// only below a threshold gets the same semantic capability close to zero
+// average cost.
+// ---------------------------------------------------------------------------
+
+/** Best local score below which `find` escalates to a model call. */
+export const MODEL_ESCALATION_BELOW_SCORE = 3;
+
+/** Whether find should escalate past local scoring to a model call. */
+export function shouldEscalateToModel({ matches, semantic }) {
+  if (semantic) return 'the caller asked for a semantic search';
+  if (!matches || !matches.length) return 'no local match scored above the reporting floor';
+  if (matches[0].score < MODEL_ESCALATION_BELOW_SCORE) return 'the best local match scored low';
+  return null;
+}
+
+/**
+ * Caps the tree text sent to the model. Amazon's find failed outright with
+ * "234540 tokens > 200000 maximum" because the whole tree went in
+ * uncapped (C-real-sites.md bug 4); this is the guard against that, applied
+ * however big the page is. Offscreen nodes are dropped first, since a
+ * semantic query is almost always about what is visible, and only truncated
+ * outright if the onscreen tree alone still will not fit.
+ */
+export const MODEL_TREE_CHAR_CAP = 60000;
+
+export function capTreeForModel(treeText, maxChars = MODEL_TREE_CHAR_CAP) {
+  const full = String(treeText || '');
+  if (full.length <= maxChars) return { text: full, capped: false, droppedOffscreen: 0 };
+
+  const lines = full.split('\n');
+  const onscreen = lines.filter((line) => !/\(offscreen\)/.test(line));
+  let text = onscreen.join('\n');
+  const droppedOffscreen = lines.length - onscreen.length;
+
+  if (text.length > maxChars) {
+    const note = '\n[tree truncated to ' + maxChars + ' chars for the model call]';
+    text = text.slice(0, Math.max(0, maxChars - note.length)) + note;
+  }
+  return { text, capped: true, droppedOffscreen };
+}
+
+/** Every `[ref_N]` the tree text actually carries, for validating a model's answer against it. */
+export function extractRefs(treeText) {
+  const found = String(treeText || '').match(/\[ref_\d+\]/g) || [];
+  return new Set(found.map((s) => s.slice(1, -1)));
+}
+
+const MODEL_LINE_RE = /^ref_\d+\s*\|/;
+
+/**
+ * Parses the model's `ref_X | role | name | type | reason` lines. Lines that
+ * do not start with a ref are prose (the FOUND:/SHOWING:/--- header lines,
+ * or the model explaining itself) and are skipped rather than treated as a
+ * parse failure, since the model is not required to say nothing else.
+ */
+export function parseModelFindResponse(text) {
+  const out = [];
+  for (const line of String(text || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!MODEL_LINE_RE.test(trimmed)) continue;
+    const parts = trimmed.split('|').map((p) => p.trim());
+    const [ref, role, name, type, ...rest] = parts;
+    out.push({ ref, role: role || undefined, name: name || undefined, type: type || undefined, reason: rest.join('|').trim() || undefined });
+  }
+  return out;
+}
+
+/**
+ * Drops any ref the model invented. The official extension does the same
+ * check (`w=new Set(...)` against `[ref_\d+]` in the tree it sent,
+ * `X-official-internals.md` part 1 section 5) because a model call answers
+ * from what it read, and what it read can still not match what is really in
+ * the tree once 20 candidates are asked for.
+ */
+export function validateModelMatches(modelMatches, treeText) {
+  const validRefs = extractRefs(treeText);
+  const valid = [];
+  const hallucinated = [];
+  for (const m of modelMatches) {
+    if (validRefs.has(m.ref)) valid.push(m);
+    else hallucinated.push(m.ref);
+  }
+  return { valid, hallucinated };
+}

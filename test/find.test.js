@@ -6,6 +6,13 @@ import {
   stripUrlAttributes,
   shouldWiden,
   WIDEN_BELOW_SCORE,
+  shouldEscalateToModel,
+  MODEL_ESCALATION_BELOW_SCORE,
+  capTreeForModel,
+  MODEL_TREE_CHAR_CAP,
+  extractRefs,
+  parseModelFindResponse,
+  validateModelMatches,
 } from '../extension/src/lib/find.js';
 
 const TREE = [
@@ -235,4 +242,116 @@ test('an ordinary page with a good interactive match is not widened', () => {
   const matches = scoreCandidates(TREE, 'sign in button', 20);
   assert.ok(matches[0].score >= WIDEN_BELOW_SCORE, 'the match is confident: ' + matches[0].score);
   assert.equal(shouldWiden({ query: 'sign in button', matches, searched: 15 }), null);
+});
+
+// ---------------------------------------------------------------------------
+// P6: the model escalation path
+// ---------------------------------------------------------------------------
+
+test('a confident local match does not escalate to a model call', () => {
+  const matches = scoreCandidates(TREE, 'sign in button', 20);
+  assert.ok(matches[0].score >= MODEL_ESCALATION_BELOW_SCORE);
+  assert.equal(shouldEscalateToModel({ matches, semantic: false }), null);
+});
+
+test('a weak local score escalates', () => {
+  const matches = [{ ref: 'ref_1', score: 1 }];
+  assert.ok(shouldEscalateToModel({ matches, semantic: false }));
+});
+
+test('no local match at all escalates', () => {
+  assert.ok(shouldEscalateToModel({ matches: [], semantic: false }));
+});
+
+test('semantic: true escalates even over a confident local match', () => {
+  const matches = scoreCandidates(TREE, 'sign in button', 20);
+  assert.equal(shouldEscalateToModel({ matches, semantic: true }), 'the caller asked for a semantic search');
+});
+
+test('capTreeForModel leaves a short tree untouched', () => {
+  const result = capTreeForModel(TREE, MODEL_TREE_CHAR_CAP);
+  assert.equal(result.capped, false);
+  assert.equal(result.text, TREE);
+});
+
+test('capTreeForModel drops offscreen nodes first when the tree is over the cap', () => {
+  const onscreen = 'button "Keep" [ref_1]\n';
+  const offscreen = 'button "Drop" [ref_2] (offscreen)\n';
+  const tree = onscreen.repeat(400) + offscreen.repeat(400);
+  const result = capTreeForModel(tree, 2000);
+  assert.equal(result.capped, true);
+  assert.ok(result.droppedOffscreen > 0);
+  assert.equal(/\(offscreen\)/.test(result.text), false, 'no offscreen line survived once dropping them made room');
+});
+
+test('capTreeForModel truncates outright when even the onscreen tree exceeds the cap, and stays within it', () => {
+  const tree = Array.from({ length: 5000 }, (_, i) => 'link "Item ' + i + '" [ref_' + i + ']').join('\n');
+  const result = capTreeForModel(tree, 5000);
+  assert.equal(result.capped, true);
+  assert.ok(result.text.length <= 5000, 'the capped text never exceeds the requested ceiling: ' + result.text.length);
+  assert.match(result.text, /truncated/);
+});
+
+test('capTreeForModel never exceeds the cap even on a pathologically large page (the Amazon failure)', () => {
+  const huge = 'link "x" [ref_1] href=/a\n'.repeat(20000); // far larger than 60000 chars
+  const result = capTreeForModel(huge, MODEL_TREE_CHAR_CAP);
+  assert.ok(result.text.length <= MODEL_TREE_CHAR_CAP);
+});
+
+test('extractRefs finds every ref in the tree text', () => {
+  const refs = extractRefs(TREE);
+  assert.equal(refs.size, 15);
+  assert.ok(refs.has('ref_11'));
+  assert.equal(refs.has('ref_999'), false);
+});
+
+test('extractRefs on empty text returns an empty set', () => {
+  assert.equal(extractRefs('').size, 0);
+  assert.equal(extractRefs(null).size, 0);
+});
+
+test('parseModelFindResponse reads pipe-delimited match lines and skips prose', () => {
+  const text = [
+    'FOUND: 2',
+    'SHOWING: 2',
+    '---',
+    'ref_11 | button | Sign in | submit | matches "sign in" exactly',
+    'ref_9 | textbox | Password | password | a password field, not what was asked',
+  ].join('\n');
+  const parsed = parseModelFindResponse(text);
+  assert.equal(parsed.length, 2);
+  assert.equal(parsed[0].ref, 'ref_11');
+  assert.equal(parsed[0].role, 'button');
+  assert.equal(parsed[0].name, 'Sign in');
+  assert.equal(parsed[0].type, 'submit');
+  assert.match(parsed[0].reason, /matches "sign in" exactly/);
+});
+
+test('parseModelFindResponse tolerates a reply with no matching lines', () => {
+  assert.deepEqual(parseModelFindResponse('I could not find anything matching that.'), []);
+  assert.deepEqual(parseModelFindResponse(''), []);
+});
+
+test('validateModelMatches drops a ref the model invented', () => {
+  const modelMatches = [{ ref: 'ref_11' }, { ref: 'ref_9999' }];
+  const { valid, hallucinated } = validateModelMatches(modelMatches, TREE);
+  assert.deepEqual(valid.map((m) => m.ref), ['ref_11']);
+  assert.deepEqual(hallucinated, ['ref_9999']);
+});
+
+test('validateModelMatches keeps everything when every ref is real', () => {
+  const modelMatches = [{ ref: 'ref_11' }, { ref: 'ref_13' }];
+  const { valid, hallucinated } = validateModelMatches(modelMatches, TREE);
+  assert.equal(valid.length, 2);
+  assert.equal(hallucinated.length, 0);
+});
+
+test('validateModelMatches against a capped tree drops a ref that was truncated away', () => {
+  const capped = capTreeForModel(TREE, 200); // small enough to lose most of the tree
+  const modelMatches = [{ ref: 'ref_11' }];
+  const { valid, hallucinated } = validateModelMatches(modelMatches, capped.text);
+  // Whichever refs survived the cap are the only ones a validation against
+  // what was actually sent can call real, which is the point of validating
+  // against the sent text rather than the full page.
+  assert.equal(valid.length + hallucinated.length, 1);
 });

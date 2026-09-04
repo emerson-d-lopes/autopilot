@@ -126,7 +126,9 @@ export const TOOLS = [
       'Returns up to 20 ranked matches with refs. Cheaper than reading the whole tree when you know what you want. ' +
       'Searches interactive nodes first and widens to every node on its own when the query names a table cell, a ' +
       'heading or other static content, or when nothing interactive matched. The result says which scope was used ' +
-      'and how much of the page it covered. If nothing matches, fall back to read_page.',
+      'and how much of the page it covered. When the local match is weak, or semantic is set, this also asks the ' +
+      'connected model to pick refs out of the tree; those matches carry source: "model". If nothing matches, ' +
+      'fall back to read_page.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -135,6 +137,10 @@ export const TOOLS = [
         include_all: {
           type: 'boolean',
           description: 'Search all elements rather than only interactive ones. Use for text and headings.',
+        },
+        semantic: {
+          type: 'boolean',
+          description: 'Force a model call over the tree even when a local match scored well.',
         },
         browser: browserProp,
       },
