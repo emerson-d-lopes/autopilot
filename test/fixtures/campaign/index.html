@@ -43,7 +43,9 @@ section{border:1px solid #ccc;padding:10px;margin:10px 0}
 <div class="box" id="A" draggable="true">A</div><div class="box" id="B">B</div><span id="dndout"></span>
 <br><input type="range" id="slider" min="0" max="100" value="0"> <span id="sliderval">0</span>
 </section>
-<section><h2>Upload</h2><input type="file" id="file" multiple><span id="fileout"></span><div id="drop">Drop zone</div><span id="dropout"></span></section>
+<section><h2>Upload</h2><input type="file" id="file" multiple><span id="fileout"></span>
+<div><label>Second file input <input type="file" id="file2"></label> <span id="file2out"></span></div>
+<div id="drop">Drop zone</div><span id="dropout"></span></section>
 <section><h2>Dynamic</h2><button id="load">Load items</button><ul id="items"></ul>
 <button id="newtab" onclick="window.open('https://example.com','_blank')">Open new tab</button>
 <a href="https://example.com" target="_blank" id="blanklink">blank link</a>
@@ -71,6 +73,7 @@ const A=document.getElementById('A'),B=document.getElementById('B');
 A.addEventListener('dragstart',e=>e.dataTransfer.setData('text','A'));B.addEventListener('dragover',e=>e.preventDefault());B.addEventListener('drop',e=>{e.preventDefault();document.getElementById('dndout').textContent='dropped '+e.dataTransfer.getData('text')+' on B'});
 document.getElementById('slider').oninput=e=>document.getElementById('sliderval').textContent=e.target.value;
 document.getElementById('file').onchange=e=>document.getElementById('fileout').textContent=[...e.target.files].map(f=>f.name+':'+f.size).join(',');
+document.getElementById('file2').onchange=e=>document.getElementById('file2out').textContent=[...e.target.files].map(f=>f.name+':'+f.size).join(',');
 const dz=document.getElementById('drop');dz.ondragover=e=>e.preventDefault();dz.ondrop=e=>{e.preventDefault();document.getElementById('dropout').textContent='dropped '+[...e.dataTransfer.files].map(f=>f.name+':'+f.size).join(',')};
 document.getElementById('load').onclick=()=>setTimeout(()=>{for(let i=1;i<=5;i++){const li=document.createElement('li');li.textContent='item '+i;document.getElementById('items').appendChild(li)}},1500);
 document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='k'){e.preventDefault();document.getElementById('short').textContent='ctrl+k fired'}});
