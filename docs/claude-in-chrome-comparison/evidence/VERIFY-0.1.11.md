@@ -700,3 +700,165 @@ hint: Call list_connected_browsers and use one of the ids, labels or profiles it
 ```
 
 **Pass** for the forms runnable here. `select_browser({site: ...})` and `account=` against a real signed-in profile stay deferred with checks 30 to 35. One gap: `tabs_context` with no `createIfEmpty` and several browsers connected lists every browser and ignores the startup default, by the design note in `host/mcp-server.js`. Every other tool honours it.
+
+### 57. Ten minutes idle, then one screenshot
+
+A session tab was parked on `/index.html` at 14:04:30Z and left alone for ten minutes while checks 26, 36, 39 and 41 to 43 ran on other tabs. Then one screenshot:
+
+```
+57 screenshot after the idle: ok [{"mimeType":"image/png","bytes":68253}]
+57 wall 221 ms
+57 offscreen documents: ["chrome-extension://giagijohigincdlpkfolgcljkhmjdiaa/offscreen.html"]
+```
+
+221 ms, inside the 1 s the check asks for, and the offscreen document that keeps the worker alive is still there, read through `chrome.runtime.getContexts` in the service worker over the DevTools port. **Pass.**
+
+## Bench
+
+`CHROME_MCP_BROWSER_ID=bwlhg5ra0 npm run bench`, three runs, written to `.bench/2026-09-04.jsonl`. Extension 0.1.27.
+
+| Measurement | 0.1.7 median | This build, median wall | This build, median tool |
+|---|---|---|---|
+| 1a. 10 separate `javascript` 1+1 calls | 7927 ms | 40 ms | 17 ms |
+| 1b. 10 1+1 calls in one `browser_batch` | 5614 ms | 13 ms | 10 ms |
+| 1c. 10 1+1 lines in a `quick` script | 3464 ms | 14 ms | 10 ms |
+| 2. 10 separate screenshots | 8829 ms | 1346 ms | n/a |
+| 3. `read_page` all+interactive, two pages | 10350 ms | 443 ms | n/a |
+| 4. `get_page_text`, two pages | 8781 ms | 368 ms | n/a |
+| 5. `find`, two queries | 6104 ms | 534 ms | n/a |
+| 6. `navigate`, four targets | 9054 ms | 4500 ms | 4488 ms |
+| 7. realistic form flow as one batch | 17381 ms | 6727 ms | 1 ms |
+| 8. type 500 chars, plain then perKey | 9521 ms | 36350 ms | 31046 ms |
+| 9. `javascript 'x'.repeat(200000)` | 4642 ms | 7 ms | 3 ms |
+
+The two columns do not measure the same thing and the gap is mostly that. The 0.1.7 column is column B of `R-repeat-performance.md`, measured by a Claude session issuing MCP tool calls, so every number carries the model's round trip per call. `tools/bench.js` measures the tool calls alone. Read the new column as the cost of the browser work, not as a speedup.
+
+Row 8 is the one that moved the other way, and it is a scope difference: the 0.1.7 row typed 500 characters once, while `tools/bench.js` types 500 plain and then 500 per key in the same measurement. `R-repeat-performance.md` measured per-key typing separately at 30911 ms, which matches the 31046 ms tool total here almost exactly.
+
+Row 2 is a real measurement of new behaviour: hidden-tab screenshots did not work at all at 0.1.11 (check 4), and the 1346 ms for ten is against a target of under 6000 ms.
+
+The 0.1.11 bench in this repo's first run reported `10 separate screenshots: 433ms`, which was ten permission errors on `about:blank` at 43 ms each, not ten screenshots. `9ef39d7` navigates first and counts failures per measurement, so a row like that cannot be read as a timing again.
+
+## Test files run
+
+| Command | Result |
+|---|---|
+| `node --test test/campaign.test.js` | 12 of 12 |
+| `node --test test/cdp.test.js` | 24 of 24 |
+| `node --test test/verify.test.js` | 27 of 27 |
+| `node --test test/tabs.test.js` | 13 of 13 |
+| `node --test test/errors.test.js` | 33 of 33 |
+| `node --test test/screenshot.test.js` | 15 of 15 |
+| `node --test test/sensitive.test.js` | 16 of 16 |
+| `node --test test/campaign-server.test.js` | 14 of 14 |
+| `node tools/check-errors-copy.js` | the extension copy matches |
+
+## Summary
+
+| Verdict | Count | Checks |
+|---|---|---|
+| Pass | 39 | 1, 2, 3, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 24, 25, 26, 29, 37, 38, 41, 42, 43, 44, 45, 46, 47, 49, 50, 51, 53 to 56, 57 |
+| Pass after a fix in this pass | 5 | 4, 6, 7, 23, 48 |
+| Partial | 6 | 19, 20, 28, 36, 39, 40 |
+| Fail | 2 | 22, 52 |
+| Deferred | 7 | 27, 30, 31, 32, 33, 34, 35 |
+
+Eleven fixes landed, each with a unit test, a manifest bump and a commit:
+
+| Commit | Manifest | What it fixed |
+|---|---|---|
+| `10c621f` | none | `tools/mcp-client.js` and `tools/browser.js --interferer`, the tooling this pass needed |
+| `5682768` | 0.1.12 | A click on an inert element reported `effects: applied` |
+| `e2f8f31` | 0.1.19 | Screenshots of a hidden tab failed outright, then returned a stale or blank surface |
+| `9ef39d7` | none | The bench measured calls that had failed |
+| `6847f35` | 0.1.20 | The watch tracked the focused element rather than the one a write named, and `/dialog` gained confirm and prompt |
+| `9fc1e91` | 0.1.23 | A barren capture window was fatal instead of retryable |
+| `214ee82` | 0.1.24 | An opened tab's opener was recorded after the click had already read it |
+| `e3350af` | 0.1.25 | Chrome's `chrome://` refusals were classified as `internal` |
+| `394be2a` | 0.1.26 | Per-key typing inserted every character twice |
+| `f0b17fd` | 0.1.27 | A type with nothing able to hold text focused reported `ok` |
+
+Extension version at the end of the pass: **0.1.27**.
+
+## Open bugs
+
+### 1. find does not resolve an exact label on a large page
+
+`/big` carries 3000 rows. `find({query: 'the button labelled exactly "btn 2999"'})` returns btn 0 to btn 19 and warns `the tree was truncated at 4439 of 6000 nodes, so the match may be outside it`. On `the-internet.herokuapp.com/large` the whole tree was searched (2815 nodes, nothing truncated) and the exact cell still ranked below the twenty returned, so ranking is the problem there rather than truncation.
+
+Reproduce:
+
+```
+node tools/mcp-client.js tabs_create '{"url":"http://127.0.0.1:8765/big"}' --browser dev
+node tools/mcp-client.js find '{"tabId":<id>,"query":"the button labelled exactly \"btn 2999\""}' --browser dev
+node tools/mcp-client.js read_page '{"tabId":<id>,"filter":"interactive","max_chars":900000}' --browser dev   # finds button "btn 2999" [ref_5999]
+```
+
+The warning is honest and `read_page` with a raised budget is a working route, so this is a ranking and budget question, not a silent failure.
+
+### 2. newTabId is not reported for a click that opens a tab
+
+The tab is opened, adopted into the session group unselected, and shows up in `tabs_context`. The click result carries no `newTabId`, because the tab is created after the 250 ms verification window has closed. `214ee82` fixed a write-after-read race in the bookkeeping, which was one of two causes.
+
+Reproduce: `/index.html`, `read_page`, click `link "blank link"`, read the result (no `newTabId`), then `tabs_context` a second later (the `https://example.com/` tab is there).
+
+The fix would be for the watch to say whether the click landed on something that opens a tab, so `readVerify` polls only in that case rather than adding a grace to every click.
+
+### 3. The replacement ladder has no cap
+
+With `attachRecovery: false` and a second extension injecting into every page, every tab is refused, replaced, and the replacement is refused in turn. Three runs produced six replacements and no successful call. Nothing is silently lost, and nothing works.
+
+Reproduce: set `attachRecovery: false` in the extension's `chrome.storage.local`, run the development browser with `--interferer`, and open any page. Every call returns `tab_replaced` naming a new tab.
+
+A replacement whose cause matches the one that killed its predecessor should stop and return `attach_refused` rather than opening another tab.
+
+### 4. Calls are serialized behind a frozen renderer
+
+A `javascript` call running a 50 s busy loop delays the next call on the same tab by the full 50 s. It then succeeds, so nothing is lost and there is no 2 minute stall, but the caller gets no `timeout` and no reload hint while it waits. `frozenError` and its hint are covered by `cdp.test.js`, so the path exists, it is just not reached: the second call never gets to send a CDP command.
+
+Reproduce: check 20 above.
+
+### 5. Batch pre-validation covers tool names, not refs
+
+A batch with a stale ref at item 5 runs items 0 to 3 and stops at item 4. Pre-validation catches an unknown tool name before anything runs, which is check 21, but a ref is only resolved when its action executes.
+
+Reproduce: check 22 above. Resolving every ref in the batch before the first action would make this match check 21.
+
+### 6. resize_window does not resize the window
+
+`resize_window` to 1000x700 left the window at 1200x900 outer and 1188x751 viewport. The tool reports `matched: "neither"` with a warning naming both sizes, so the failure is visible, but the resize did not happen. The device pixel ratio on this display is 2.25.
+
+Reproduce: check 23 above.
+
+### 7. A quick script's contract line carries no evidence
+
+`quick` returns one contract line for the whole script, `[ok=true effects=unknown id=...]`, with no `evidence`. A screenshot taken by an `SS` line inside a script therefore cannot be checked for `evidence.paint.painted`, which is exactly what the R3 acceptance asks for.
+
+Reproduce: check 28 above.
+
+### 8. Clipped output does not say how much was clipped
+
+`read_network_requests` unfiltered on CNN returns inline with `3 URL(s) clipped to 300 characters` and no total row count, so a reader cannot tell whether requests were dropped. `read_console_messages` clips a long message to 500 characters and says how many messages were clipped, not the clipped message's real length. `read_page` does this properly, with `truncated. 158 more nodes not shown, 310 in total (34497 chars)`.
+
+Reproduce: checks 39 and 40 above.
+
+### 9. doctor reports the journal redaction state from the wrong process
+
+The journal is written by the native host, which Chrome spawns, so `CHROME_MCP_JOURNAL_REDACT` has to be in the browser's environment. `npm run doctor` calls `redactionOn()` in its own process, so it prints "redaction off" while the host is redacting, and the other way round. The retention line has the same shape, and `CHROME_MCP_JOURNAL_DAYS` is read the same way.
+
+Reproduce: launch the development browser with `CHROME_MCP_JOURNAL_REDACT=1`, then run `npm run doctor` from a shell without it.
+
+The host already reports `journal retention 14 days` on connect, so the state could travel with `browser_status` instead of being guessed locally.
+
+### 10. A session does not survive an extension reload
+
+`chrome.runtime.reload()` from the service worker leaves the session with no tabs: `tabs_context` returns an empty list and the old tab id reports `No tab with id <id>. It may have been closed.` The next call works, so the bridge recovers, but the session's work is gone.
+
+Reproduce: check 52 above.
+
+## What was not run
+
+- Checks 30 to 35, and the `site=` and `account=` halves of 53 to 56. They need a signed-in profile. The exact calls are listed under check 30 to 35.
+- Check 27's real form, DevTools opened by hand on a session tab.
+- The GIF and upload tools, which no numbered check covered.
+- `npm test` as a whole. The files this pass touched were run individually, listed above.
