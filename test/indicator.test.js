@@ -48,7 +48,7 @@ function loadPage() {
     for (const fn of listeners) fn(message, {}, () => {});
   };
 
-  const agentApi = window.__chromeMcpAgent;
+  const agentApi = window.__autopilotAgent;
   const shadow = agentApi.overlayShadow();
 
   return { window, dom, dispatch, sent, agentApi, shadow };
@@ -64,8 +64,8 @@ function ind(shadow, selector) {
 
 test('the overlay host carries a random id, not the old fixed one', () => {
   const { window, agentApi } = loadPage();
-  assert.notEqual(agentApi.cursorHostId, '__chrome_mcp_cursor__');
-  assert.match(agentApi.cursorHostId, /^__cmcp_[a-z0-9]+__$/);
+  assert.notEqual(agentApi.cursorHostId, '__autopilot_cursor__');
+  assert.match(agentApi.cursorHostId, /^__ap_[a-z0-9]+__$/);
   assert.ok(window.document.getElementById(agentApi.cursorHostId), 'the host is reachable by its own id');
 });
 

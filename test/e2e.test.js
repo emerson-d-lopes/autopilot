@@ -17,8 +17,8 @@ import path from 'node:path';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 function testSocket(name) {
-  if (process.platform === 'win32') return '\\\\.\\pipe\\chrome-mcp-e2e-' + name + '-' + process.pid;
-  return path.join(os.tmpdir(), 'chrome-mcp-e2e-' + name + '-' + process.pid + '.sock');
+  if (process.platform === 'win32') return '\\\\.\\pipe\\autopilot-e2e-' + name + '-' + process.pid;
+  return path.join(os.tmpdir(), 'autopilot-e2e-' + name + '-' + process.pid + '.sock');
 }
 
 // --- native messaging codec, from the extension's point of view ---------------
@@ -109,7 +109,7 @@ function makeMcpClient(child) {
 
 async function startStack(name, handleToolRequest) {
   const socket = testSocket(name);
-  const env = { ...process.env, CHROME_MCP_SOCKET: socket, CHROME_MCP_LOG_DIR: path.join(os.tmpdir(), 'chrome-mcp-test-journal') };
+  const env = { ...process.env, AUTOPILOT_SOCKET: socket, AUTOPILOT_LOG_DIR: path.join(os.tmpdir(), 'autopilot-test-journal') };
 
   const host = spawn(process.execPath, [join(ROOT, 'host', 'native-host.js')], {
     env,
@@ -157,7 +157,7 @@ async function startStack(name, handleToolRequest) {
 test('MCP initialize reports the server identity', async (t) => {
   const stack = await startStack('init', () => {});
   t.after(stack.stop);
-  assert.equal(stack.init.result.serverInfo.name, 'chrome-mcp');
+  assert.equal(stack.init.result.serverInfo.name, 'autopilot');
   assert.ok(stack.init.result.capabilities.tools);
 });
 
@@ -389,7 +389,7 @@ test('the host answers keepalive pings to hold the service worker open', async (
 
 test('tool calls fail cleanly when the extension is not attached', async (t) => {
   const socket = testSocket('detached');
-  const env = { ...process.env, CHROME_MCP_SOCKET: socket, CHROME_MCP_LOG_DIR: path.join(os.tmpdir(), 'chrome-mcp-test-journal') };
+  const env = { ...process.env, AUTOPILOT_SOCKET: socket, AUTOPILOT_LOG_DIR: path.join(os.tmpdir(), 'autopilot-test-journal') };
 
   const host = spawn(process.execPath, [join(ROOT, 'host', 'native-host.js')], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   await new Promise((r) => setTimeout(r, 300));
@@ -411,7 +411,7 @@ test('tool calls fail cleanly when the extension is not attached', async (t) => 
 });
 
 test('tools/list works with no bridge running at all', async (t) => {
-  const env = { ...process.env, CHROME_MCP_SOCKET: testSocket('nobridge') };
+  const env = { ...process.env, AUTOPILOT_SOCKET: testSocket('nobridge') };
   const server = spawn(process.execPath, [join(ROOT, 'host', 'mcp-server.js')], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   const mcp = makeMcpClient(server);
   t.after(() => server.kill());

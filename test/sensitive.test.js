@@ -1,6 +1,6 @@
 // Sensitive field redaction (F1) and the irreversible-action classifier (W3).
 //
-// chrome-mcp drives the user's real signed-in profile with no cloud boundary in
+// Autopilot drives the user's real signed-in profile with no cloud boundary in
 // between, so a password reaching the tree, a form_input confirmation or the
 // journal is a value on disk that never had to be there. The classifier is the
 // other side of the same concern: the model gets to know a control sends, pays

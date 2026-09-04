@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-process.env.CHROME_MCP_LOG_DIR = mkdtempSync(join(tmpdir(), 'chrome-mcp-journal-'));
+process.env.AUTOPILOT_LOG_DIR = mkdtempSync(join(tmpdir(), 'autopilot-journal-'));
 const journal = await import('../host/journal.js');
 
 test('arguments are summarised without bulk', () => {
@@ -64,7 +64,7 @@ test('an entry carries time, tab, page and outcome, and lands in both files', ()
   const md = readFileSync(paths.md, 'utf8');
   assert.ok(/\*\*navigate\*\* tab 7 https:\/\/example\.com\//.test(md), md);
   assert.ok(/\(250ms\)/.test(md));
-  rmSync(process.env.CHROME_MCP_LOG_DIR, { recursive: true, force: true });
+  rmSync(process.env.AUTOPILOT_LOG_DIR, { recursive: true, force: true });
 });
 
 test('a failed call reads as FAILED in the timeline', () => {
@@ -165,8 +165,8 @@ test('other tools keep their arguments', () => {
 
 // --- F3, the redaction switch -----------------------------------------------
 
-test('CHROME_MCP_JOURNAL_REDACT drops the arguments and keeps the outcome', () => {
-  process.env.CHROME_MCP_JOURNAL_REDACT = '1';
+test('AUTOPILOT_JOURNAL_REDACT drops the arguments and keeps the outcome', () => {
+  process.env.AUTOPILOT_JOURNAL_REDACT = '1';
   try {
     assert.equal(journal.redactionOn(), true);
     const entry = journal.makeEntry({
@@ -184,25 +184,25 @@ test('CHROME_MCP_JOURNAL_REDACT drops the arguments and keeps the outcome', () =
     assert.ok(!JSON.stringify(entry).includes('secret text'));
     assert.match(journal.formatMarkdown(entry), /args redacted/);
   } finally {
-    delete process.env.CHROME_MCP_JOURNAL_REDACT;
+    delete process.env.AUTOPILOT_JOURNAL_REDACT;
   }
   assert.equal(journal.redactionOn(), false);
 });
 
 // --- F3, rotation ------------------------------------------------------------
 
-test('CHROME_MCP_JOURNAL_DAYS defaults to 14 and reads the environment', () => {
+test('AUTOPILOT_JOURNAL_DAYS defaults to 14 and reads the environment', () => {
   assert.equal(journal.retentionDays(), 14);
-  process.env.CHROME_MCP_JOURNAL_DAYS = '3';
+  process.env.AUTOPILOT_JOURNAL_DAYS = '3';
   try {
     assert.equal(journal.retentionDays(), 3);
   } finally {
-    delete process.env.CHROME_MCP_JOURNAL_DAYS;
+    delete process.env.AUTOPILOT_JOURNAL_DAYS;
   }
 });
 
 test('files older than the retention window are pruned and newer ones are kept', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-prune-'));
+  const dir = mkdtempSync(join(tmpdir(), 'autopilot-prune-'));
   const browserDir = join(dir, 'btest');
   mkdirSync(browserDir, { recursive: true });
 
@@ -228,7 +228,7 @@ test('files older than the retention window are pruned and newer ones are kept',
 });
 
 test('a retention of zero prunes nothing', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-prune-off-'));
+  const dir = mkdtempSync(join(tmpdir(), 'autopilot-prune-off-'));
   mkdirSync(join(dir, 'b'), { recursive: true });
   writeFileSync(join(dir, 'b', '2000-01-01.jsonl'), '{}\n');
   assert.deepEqual(journal.pruneJournal({ days: 0, dir }).removed, []);
@@ -237,11 +237,11 @@ test('a retention of zero prunes nothing', () => {
 });
 
 test('pruning a directory that does not exist is not an error', () => {
-  assert.deepEqual(journal.pruneJournal({ days: 14, dir: join(tmpdir(), 'chrome-mcp-absent-' + process.pid) }).removed, []);
+  assert.deepEqual(journal.pruneJournal({ days: 14, dir: join(tmpdir(), 'autopilot-absent-' + process.pid) }).removed, []);
 });
 
 test('journalSize reports the files on disk', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-size-'));
+  const dir = mkdtempSync(join(tmpdir(), 'autopilot-size-'));
   mkdirSync(join(dir, 'b'), { recursive: true });
   writeFileSync(join(dir, 'b', '2026-01-01.jsonl'), 'x'.repeat(500));
   const size = journal.journalSize(dir);
@@ -331,7 +331,7 @@ test('a sensitive field keeps its value out of the journal whatever the switch s
 });
 
 test('redaction mode keeps the write and drops the value', () => {
-  process.env.CHROME_MCP_JOURNAL_REDACT = '1';
+  process.env.AUTOPILOT_JOURNAL_REDACT = '1';
   try {
     const entry = journal.makeEntry(writeCall(SENT));
     assert.equal(entry.redacted, true);
@@ -341,7 +341,7 @@ test('redaction mode keeps the write and drops the value', () => {
     assert.equal(entry.write.value, '[value redacted]');
     assert.equal(JSON.stringify(entry).includes('the deck is attached'), false);
   } finally {
-    delete process.env.CHROME_MCP_JOURNAL_REDACT;
+    delete process.env.AUTOPILOT_JOURNAL_REDACT;
   }
 });
 
@@ -363,7 +363,7 @@ test('a write with no evidence after it says so rather than leaving the column e
 
 test('the redaction switch covers a javascript return value', () => {
   journal.forgetRedactedValues();
-  process.env.CHROME_MCP_JOURNAL_REDACT = '1';
+  process.env.AUTOPILOT_JOURNAL_REDACT = '1';
   try {
     const entry = journal.makeEntry({
       request: { tool: 'javascript', args: { tabId: 4, code: 'document.title' }, callId: 'call_6_hlg9q3' },
@@ -375,7 +375,7 @@ test('the redaction switch covers a javascript return value', () => {
     assert.equal(JSON.stringify(entry).includes('redaction check message'), false);
     assert.equal(journal.formatMarkdown(entry).includes('redaction check message'), false);
   } finally {
-    delete process.env.CHROME_MCP_JOURNAL_REDACT;
+    delete process.env.AUTOPILOT_JOURNAL_REDACT;
     journal.forgetRedactedValues();
   }
 });

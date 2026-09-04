@@ -24,7 +24,7 @@ const FRAME = readFileSync(join(ROOT, 'test', 'fixtures', 'frame.html'), 'utf8')
 // happen to be running rather than on the code.
 const bridge = await anyBridge();
 const bridgeUp = Boolean(bridge);
-if (bridge) process.env.CHROME_MCP_BROWSER_ID = bridge.id;
+if (bridge) process.env.AUTOPILOT_BROWSER_ID = bridge.id;
 const options = bridgeUp ? {} : { skip: 'no bridge listening (run: npm run browser)' };
 
 function mcpClient(child) {

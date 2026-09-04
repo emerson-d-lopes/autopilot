@@ -21,7 +21,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // happen to be running rather than on the code.
 const bridge = await anyBridge();
 const bridgeUp = Boolean(bridge);
-if (bridge) process.env.CHROME_MCP_BROWSER_ID = bridge.id;
+if (bridge) process.env.AUTOPILOT_BROWSER_ID = bridge.id;
 const options = bridgeUp ? {} : { skip: 'no bridge listening (run: npm run browser)' };
 
 // The MV3 idle timeout is 30 seconds, so a shorter wait proves nothing.
@@ -210,7 +210,7 @@ test('a separate process can resume a session by id', options, async (t) => {
   const clientId = 'resume-test-' + Date.now();
   const first = spawn(process.execPath, [join(ROOT, 'host', 'mcp-server.js')], {
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, CHROME_MCP_CLIENT_ID: clientId },
+    env: { ...process.env, AUTOPILOT_CLIENT_ID: clientId },
   });
   const firstMcp = mcpClient(first);
   await firstMcp.request('initialize', {
@@ -227,7 +227,7 @@ test('a separate process can resume a session by id', options, async (t) => {
 
   const second = spawn(process.execPath, [join(ROOT, 'host', 'mcp-server.js')], {
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, CHROME_MCP_CLIENT_ID: clientId },
+    env: { ...process.env, AUTOPILOT_CLIENT_ID: clientId },
   });
   const secondMcp = mcpClient(second);
   t.after(async () => {

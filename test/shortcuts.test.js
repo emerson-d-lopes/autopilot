@@ -16,7 +16,7 @@ import { listTargets, CdpSession } from '../tools/cdp.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURE = readFileSync(join(ROOT, 'test', 'fixtures', 'page.html'), 'utf8');
-const PORT = Number(process.env.CHROME_MCP_DEVTOOLS_PORT || 9333);
+const PORT = Number(process.env.AUTOPILOT_DEVTOOLS_PORT || 9333);
 
 async function serviceWorker() {
   try {
@@ -32,7 +32,7 @@ async function serviceWorker() {
 // happen to be running rather than on the code.
 const bridge = await anyBridge();
 const bridgeUp = Boolean(bridge);
-if (bridge) process.env.CHROME_MCP_BROWSER_ID = bridge.id;
+if (bridge) process.env.AUTOPILOT_BROWSER_ID = bridge.id;
 const worker = bridgeUp ? await serviceWorker() : null;
 const options = worker
   ? {}
