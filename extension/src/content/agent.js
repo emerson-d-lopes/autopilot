@@ -1461,6 +1461,16 @@
       else el.value = String(value);
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
+      // Without this the caret sits wherever the previous value left it (often
+      // position 0), so a computer.type call right after form_input inserts in
+      // the middle of the new value instead of appending to it.
+      if (type === 'text' || type === 'search' || type === 'url' || type === 'tel' || type === 'password' || tag === 'TEXTAREA') {
+        try {
+          el.setSelectionRange(el.value.length, el.value.length);
+        } catch {
+          /* a type without a text selection model, nothing to place */
+        }
+      }
       // The value of a password, one-time code or card field is never echoed
       // back, so it cannot reach a transcript or the host's journal.
       if (isSensitiveField(el)) return { ok: true, value: '[redacted]', sensitive: true };

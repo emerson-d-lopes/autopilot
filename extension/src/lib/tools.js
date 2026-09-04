@@ -751,9 +751,26 @@ export const handlers = {
     await tabsLib.assertTabInSession(ctx.clientId, tabId);
 
     if (input.url === 'back' || input.url === 'forward') {
+      // history.back()/forward() through Runtime.evaluate returns before the
+      // navigation has even started, so the tool reported success while the
+      // old page was still on screen. Page.navigateToHistoryEntry is a CDP
+      // command the debugger waits on the way it waits on Page.navigate, and
+      // pairing it with the same load wait navigate-to-URL already uses closes
+      // that race.
       await perms.checkPermission({ tool: 'navigate', url: await activeUrl(tabId), toolUseId: ctx.toolUseId });
       await ensureAttached(tabId);
-      await cdp.evaluate(tabId, 'history.' + (input.url === 'back' ? 'back' : 'forward') + '()');
+
+      const history = await cdp.send(tabId, 'Page.getNavigationHistory');
+      const targetIndex = history.currentIndex + (input.url === 'back' ? -1 : 1);
+      const entry = history.entries[targetIndex];
+      if (!entry) {
+        throw new ToolError(
+          'nav_failed',
+          'Cannot find a ' + (input.url === 'back' ? 'previous' : 'next') + ' page in history for tab ' + tabId + '.',
+          { effects: 'none', retryable: false }
+        );
+      }
+      await cdp.send(tabId, 'Page.navigateToHistoryEntry', { entryId: entry.id });
       await tabsLib.waitForLoad(tabId, 15000);
     } else {
       let url = String(input.url);
