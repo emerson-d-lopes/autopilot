@@ -10,7 +10,8 @@
 //   /big              a 3000-row table, one button and one link per row
 //   /redirect         302 to /index.html#redirected
 //   /spa              "loading", then a #go button after 2s that renders <p id=done>
-//   /dialog           an alert button and an ok button
+//   /dialog           alert, confirm and prompt buttons, an ok button, and
+//                     #answer carrying what the page received back
 //   /sensitive.html   password input, cc-number input, normal input
 //   /unload.html      beforeunload handler that arms after any input
 //   /scroll.html      overflow:hidden body with an inner overflow:auto container
@@ -53,7 +54,13 @@ const SPA_BODY = `<div id='app'>loading</div><script>
 setTimeout(()=>{document.getElementById('app').innerHTML='<button id=go onclick="document.getElementById(\\'app\\').innerHTML=\\'<p id=done>done</p>\\'">go</button>'},2000);
 </script>`;
 
-const DIALOG_BODY = `<button id='al' onclick='alert(1)'>alert</button><button id='ok' onclick='this.textContent="clicked"'>ok</button>`;
+// Each dialog writes its answer into #answer, so a test can read what the page
+// received rather than only what the tool reported.
+const DIALOG_BODY = `<button id='al' onclick='alert(1)'>alert</button>
+<button id='cf' onclick='document.getElementById("answer").textContent = "confirm:" + confirm("proceed?")'>confirm</button>
+<button id='pr' onclick='document.getElementById("answer").textContent = "prompt:" + prompt("your name?", "default")'>prompt</button>
+<button id='ok' onclick='this.textContent="clicked"'>ok</button>
+<div id='answer'>no answer</div>`;
 
 const SENSITIVE_BODY = `<!doctype html><html><head><meta charset="utf-8"><title>sensitive</title></head><body>
 <h1>Sensitive fields</h1>

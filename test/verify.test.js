@@ -134,6 +134,24 @@ test('a checkbox gaining focus does not read as a value change', async () => {
   assert.equal(report.valueChanged, false);
 });
 
+test('a watch armed on a named ref tracks that element rather than whatever has focus', async () => {
+  // form_input sets a value through the page's own setter, which never moves
+  // focus, so the focused element at arm time is the body and there would be no
+  // value to compare.
+  const { call, window } = loadPage('<!doctype html><body><input id="a"></body>');
+  const read = await call({ type: 'READ_PAGE', filter: 'all', depth: 15, maxChars: 50000 });
+  const ref = (JSON.stringify(read).match(/ref_\d+/) || [])[0];
+  assert.ok(ref, 'the input has a ref');
+
+  await call({ type: 'VERIFY_ARM', ref });
+  window.document.getElementById('a').value = 'set by the page';
+  const report = await call({ type: 'VERIFY_REPORT', window: 40 });
+
+  assert.equal(report.valueTracked, true);
+  assert.equal(report.valueChanged, true);
+  assert.equal(report.focusChanged, false, 'nothing was focused, and that is not the evidence here');
+});
+
 test('reporting without arming says so rather than inventing a result', async () => {
   const { call } = loadPage('<!doctype html><body></body>');
   const report = await call({ type: 'VERIFY_REPORT', window: 10 });

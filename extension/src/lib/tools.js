@@ -127,8 +127,8 @@ function adoptedTabs(openerTabId) {
   return [];
 }
 
-async function armVerify(tabId, point) {
-  const armed = await pageCall(tabId, { type: 'VERIFY_ARM', point: point || null }).catch(() => null);
+async function armVerify(tabId, point, ref) {
+  const armed = await pageCall(tabId, { type: 'VERIFY_ARM', point: point || null, ref: ref || null }).catch(() => null);
   let url = null;
   try {
     const tab = await chrome.tabs.get(tabId);
@@ -204,10 +204,10 @@ async function readVerify(tabId, armed, { window = VERIFY_WINDOW_MS } = {}) {
  * The retry is conditional on the verification finding no change, so a click
  * that landed is never sent twice.
  */
-async function dispatchVerified(tabId, dispatch, { point, window } = {}) {
+async function dispatchVerified(tabId, dispatch, { point, window, ref } = {}) {
   cdp.clearThrottleFlag(tabId);
   shot.noteInput(tabId);
-  let armed = await armVerify(tabId, point);
+  let armed = await armVerify(tabId, point, ref);
   await dispatch();
   let outcome = await readVerify(tabId, armed, { window });
 
@@ -216,7 +216,7 @@ async function dispatchVerified(tabId, dispatch, { point, window } = {}) {
   await cdp.wake(tabId, { force: true }).catch(() => {});
   cdp.clearThrottleFlag(tabId);
   shot.noteInput(tabId);
-  armed = await armVerify(tabId, point);
+  armed = await armVerify(tabId, point, ref);
   await dispatch();
   outcome = await readVerify(tabId, armed, { window });
   outcome.evidence.throttledRetry = true;
@@ -523,10 +523,14 @@ async function computerTool(ctx, input) {
         await cdp.sleep(20, tabId);
       }
       const text = String(input.text);
-      const outcome = await dispatchVerified(tabId, async () => {
-        if (input.perKey) await cdp.typeKeysReal(tabId, text);
-        else await cdp.insertText(tabId, text);
-      });
+      const outcome = await dispatchVerified(
+        tabId,
+        async () => {
+          if (input.perKey) await cdp.typeKeysReal(tabId, text);
+          else await cdp.insertText(tabId, text);
+        },
+        { ref: input.ref }
+      );
       await recordFrame(tabId);
 
       const report = outcome.report;
@@ -693,7 +697,7 @@ async function editorInput(input, target) {
   }
 
   const value = String(input.value);
-  const outcome = await dispatchVerified(tabId, () => cdp.insertText(tabId, value), { point });
+  const outcome = await dispatchVerified(tabId, () => cdp.insertText(tabId, value), { point, ref: input.ref });
 
   const after = await pageCall(tabId, { type: 'REF_TEXT', ref: input.ref }).catch(() => null);
   const landed = Boolean(
@@ -939,7 +943,7 @@ export const handlers = {
     const target = await pageCall(input.tabId, { type: 'RESOLVE_REF', ref: input.ref }).catch(() => null);
     if (target && target.ok && target.contentEditable) return editorInput(input, target);
 
-    const armed = await armVerify(input.tabId, null);
+    const armed = await armVerify(input.tabId, null, input.ref);
     const result = await pageCall(input.tabId, {
       type: 'FORM_INPUT',
       ref: input.ref,

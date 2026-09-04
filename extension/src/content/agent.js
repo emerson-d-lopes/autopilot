@@ -1290,8 +1290,13 @@
     return n;
   }
 
-  function armWatch(point) {
+  function armWatch(point, ref) {
     if (watch && watch.observer) watch.observer.disconnect();
+    // The element whose value is worth watching. A tool that names the element
+    // it is about to write to gives it here, because a value set through the
+    // page's own setter never moves focus, and the focused element at arm time
+    // is then the body.
+    const named = ref ? resolveRef(ref) : null;
     const state = {
       mutations: 0,
       observer: null,
@@ -1299,6 +1304,8 @@
       // different focus targets. It is never serialized.
       focusEl: document.activeElement,
       focus: focusSnapshot(),
+      valueEl: named || document.activeElement,
+      valueBefore: fieldValue(named || document.activeElement),
       scroll: scrollOffsets(point && point.x, point && point.y),
       point: point || null,
       url: location.href,
@@ -1341,10 +1348,10 @@
     const focusMoved = state.focusEl !== document.activeElement;
     const focusChanged = focusMoved && after.focus.present;
 
-    // The value of the element that held focus when the watch was armed, read
-    // again now. Comparing against whatever holds focus at the end reported a
-    // value change on every click that moved focus between two controls.
-    const valueChanged = state.focus.value !== fieldValue(state.focusEl);
+    // The value of the element the watch was armed on, read again now.
+    // Comparing against whatever holds focus at the end reported a value change
+    // on every click that moved focus between two controls.
+    const valueChanged = state.valueBefore !== fieldValue(state.valueEl);
 
     const scrollDelta = {
       pageX: after.scroll.page.x - state.scroll.page.x,
@@ -1376,7 +1383,7 @@
       valueChanged,
       // Whether there was a value to watch at all. A type dispatched with no
       // text control focused cannot be judged by whether a value moved.
-      valueTracked: state.focus.value !== null,
+      valueTracked: state.valueBefore !== null,
       valueSensitive: Boolean(state.focus.sensitive || after.focus.sensitive),
       scroll: { before: state.scroll, after: after.scroll, delta: scrollDelta },
       scrolled,
@@ -1670,7 +1677,7 @@
 
     // --- verification (C3) ----------------------------------------------------
 
-    VERIFY_ARM: (msg) => armWatch(msg.point),
+    VERIFY_ARM: (msg) => armWatch(msg.point, msg.ref),
 
     VERIFY_REPORT: async (msg) => {
       const wait = Math.max(0, Math.min(5000, msg.window ?? 250));
