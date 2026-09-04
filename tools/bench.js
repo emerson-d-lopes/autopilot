@@ -72,15 +72,22 @@ function mcpClient(child) {
   };
 }
 
+// Failures seen since the last reset. A measurement that errors still takes
+// wall time, so without this the summary reported the cost of ten screenshots
+// that never produced an image.
+let failures = [];
+
+function resetFailures() {
+  failures = [];
+}
+
 async function callTool(mcp, name, args) {
   const response = await mcp.request('tools/call', { name, arguments: args });
   const content = (response.result && response.result.content) || [];
   const text = content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-  return {
-    isError: (response.result && response.result.isError) === true,
-    text,
-    durationMs: extractDurationMs(text),
-  };
+  const isError = (response.result && response.result.isError) === true;
+  if (isError) failures.push(name + ': ' + text.split('\n')[0].slice(0, 120));
+  return { isError, text, durationMs: extractDurationMs(text) };
 }
 
 function extractDurationMs(text) {
@@ -115,11 +122,14 @@ function sum(nums) {
 
 // --- extension version, the way tools/doctor.js reads it ------------------------
 
-async function extensionVersion() {
+// The bench runs against the bridge anyBridge() picked, so the version has to
+// come from that same bridge. Reading browsers[0] printed the user's own Chrome
+// version while the measurements ran against the development browser.
+async function extensionVersion(bridge) {
   try {
-    const browsers = await listBrowsers();
-    if (!browsers.length) return null;
-    const link = await connect(browsers[0].socket);
+    const target = bridge || (await listBrowsers())[0];
+    if (!target) return null;
+    const link = await connect(target.socket);
     const status = await new Promise((resolve) => {
       const timer = setTimeout(() => resolve(null), 2000);
       link.on('message', (message) => {
@@ -161,7 +171,10 @@ async function measureQuick10Calls(mcp, tabId) {
   return { durationMs: result.durationMs };
 }
 
-async function measure10Screenshots(mcp, tabId) {
+async function measure10Screenshots(mcp, tabId, base) {
+  // about:blank cannot be captured at all, so the tab has to be on a real page
+  // or this measures ten permission errors.
+  await callTool(mcp, 'navigate', { url: base + '/', tabId });
   const durations = [];
   for (let i = 0; i < 10; i++) {
     const result = await callTool(mcp, 'computer', { tabId, action: 'screenshot' });
@@ -282,7 +295,7 @@ async function main() {
   const base = 'http://127.0.0.1:' + fixture.address().port;
   console.log('fixture server: ' + base);
 
-  const version = await extensionVersion();
+  const version = await extensionVersion(bridge);
   console.log('extension version: ' + (version || 'unknown (no bridge connected, or run: npm run doctor)'));
   console.log('');
 
@@ -301,7 +314,7 @@ async function main() {
 
   // { key -> { wall: [ms,ms,ms], tool: [ms,ms,ms] } }
   const results = {};
-  for (const m of MEASUREMENTS) results[m.key] = { wall: [], tool: [] };
+  for (const m of MEASUREMENTS) results[m.key] = { wall: [], tool: [], failures: 0 };
 
   mkdirSync(join(ROOT, '.bench'), { recursive: true });
   const dateStr = new Date().toISOString().slice(0, 10);
@@ -312,6 +325,7 @@ async function main() {
     const runRecord = { run, timestamp: new Date().toISOString(), extensionVersion: version, measurements: {} };
 
     for (const m of MEASUREMENTS) {
+      resetFailures();
       const started = Date.now();
       let outcome;
       try {
@@ -326,8 +340,14 @@ async function main() {
       results[m.key].wall.push(wallMs);
       if (toolSum !== null) results[m.key].tool.push(toolSum);
 
-      runRecord.measurements[m.key] = { label: m.label, wallMs, toolDurationsMs: outcome.durationMs };
-      console.log('  ' + m.key + ' ' + m.label + ': ' + wallMs + ' ms' + (toolSum !== null ? ' (tool total ' + toolSum + ' ms)' : ''));
+      const failed = failures.slice();
+      runRecord.measurements[m.key] = { label: m.label, wallMs, toolDurationsMs: outcome.durationMs, failures: failed };
+      results[m.key].failures = (results[m.key].failures || 0) + failed.length;
+      console.log(
+        '  ' + m.key + ' ' + m.label + ': ' + wallMs + ' ms' +
+          (toolSum !== null ? ' (tool total ' + toolSum + ' ms)' : '') +
+          (failed.length ? '  [' + failed.length + ' failed: ' + failed[0] + ']' : '')
+      );
     }
 
     appendFileSync(jsonlPath, JSON.stringify(runRecord) + '\n');
