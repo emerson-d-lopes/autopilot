@@ -32,6 +32,7 @@ const {
   durationFromFrames,
   stop,
   discard,
+  withOverlayHidden,
   __setRecordingForTest,
   PALETTE,
 } = await import('../extension/src/lib/gif.js');
@@ -346,4 +347,54 @@ test('LAST_FRAME_BONUS_MS is the documented 2000ms', () => {
 
 test('the palette still has 256 entries with overlays added', () => {
   assert.equal(PALETTE.length, 256 * 3);
+});
+
+// ---------------------------------------------------------------------------
+// The acting indicator is not part of the recording
+// ---------------------------------------------------------------------------
+
+/** Replaces the tabs stub with one recording every message sent to the page. */
+function recordMessages() {
+  const sent = [];
+  globalThis.chrome.tabs.sendMessage = async (tabId, message) => {
+    sent.push({ tabId, type: message && message.type });
+    return {};
+  };
+  return sent;
+}
+
+test('a frame is captured with the overlay hidden and puts it back afterwards', async () => {
+  const sent = recordMessages();
+  const order = [];
+
+  const result = await withOverlayHidden(41, async () => {
+    order.push('capture: ' + sent.map((m) => m.type).join(','));
+    return 'bytes';
+  });
+
+  assert.equal(result, 'bytes');
+  assert.equal(order[0], 'capture: HIDE_FOR_TOOL_USE', 'the border, Stop button and pill are down before the pixels');
+  assert.deepEqual(
+    sent.map((m) => m.type),
+    ['HIDE_FOR_TOOL_USE', 'SHOW_AFTER_TOOL_USE']
+  );
+  assert.deepEqual(sent.map((m) => m.tabId), [41, 41]);
+});
+
+test('a capture that throws still restores the overlay', async () => {
+  const sent = recordMessages();
+  await assert.rejects(
+    () => withOverlayHidden(42, async () => {
+      throw new Error('no frame');
+    }),
+    /no frame/
+  );
+  assert.deepEqual(sent.map((m) => m.type), ['HIDE_FOR_TOOL_USE', 'SHOW_AFTER_TOOL_USE']);
+});
+
+test('a page with no content script does not fail the frame', async () => {
+  globalThis.chrome.tabs.sendMessage = async () => {
+    throw new Error('Receiving end does not exist');
+  };
+  assert.equal(await withOverlayHidden(43, async () => 'bytes'), 'bytes');
 });
