@@ -1,12 +1,12 @@
 # chrome-mcp: status, parity and test coverage
 
-State of the build as of 2026-09-04, extension 0.1.33. 26 tools, 30 test files.
+State of the build as of 2026-09-04, extension 0.1.34. 26 tools, 30 test files.
 
 - Source: about 17,600 lines across the extension, host and tools
 - Tests: about 10,500 lines
 - Verified against Chrome for Testing 152 and against the user's own Chrome 152 on Windows 11
 
-On 2026-09-04 the non-browser files pass, 626 tests across 24 files. The build that was driven against a browser is the one described under "Live verification of the first wave-2 bug fixes", which ran 14 checks by hand on 0.1.31. The ten fixes merged after it, on `plan/bugs2`, have not been driven against a browser, and the six browser-driven files were not run.
+On 2026-09-04 the non-browser files pass, 636 tests across 24 files. The build that was driven against a browser is the one described under "Live verification of the first wave-2 bug fixes", which ran 14 checks by hand on 0.1.31. The ten fixes merged after it, on `plan/bugs2`, have not been driven against a browser, and the six browser-driven files were not run.
 
 ## Feature parity with Claude Code's browser integration
 
@@ -460,7 +460,7 @@ Three bugs were opened and are fixed in the section below.
 
 ## Second set of bug fixes merged into wave 2, 2026-09-04
 
-`plan/bugs2` was merged into `plan/integration2`, so the ten fixes for the bugs the second verification pass left open sit on top of the third pass's two commits. Extension version 0.1.33.
+`plan/bugs2` was merged into `plan/integration2`, so the ten fixes for the bugs the second verification pass left open sit on top of the third pass's two commits. Extension version 0.1.33, and 0.1.34 with the three fixes below.
 
 The merge produced no conflicts. Both branches had bumped `extension/manifest.json` to 0.1.32 on their own, which git resolved as the same change, and the merged value was set to 0.1.33 by hand. `extension/src/lib/tools.js` and `extension/src/content/agent.js` were the two files both branches changed and both merged cleanly, with all four sides present: required-argument validation, screenshot by `imageId`, the `pressesEnter` submit test and the `confirmGate` export from `plan/bugs2`, the iframe `no_effect` check and the new-tab fallback in `readVerify` from the pass, `clickPointFor` with `getClientRects` from `plan/bugs2`, and `focusedEditable` for frame elements from the pass. `extension/src/lib/cdp.js` shows in `git diff --stat` as 39 insertions rather than as all of its lines, so the line endings match the rest of the tree.
 
@@ -476,3 +476,45 @@ What the ten fixes change:
 - A ref click aims at a line box rather than at the centre of the bounding box, which is not on the element when the element is inline and its text wraps. The covered check reads the same point.
 - A cleared console buffer stays cleared, because entries stamped before the clear are dropped as they arrive rather than replayed by `Runtime.enable`. The warning says which of three things happened.
 - `planCapture` sizes a capture in the unit the capture returns, measured from a capture the tab actually produced, so a scaled capture no longer fails its size check and pays for a discarded capture on every call.
+
+## Fixes for the three bugs the third pass opened, 2026-09-04
+
+Extension 0.1.34. Each fix has its own commit and its own test, and none of them has been driven against a browser.
+
+- A read behind a frozen renderer no longer waits the freeze out. The read retry policy sent a timed-out capture again, the second attempt landed once the renderer freed up, and the caller got ok after 49.8 s with the timeout and the reload hint reaching it only as a retry note. A `timeout` the renderer caused is excluded from the read retry codes, matched on the hint `frozenError` and `queuedTimeoutError` both set, which the catalogue's own timeout hint does not carry, so a slow transport or a host timeout keeps its three attempts. `cdp.js` imports `RENDERER_FROZEN_HINT` from `errors.js` rather than repeating the string.
+- A capture that follows a submit carries paint evidence again. The paint window was 2000 ms against a 3000 ms submit watch, so the stamp was always older than the window by the time the capture ran. `noteInput` records the action's own verification window and the paint clock adds it to the ordinary 2000 ms, so the grace after the action returns is the same whatever the action watched for.
+- The session restore covers a worker restart Chrome decided on. It was built for `chrome.runtime.reload()`, which disables an unpacked extension on this Chrome, so the path that is left is an idle worker being stopped and started again, and that path does not give the restore the head start a reload did. `recordSession`, `forgetRemovedTab`, `getSessionGroupId` and `sessionForTab` wait for the restore, which stops the waking call from persisting a table holding only its own session.
+
+Test counts on 2026-09-04, `node --test --test-concurrency=1` per file, no browser running:
+
+| File | Tests | Pass |
+|---|---|---|
+| a11y.test.js | 52 | 52 |
+| aliases.test.js | 6 | 6 |
+| batch.test.js | 16 | 16 |
+| campaign-server.test.js | 15 | 15 |
+| cdp.test.js | 64 | 64 |
+| errors.test.js | 44 | 44 |
+| find.test.js | 50 | 50 |
+| gif.test.js | 33 | 33 |
+| indicator.test.js | 10 | 10 |
+| ipc.test.js | 18 | 18 |
+| journal.test.js | 28 | 28 |
+| parity.test.js | 12 | 12 |
+| permissions.test.js | 34 | 34 |
+| probe-detect.test.js | 8 | 8 |
+| profile.test.js | 20 | 20 |
+| protocol.test.js | 14 | 14 |
+| recorder.test.js | 12 | 12 |
+| redact.test.js | 22 | 22 |
+| registry.test.js | 20 | 20 |
+| screenshot.test.js | 52 | 52 |
+| sensitive.test.js | 16 | 16 |
+| sessions.test.js | 14 | 14 |
+| tabs.test.js | 26 | 26 |
+| verify.test.js | 50 | 50 |
+| **Total** | **636** | **636** |
+
+`node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 43 files under `extension/src`, `host` and `tools`.
+
+The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. The live checks the three fixes ask for: a read queued behind a busy loop of more than 40 s, which must return the `timeout` with the reload hint rather than a late ok; a `quick` script of C ref / T text / K Enter / SS, whose SS line must carry `evidence.paint`; and the session restore driven by stopping the worker from `chrome://serviceworker-internals`, since `chrome.runtime.reload()` is not usable on this Chrome.
