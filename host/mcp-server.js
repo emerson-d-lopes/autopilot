@@ -672,13 +672,34 @@ function rememberImage(image) {
   return id;
 }
 
+/**
+ * Normalizes a filename the page will see (P11). The official extension
+ * refuses a name carrying a directory and caps it at 255 chars, the ext4/NTFS
+ * filename ceiling; chrome-mcp takes real filesystem paths for file_upload, so
+ * the only place a caller hands over a free-form name is upload_image's
+ * `filename` argument, which is what this guards.
+ */
+function normalizeUploadFilename(name, fallback) {
+  const raw = String(name || '').trim();
+  if (!raw) return fallback;
+  if (/[\\/]/.test(raw)) {
+    throw new Error('filename ' + JSON.stringify(raw) + ' must not contain a path separator');
+  }
+  if (raw.length <= 255) return raw;
+  const dot = raw.lastIndexOf('.');
+  // Only treat it as an extension when it is short, so a name with no real
+  // extension is not truncated at some unrelated dot near the end.
+  const ext = dot > 0 && raw.length - dot <= 10 ? raw.slice(dot) : '';
+  return raw.slice(0, 255 - ext.length) + ext;
+}
+
 /** Writes a remembered screenshot to disk under the name the page should see. */
 function materializeImage(id, filename) {
   const image = capturedImages.get(id);
   if (!image) return null;
   mkdirSync(SHOT_DIR, { recursive: true });
   const ext = image.mediaType === 'image/jpeg' ? '.jpg' : '.png';
-  const base = (filename || id + ext).replace(/[\\/:*?"<>|]/g, '_');
+  const base = normalizeUploadFilename(filename, id + ext).replace(/[:*?"<>|]/g, '_');
   const file = joinPath(SHOT_DIR, /\.(png|jpe?g)$/i.test(base) ? base : base + ext);
   writeFileSync(file, Buffer.from(image.data, 'base64'));
   return file;

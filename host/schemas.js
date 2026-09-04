@@ -376,6 +376,20 @@ export const TOOLS = [
           description: 'start_recording, stop_recording, export and clear are accepted as the same four actions.',
         },
         filename: { type: 'string', description: 'For stop: name of the gif file. Default recording-<timestamp>.gif.' },
+        options: {
+          type: 'object',
+          description:
+            'For start: overlay controls for the recording, all default true. quality is accepted for ' +
+            'compatibility and has no effect on this encoder.',
+          properties: {
+            showClickIndicators: { type: 'boolean', description: 'Ring at each click.' },
+            showDragPaths: { type: 'boolean', description: 'Line and end markers for each drag.' },
+            showActionLabels: { type: 'boolean', description: 'Small pill naming the action on each frame.' },
+            showProgressBar: { type: 'boolean', description: 'Thin bar along the bottom showing recording progress.' },
+            showWatermark: { type: 'boolean', description: 'Small text mark in the corner of each frame.' },
+            quality: { type: 'number' },
+          },
+        },
         tabId: tabIdProp,
         browser: browserProp,
       },
