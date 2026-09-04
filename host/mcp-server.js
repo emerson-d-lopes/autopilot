@@ -38,6 +38,7 @@ import {
   retryDecision,
   newCallId,
   contractLine,
+  stepContractLine,
   formatError,
   ToolFailure,
 } from './errors.js';
@@ -595,9 +596,19 @@ function formatSequence(result, { quick = false } = {}) {
     const label = quick && step.lineNo ? 'line ' + step.lineNo + ' ' + step.command : '[' + step.index + '] ' + step.name;
     if (!step.ok) {
       summary.push(label + ' FAILED: ' + step.error.message);
+      if (step.error.code) {
+        summary.push(
+          '  [ok=false code=' + step.error.code + ' effects=' + step.error.effects +
+            ' retryable=' + step.error.retryable + ']'
+        );
+      }
       continue;
     }
     summary.push(label + ' ok');
+    // The step's own contract, so evidence produced inside a script is visible
+    // rather than folded into one line for the whole run.
+    const contract = stepContractLine(step);
+    if (contract) summary.push(contract);
     const inner = formatResult(step.name, step.result, step.input || {});
     // A step that produced an image also produced the line naming its id, size
     // and saved path, which is what a later upload_image or a message needs.
