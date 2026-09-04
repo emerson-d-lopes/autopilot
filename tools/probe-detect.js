@@ -52,6 +52,26 @@ export function asText(value) {
   return JSON.stringify(value);
 }
 
+/**
+ * The value a `javascript` call evaluated to.
+ *
+ * The tool answers with a result envelope, `{result, type, durationMs, ...}`,
+ * where `result` carries what the page returned. Reading the envelope as the
+ * value gives an object with no `keys` and no `moves`, which is a recording of
+ * nothing rather than an error, so the probe printed empty measurements.
+ */
+export function evaluated(value) {
+  const body = asJson(value);
+  if (!body || typeof body !== 'object' || !('result' in body)) return body;
+  const inner = body.result;
+  if (typeof inner !== 'string') return inner;
+  try {
+    return JSON.parse(inner);
+  } catch {
+    return inner;
+  }
+}
+
 /** The first JSON object or array in a tool's reply. */
 export function asJson(value) {
   const text = asText(value);
@@ -141,6 +161,19 @@ function fallbackClient() {
 async function loadClient() {
   try {
     const mod = await import('./mcp-client.js');
+    if (typeof mod.createClient === 'function') {
+      let live = null;
+      return {
+        source: 'tools/mcp-client.js',
+        async open() {
+          live = await mod.createClient({ browser: process.env.CHROME_MCP_BROWSER_ID });
+        },
+        call: (tool, args) => live.call(tool, args),
+        close: () => {
+          if (live) live.close();
+        },
+      };
+    }
     const target = typeof mod.call === 'function' ? mod : mod.default;
     if (target && typeof target.call === 'function') {
       return {
@@ -337,8 +370,8 @@ async function main() {
     await client.call('javascript', { tabId, code: MARK });
     await client.call('computer', { tabId, action: 'left_click', ref: submitRef });
 
-    const recorded = asJson(await client.call('javascript', { tabId, code: READ }));
-    if (!recorded) throw new Error('the page returned no recording');
+    const recorded = evaluated(await client.call('javascript', { tabId, code: READ }));
+    if (!recorded || !Array.isArray(recorded.keys)) throw new Error('the page returned no recording');
 
     printCadence(recorded.keys || [], cadence);
     printPath(recorded.moves || [], submitRef);
