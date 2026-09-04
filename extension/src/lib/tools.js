@@ -9,6 +9,7 @@ import { scoreCandidates, shouldWiden, NARROW_SCOPE_RATIO, FIND_TREE_CHAR_BUDGET
 import * as gif from './gif.js';
 import * as shortcuts from './shortcuts.js';
 import { ToolError, withCode } from './errors.js';
+import { missingRequired, missingRequiredMessage } from './required.js';
 
 const CONTENT_SCRIPT = 'src/content/agent.js';
 const CONTENT_SCRIPTS = [CONTENT_SCRIPT, 'src/content/indicator.js'];
@@ -495,8 +496,11 @@ function submitEvidence(report, network, outcome) {
  * Returns how it was approved, or throws `confirmation_required` carrying a
  * token bound to this tab, origin and control. Nothing is activated or focused:
  * the browser-side approval is a notification, which does neither.
+ *
+ * `askTimeoutMs` overrides the notification's own deadline, so a test does not
+ * have to wait a minute for the unanswered case.
  */
-async function confirmGate({ tabId, url, control, irreversible, confirm, screenshotId }) {
+export async function confirmGate({ tabId, url, control, irreversible, confirm, screenshotId, askTimeoutMs }) {
   const origin = perms.originOf(url);
   if (!(await perms.needsConfirmation({ url, irreversible }))) {
     return { required: false, origin, approvedBy: 'policy' };
@@ -518,10 +522,26 @@ async function confirmGate({ tabId, url, control, irreversible, confirm, screens
     );
   }
 
-  // The browser-side approval, when the options page turned it on. A denial is
-  // final for this call; a timeout falls through to the token flow.
-  const answer = await perms.askInBrowser({ control, origin });
+  // The browser-side approval, when the options page turned it on. A denial and
+  // an unanswered notification are both final for this call.
+  const answer = await perms.askInBrowser({ control, origin, ...(askTimeoutMs ? { timeoutMs: askTimeoutMs } : {}) });
   if (answer === 'allow') return { required: true, origin, approvedBy: 'notification', screenshotId };
+  if (answer === 'timeout') {
+    throw new ToolError(
+      'confirmation_required',
+      'The browser was asked to confirm pressing ' + JSON.stringify(control) + ' on ' + origin +
+        ' and nobody answered within ' + Math.round(perms.ASK_IN_BROWSER_TIMEOUT_MS / 1000) +
+        ' seconds. The notification was closed and nothing was clicked.',
+      {
+        hint:
+          'Ask the user to answer the notification, or turn browser confirmations off in the extension options ' +
+          'and confirm with a token instead. Repeating this call opens another notification and waits again.',
+        effects: 'none',
+        retryable: false,
+        details: { control, origin, screenshotId, unansweredInBrowser: true },
+      }
+    );
+  }
   if (answer === 'deny') {
     throw new ToolError(
       'confirmation_required',
@@ -694,6 +714,28 @@ async function computerTool(ctx, input) {
 
   switch (action) {
     case 'screenshot': {
+      // W4. The capture taken before an irreversible click, fetched by the id
+      // the confirmation_required error names, so the caller can look at what
+      // it is about to submit before it sends the token back.
+      if (input.imageId) {
+        const id = String(input.imageId);
+        const held = writeScreenshot(id);
+        if (!held) {
+          throw new ToolError(
+            'bad_request',
+            'No stored image with id ' + JSON.stringify(id) + '. Ids come from a confirmation_required error and ' +
+              'are kept for the ten most recent writes in this browser.',
+            { effects: 'none', hint: 'Repeat the call that was refused to get a fresh token and a fresh image id.' }
+          );
+        }
+        return {
+          image: held,
+          saveToDisk: Boolean(input.save_to_disk),
+          effects: 'none',
+          evidence: { capture: { path: 'stored', imageId: id } },
+          warnings: ['this is the capture taken before the write, not the page as it is now'],
+        };
+      }
       const paint = await waitForPaint(tabId);
       await pageCall(tabId, { type: 'HIDE_FOR_TOOL_USE' }).catch(() => {});
       try {
@@ -984,9 +1026,11 @@ async function computerTool(ctx, input) {
       await perms.verifyOriginUnchanged(tabId, url);
 
       // An Enter inside a composer or a form field is a submit with no target
-      // of its own, so the page is asked what it would press (W2, W4).
-      const pressesEnter = /(^|[\s+])enter([\s+]|$)/i.test(String(input.text));
-      const target = pressesEnter
+      // of its own, so the page is asked what it would press (W2, W4). Every
+      // spelling the key parser accepts counts: "Return" pressed Enter and was
+      // invisible to the literal word this used to test for.
+      const entersSubmit = cdp.pressesEnter(input.text);
+      const target = entersSubmit
         ? await pageCall(tabId, { type: 'SUBMIT_TARGET', paymentCategory: await isPaymentCategory(url) }).catch(
             () => null
           )
@@ -1254,7 +1298,16 @@ export const handlers = {
       // command the debugger waits on the way it waits on Page.navigate, and
       // pairing it with the same load wait navigate-to-URL already uses closes
       // that race.
-      await perms.checkPermission({ tool: 'navigate', url: await activeUrl(tabId), toolUseId: ctx.toolUseId, clientId: ctx.clientId });
+      // noteTransition is off so the origin this call moves to is recorded
+      // after the tab lands, by the check below, which is the one whose warning
+      // reaches this call's result.
+      await perms.checkPermission({
+        tool: 'navigate',
+        url: await activeUrl(tabId),
+        toolUseId: ctx.toolUseId,
+        clientId: ctx.clientId,
+        noteTransition: false,
+      });
       await ensureAttached(tabId);
 
       const history = await cdp.send(tabId, 'Page.getNavigationHistory');
@@ -1272,7 +1325,18 @@ export const handlers = {
     } else {
       let url = String(input.url);
       if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url;
-      await perms.checkPermission({ tool: 'navigate', url, toolUseId: ctx.toolUseId, clientId: ctx.clientId });
+      // The blocklist, the mode and, in ask mode, the grant for the origin this
+      // is about to move to, all judged before the move. The transition is
+      // deliberately not recorded here: the warning belongs to this call, and
+      // recording the target origin now would leave the check after the landing
+      // with nothing to compare against.
+      await perms.checkPermission({
+        tool: 'navigate',
+        url,
+        toolUseId: ctx.toolUseId,
+        clientId: ctx.clientId,
+        noteTransition: false,
+      });
       await ensureAttached(tabId);
 
       // A page with unsaved input can hold the navigation with a beforeunload
@@ -1867,6 +1931,17 @@ export const TOOL_NAMES = Object.keys(handlers);
 export async function execute(name, input, ctx) {
   const handler = handlers[name];
   if (!handler) throw new ToolError('bad_request', 'unknown tool: ' + name);
+  // A missing required argument is refused here rather than normalized into
+  // something the page can act on. navigate without a url turned undefined into
+  // a bare host and drove the tab to https://undefined.
+  const missing = missingRequired(name, input);
+  if (missing.length) {
+    throw new ToolError('bad_request', missingRequiredMessage(name, missing), {
+      effects: 'none',
+      hint: 'Add ' + missing.join(' and ') + ' and call again.',
+      details: { tool: name, missing },
+    });
+  }
   const context = ctx || {};
   context.warnings = [];
   try {

@@ -89,15 +89,20 @@ export function normalizeFormat(format) {
  * to capture in CSS pixels, the size to end up at, and whether Chrome can render
  * straight to that size through a clip.
  *
- * `dpr` only decides which path is taken. The canvas path recomputes the target
- * from the bitmap it actually got, and the clip path verifies the returned
- * dimensions against the header, so an inaccurate estimate costs a fallback
- * rather than a wrong image.
+ * `unitX` and `unitY` are the capture pixels this surface returns per CSS pixel,
+ * measured from a capture this tab actually produced. They fall back to `dpr`,
+ * which is what the layout metrics imply and what an unmeasured tab has. The
+ * two disagree: a capture taken through the extension debugger on a hidden tab
+ * comes back in CSS pixels while the metrics report a ratio of 2.25, so a plan
+ * sized from the metrics asked for a frame the surface could not produce and
+ * every scaled capture fell back to the canvas.
  */
 export function planCapture({
   cssWidth,
   cssHeight,
   dpr = 1,
+  unitX,
+  unitY,
   region,
   scrollX = 0,
   scrollY = 0,
@@ -124,8 +129,10 @@ export function planCapture({
   }
 
   const ratio = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
-  const sourceWidth = Math.max(1, Math.round(box.width * ratio));
-  const sourceHeight = Math.max(1, Math.round(box.height * ratio));
+  const ux = Number.isFinite(unitX) && unitX > 0 ? unitX : ratio;
+  const uy = Number.isFinite(unitY) && unitY > 0 ? unitY : ratio;
+  const sourceWidth = Math.max(1, Math.round(box.width * ux));
+  const sourceHeight = Math.max(1, Math.round(box.height * uy));
 
   // The frame a capture with no `scale` would have produced. Reported with every
   // scaled capture so the caller knows what the full-resolution frame is.
@@ -139,12 +146,17 @@ export function planCapture({
 
   // Page.captureScreenshot clips in page coordinates, so a region read off a
   // screenshot, which is viewport relative, needs the scroll offset added.
+  //
+  // The surface renders the clip at `box * clip.scale * unit`, so the scale that
+  // lands on the target is the target over the source, not over the CSS box.
+  // With a unit of 1 the two are the same number, which is why the CSS-box form
+  // held up until a surface with a unit of 2.25 was measured.
   const clip = {
     x: box.x + scrollX,
     y: box.y + scrollY,
     width: box.width,
     height: box.height,
-    scale: target.width / box.width,
+    scale: target.width / sourceWidth,
   };
 
   return {
@@ -156,6 +168,8 @@ export function planCapture({
     sourceHeight,
     userScale,
     dpr: ratio,
+    unitX: ux,
+    unitY: uy,
     // Asking Chrome to render straight to a smaller size skips a full-size
     // capture and an OffscreenCanvas round trip. Above 1 it would upscale a CSS
     // pixel render, which is worse than downscaling the device pixel one.
@@ -320,6 +334,65 @@ export async function fitToBudget({
 // The capture itself
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The unit a capture on this tab actually returns
+// ---------------------------------------------------------------------------
+//
+// Page.captureScreenshot does not answer in one fixed unit. Through the
+// extension debugger on a hidden tab it returns CSS pixels; from a surface it
+// returns device pixels. The metrics ratio describes the second and was used to
+// plan both, so on a 2.25 display every scaled capture asked for a frame the
+// surface could not produce, failed the size check, warned, and re-rendered
+// through the canvas.
+//
+// So the unit is measured rather than assumed. The canvas path already decodes
+// a bitmap whose size is the answer, and the clip path decodes the header of
+// what came back, so both teach this without an extra capture. A tab with
+// nothing measured takes the canvas path once, which is the path it took
+// anyway, and every capture after that can use the clip.
+
+/** @type {Map<number, {full?: object, region?: object}>} */
+const captureUnits = new Map();
+
+/** How far the CSS viewport can move before a measurement is stale. */
+const UNIT_VIEWPORT_TOLERANCE = 2;
+
+/**
+ * Records what one capture returned per CSS pixel.
+ *
+ * A full-viewport measurement is tied to the viewport it was taken at, since a
+ * resized window renders a different surface. A region measurement is scale
+ * free by construction, so it carries over between regions.
+ */
+export function recordCaptureUnit(tabId, { region = false, x, y, cssWidth, cssHeight } = {}) {
+  if (tabId === undefined || tabId === null) return null;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || y <= 0) return null;
+  const held = captureUnits.get(tabId) || {};
+  const entry = { x, y, cssWidth, cssHeight, at: Date.now() };
+  held[region ? 'region' : 'full'] = entry;
+  captureUnits.set(tabId, held);
+  return entry;
+}
+
+/** The measurement that applies to this capture, or null when there is none. */
+export function getCaptureUnit(tabId, { region = false, cssWidth, cssHeight } = {}) {
+  const held = captureUnits.get(tabId);
+  const entry = held && held[region ? 'region' : 'full'];
+  if (!entry) return null;
+  if (region) return entry;
+  if (
+    Math.abs((entry.cssWidth || 0) - cssWidth) > UNIT_VIEWPORT_TOLERANCE ||
+    Math.abs((entry.cssHeight || 0) - cssHeight) > UNIT_VIEWPORT_TOLERANCE
+  ) {
+    return null;
+  }
+  return entry;
+}
+
+export function clearCaptureUnit(tabId) {
+  captureUnits.delete(tabId);
+}
+
 /** Device pixel ratio implied by the layout metrics, which report both units. */
 export function devicePixelRatioFrom(metrics) {
   const css = metrics && metrics.cssLayoutViewport;
@@ -351,10 +424,13 @@ export async function capture(tabId, options = {}) {
   const scrollX = Math.round(scrollSource.pageX || 0);
   const scrollY = Math.round(scrollSource.pageY || 0);
 
+  const measured = getCaptureUnit(tabId, { region: Boolean(region), cssWidth, cssHeight });
   const plan = planCapture({
     cssWidth,
     cssHeight,
     dpr: devicePixelRatioFrom(metrics),
+    unitX: measured ? measured.x : undefined,
+    unitY: measured ? measured.y : undefined,
     region,
     scrollX,
     scrollY,
@@ -373,7 +449,11 @@ export async function capture(tabId, options = {}) {
   /** @type {null | ((q: number) => Promise<string>)} */
   let reencode = null;
 
-  if (plan.useClipPath) {
+  // A tab whose capture unit has never been measured takes the canvas path
+  // once, which is where the measurement comes from. Guessing the unit from the
+  // metrics and clipping on it is what produced a wasted capture and a warning
+  // on every scaled call.
+  if (plan.useClipPath && measured) {
     // Chrome renders straight to the target size, so there is no full-size
     // capture to decode and no canvas round trip.
     const raw = await captureScreenshot(tabId, {
@@ -402,6 +482,17 @@ export async function capture(tabId, options = {}) {
         return out;
       };
     } else {
+      // What came back says what this surface really returns per CSS pixel, so
+      // the measurement is corrected here and the next capture plans on it.
+      if (decoded && plan.clip.scale > 0) {
+        recordCaptureUnit(tabId, {
+          region: plan.region,
+          x: decoded.width / (plan.box.width * plan.clip.scale),
+          y: decoded.height / (plan.box.height * plan.clip.scale),
+          cssWidth,
+          cssHeight,
+        });
+      }
       warnings.push(
         'the clipped capture came back ' +
           (decoded ? decoded.width + 'x' + decoded.height : 'undecodable') +
@@ -421,6 +512,15 @@ export async function capture(tabId, options = {}) {
     const bitmap = await decodeBitmap(raw, 'image/png');
     sourceWidth = bitmap.width;
     sourceHeight = bitmap.height;
+    // The bitmap came back at scale 1, so its size over the CSS box is the unit
+    // this surface answers in. Every later capture on this tab plans from it.
+    recordCaptureUnit(tabId, {
+      region: plan.region,
+      x: sourceWidth / plan.box.width,
+      y: sourceHeight / plan.box.height,
+      cssWidth,
+      cssHeight,
+    });
     const frame = targetDimensions(sourceWidth, sourceHeight, { maxTokens });
     plan.frame = { width: frame.width, height: frame.height };
     width = Math.max(1, Math.round(frame.width * plan.userScale));
@@ -603,6 +703,9 @@ export function getScalingContext(tabId) {
 export function clearScalingContext(tabId) {
   scalingContext.delete(tabId);
   pendingContext.delete(tabId);
+  // The measured unit is deliberately kept. It describes the surface, not the
+  // document, so it survives a navigation, and a resize invalidates it through
+  // the viewport it was measured at.
 }
 
 // ---------------------------------------------------------------------------

@@ -395,12 +395,24 @@ if (notificationsAvailable() && chrome.notifications.onButtonClicked) {
 }
 
 /**
+ * How long an unanswered notification is waited for.
+ *
+ * Half the token's life, and half the host's 120s call timeout. With the two
+ * deadlines equal, the host gave up first and reported a renderer that never
+ * answered, and the notification was still open afterwards with nothing left to
+ * answer it. This expires first, so the call comes back saying what actually
+ * happened and the notification is closed on the way out.
+ */
+export const ASK_IN_BROWSER_TIMEOUT_MS = 60000;
+
+/**
  * Asks in the browser and waits for the answer.
  *
  * Returns `unavailable` when the switch is off or the API is missing, so the
- * caller falls back to the client-side token flow rather than failing.
+ * caller falls back to the client-side token flow rather than failing, and
+ * `timeout` when nobody answered inside the deadline.
  */
-export async function askInBrowser({ control, origin, timeoutMs = CONFIRM_TTL_MS } = {}) {
+export async function askInBrowser({ control, origin, timeoutMs = ASK_IN_BROWSER_TIMEOUT_MS } = {}) {
   const policy = await loadPolicy();
   if (!policy.confirmNotifications || !notificationsAvailable()) return 'unavailable';
 
@@ -448,9 +460,19 @@ export async function askInBrowser({ control, origin, timeoutMs = CONFIRM_TTL_MS
  * Read-only tools bypass grant checks but not the blocklist, since reading a
  * banking page still exfiltrates it into the transcript.
  */
-export async function checkPermission({ tool, url, toolUseId, clientId = 'default' }) {
+/**
+ * Decides whether a tool may run against a URL.
+ *
+ * `noteTransition: false` runs the transition check without recording the
+ * origin. navigate needs that: it checks the URL it is about to move to, and
+ * recording it there meant the move was already the session's last acted origin
+ * by the time the tab landed, so the warning belonged to the next call rather
+ * than to the navigate that caused it.
+ */
+export async function checkPermission({ tool, url, toolUseId, clientId = 'default', noteTransition = true }) {
   const policy = await loadPolicy();
   const hostname = hostnameOf(url);
+  const transitionCheck = () => checkDomainTransition({ clientId, url, tool, note: noteTransition });
 
   if (!hostname) {
     // about:blank and new tabs carry no origin and nothing worth protecting.
@@ -490,7 +512,7 @@ export async function checkPermission({ tool, url, toolUseId, clientId = 'defaul
         }
       );
     }
-    const transitionPlanned = await checkDomainTransition({ clientId, url, tool });
+    const transitionPlanned = await transitionCheck();
     return { allowed: true, reason: 'plan mode', transition: transitionPlanned };
   }
 
@@ -498,11 +520,11 @@ export async function checkPermission({ tool, url, toolUseId, clientId = 'defaul
     return {
       allowed: true,
       reason: 'read-only',
-      transition: await checkDomainTransition({ clientId, url, tool }),
+      transition: await transitionCheck(),
     };
   }
   if (isLocalhost(hostname)) {
-    return { allowed: true, reason: 'localhost', transition: await checkDomainTransition({ clientId, url, tool }) };
+    return { allowed: true, reason: 'localhost', transition: await transitionCheck() };
   }
   // Confirm mode is allow mode until an irreversible control is pressed, which
   // is decided at the click itself, where the control's name is known.
@@ -510,7 +532,7 @@ export async function checkPermission({ tool, url, toolUseId, clientId = 'defaul
     return {
       allowed: true,
       reason: policy.mode === MODES.CONFIRM ? 'confirm mode' : 'allow mode',
-      transition: await checkDomainTransition({ clientId, url, tool }),
+      transition: await transitionCheck(),
     };
   }
 
@@ -532,7 +554,7 @@ export async function checkPermission({ tool, url, toolUseId, clientId = 'defaul
     delete next[origin];
     await savePolicy({ grants: next });
   }
-  return { allowed: true, reason: 'granted', transition: await checkDomainTransition({ clientId, url, tool }) };
+  return { allowed: true, reason: 'granted', transition: await transitionCheck() };
 }
 
 export async function grant(origin, duration = 'always', toolUseId = null) {

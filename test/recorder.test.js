@@ -164,6 +164,84 @@ test('the capture mode defaults to lazy when nothing is stored', async () => {
   assert.equal(await recorder.consoleCaptureMode(), 'lazy', 'an unknown value is not treated as always');
 });
 
+// ---------------------------------------------------------------------------
+// Runtime.enable replays the page's console history
+// ---------------------------------------------------------------------------
+
+/** One console line, the way Chrome delivers it: milliseconds since the epoch. */
+function logLine(tabId, text, at) {
+  recorder.onDebuggerEvent({ tabId }, 'Runtime.consoleAPICalled', {
+    type: 'log',
+    timestamp: at,
+    args: [{ type: 'string', value: text }],
+  });
+}
+
+test('a clearing read stays cleared when Chrome replays the history', async () => {
+  recordDebugger();
+  const tabId = await freshTab();
+  await recorder.startCapture(tabId);
+  await recorder.readConsoleMessages(tabId, {});
+
+  const pageLoad = Date.now() - 5000;
+  logLine(tabId, 'from page load', pageLoad);
+  const before = await recorder.readConsoleMessages(tabId, { clear: true });
+  assert.equal(before.total, 1, 'the clearing read returns what was there');
+
+  // The next read re-enables Runtime, and Chrome hands over the same history.
+  const read = recorder.readConsoleMessages(tabId, {});
+  logLine(tabId, 'from page load', pageLoad);
+  const after = await read;
+  assert.equal(after.total, 0, 'the replayed copy is dropped, so the clear held');
+
+  logLine(tabId, 'after the clear', Date.now() + 1);
+  const third = await recorder.readConsoleMessages(tabId, {});
+  assert.equal(third.total, 1, 'live output after the clear is still captured');
+  assert.equal(third.entries[0].text, 'after the clear');
+});
+
+test('the read that re-arms capture after a clear says the replay is filtered', async () => {
+  recordDebugger();
+  const tabId = await freshTab();
+  await recorder.startCapture(tabId);
+  await recorder.readConsoleMessages(tabId, { clear: true });
+
+  const result = await recorder.readConsoleMessages(tabId, {});
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /filtered out/);
+  assert.doesNotMatch(result.warnings[0], /were not recorded/);
+});
+
+test('a first read that got replayed history says so instead of claiming it was lost', async () => {
+  recordDebugger();
+  const tabId = await freshTab();
+  await recorder.startCapture(tabId);
+
+  // The read arms Runtime, and the history arrives while it is in flight.
+  const pending = recorder.readConsoleMessages(tabId, {});
+  logLine(tabId, 'pre-arm-unique-42', Date.now() - 2000);
+  const result = await pending;
+
+  assert.equal(result.total, 1, 'the replayed line is returned');
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /replayed the console history/);
+  assert.doesNotMatch(result.warnings[0], /were not recorded/, 'the old claim contradicted the same result');
+});
+
+test('an entry with no epoch timestamp is never dropped by the clear filter', async () => {
+  recordDebugger();
+  const tabId = await freshTab();
+  await recorder.startCapture(tabId);
+  await recorder.readConsoleMessages(tabId, { clear: true });
+  await recorder.readConsoleMessages(tabId, {});
+
+  // The navigation marker stamps seconds, which cannot be judged against a
+  // wall clock reading in milliseconds.
+  recorder.noteNavigation(tabId, 'https://example.com/');
+  const result = await recorder.readConsoleMessages(tabId, {});
+  assert.equal(result.total, 1);
+});
+
 test('a console message still lands in the buffer once capture is on', async () => {
   recordDebugger();
   const tabId = await freshTab();

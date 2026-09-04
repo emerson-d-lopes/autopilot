@@ -21,6 +21,7 @@ import {
   contractLine,
   stepContractLine,
   formatError,
+  detailLine,
   MAX_ATTEMPTS,
   ERROR_CODES,
   ToolError,
@@ -265,6 +266,47 @@ test('a formatted error carries the code, the hint and the side-effect flag', ()
   assert.match(text, /id=call_8/);
   assert.match(text, /hint: /);
   assert.match(text, /cause: the page reflowed/);
+});
+
+test('a confirmation_required error renders its screenshot id and how to fetch it', () => {
+  const text = formatError(
+    toError('confirmation_required', {
+      id: 'call_9',
+      message: 'Pressing "Send" on https://example.com is irreversible and needs confirmation first.',
+      details: { token: 'cx_1_abc', control: 'Send', origin: 'https://example.com', screenshotId: 'write_1_ab3d' },
+    })
+  );
+  assert.match(text, /screenshotId="write_1_ab3d"/);
+  assert.match(text, /token="cx_1_abc"/);
+  assert.match(text, /control="Send"/);
+  assert.match(text, /origin="https:\/\/example\.com"/);
+  assert.match(text, /"imageId":"write_1_ab3d"/, 'the caller is told the call that shows the image');
+  assert.match(text, /code=confirmation_required/);
+});
+
+test('an error with no details of its own gains no details line', () => {
+  const text = formatError(toError('ref_stale', { id: 'call_10' }));
+  assert.doesNotMatch(text, /details:/);
+  assert.equal(detailLine(toError('ref_stale', { details: { index: 2 } })), null, 'only ids a caller can act on');
+});
+
+test('a confirmation with no screenshot still renders the ids it has', () => {
+  const text = formatError(
+    toError('confirmation_required', { details: { token: 'cx_2_zz', control: 'Delete', origin: 'https://a.test' } })
+  );
+  assert.match(text, /details: token="cx_2_zz" control="Delete" origin="https:\/\/a\.test"/);
+  assert.doesNotMatch(text, /imageId/);
+});
+
+test('computer takes an imageId, so a stored capture can be fetched', () => {
+  const computer = TOOLS.find((t) => t.name === 'computer');
+  assert.ok(computer.inputSchema.properties.imageId, 'the argument is declared');
+  assert.match(computer.inputSchema.properties.imageId.description, /screenshotId/);
+  assert.equal(
+    (computer.inputSchema.required || []).includes('imageId'),
+    false,
+    'an ordinary screenshot does not carry one'
+  );
 });
 
 // --- schemas -----------------------------------------------------------------

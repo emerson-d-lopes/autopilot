@@ -28,6 +28,7 @@ export function modifiersToMask(modifiers) {
 const KEYS = {
   enter: { vk: 13, code: 'Enter', key: 'Enter', text: '\r' },
   return: { vk: 13, code: 'Enter', key: 'Enter', text: '\r' },
+  numpadenter: { vk: 13, code: 'NumpadEnter', key: 'Enter', text: '\r' },
   tab: { vk: 9, code: 'Tab', key: 'Tab', text: '\t' },
   escape: { vk: 27, code: 'Escape', key: 'Escape' },
   esc: { vk: 27, code: 'Escape', key: 'Escape' },
@@ -1227,6 +1228,41 @@ export async function pressKey(tabId, combo) {
   await send(tabId, 'Input.dispatchKeyEvent', { ...base, type: 'keyUp' });
 }
 
+/**
+ * Whether one key name is Enter under any of the spellings the parser takes.
+ *
+ * Read off the same table the dispatch uses, so a name that presses Enter and a
+ * name that counts as a submit cannot drift apart.
+ */
+export function isEnterKeyName(name) {
+  const key = String(name === undefined || name === null ? '' : name).trim().toLowerCase();
+  if (key === '\n' || key === '\r') return true;
+  const spec = KEYS[key];
+  return Boolean(spec && spec.vk === 13);
+}
+
+/**
+ * Whether a `key` argument presses Enter anywhere in it (W2).
+ *
+ * The submit detection tested the literal word "enter" against the argument, so
+ * "Return" pressed Enter, the page reacted, and the call reported no submit
+ * evidence and a 250ms window. Every spelling the key parser accepts is checked
+ * here instead, modifier chords and multi-key sequences included.
+ */
+export function pressesEnter(text) {
+  const raw = String(text === undefined || text === null ? '' : text);
+  if (!raw) return false;
+  // A bare newline is whitespace, so it never survives the split below.
+  if (/[\n\r]/.test(raw)) return true;
+  return raw
+    .split(/\s+/)
+    .filter(Boolean)
+    .some((combo) => {
+      const parts = combo.split('+').map((p) => p.trim()).filter(Boolean);
+      return isEnterKeyName(parts[parts.length - 1]);
+    });
+}
+
 export async function pressKeySequence(tabId, sequence, repeat = 1) {
   const combos = String(sequence).split(/\s+/).filter(Boolean);
   for (let r = 0; r < repeat; r++) {
@@ -1812,6 +1848,9 @@ export async function typeKeysReal(tabId, text, cadence = TYPE_CADENCE_MS) {
 export async function pressKeyLoose(tabId, combo) {
   const raw = String(combo);
   assertNotZoomChord(raw);
+  // A newline is Enter rather than a character to insert, which is what a
+  // caller writing "\n" means.
+  if (raw === '\n' || raw === '\r') return pressKey(tabId, 'enter');
   // Checked before splitting, so "+" itself is a key rather than an empty
   // combination.
   if ([...raw].length === 1 && !/[a-z0-9]/i.test(raw)) return pressPrintable(tabId, raw);

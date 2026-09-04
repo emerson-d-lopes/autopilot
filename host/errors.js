@@ -511,10 +511,43 @@ export function stepContractLine(step, indent = '  ') {
 }
 
 /** A failure, with the code, the cause, the hint and the side-effect flag on it. */
+/**
+ * Ids from `details` that a caller has to be able to act on.
+ *
+ * A confirmation_required error carries the token, the control, the origin and
+ * the id of the capture taken before the write. Only the message and the hint
+ * were rendered, and they name the first three, so the screenshot id had
+ * nowhere to appear and the caller could not look at what it was about to
+ * submit.
+ */
+const DETAIL_KEYS = ['token', 'control', 'origin', 'screenshotId'];
+
+export function detailLine(error) {
+  const details = error && error.details;
+  if (!details || typeof details !== 'object') return null;
+  const parts = [];
+  for (const key of DETAIL_KEYS) {
+    const value = details[key];
+    if (value === undefined || value === null || value === '') continue;
+    parts.push(key + '=' + (typeof value === 'string' ? JSON.stringify(value) : value));
+  }
+  if (!parts.length) return null;
+  const lines = ['details: ' + parts.join(' ')];
+  if (details.screenshotId) {
+    lines.push(
+      'to see what this would submit: computer {"action":"screenshot","tabId":<tab>,"imageId":"' +
+        details.screenshotId + '"}'
+    );
+  }
+  return lines.join('\n');
+}
+
 export function formatError(error) {
   const lines = [error.message];
   if (error.cause) lines.push('cause: ' + error.cause);
   if (error.hint) lines.push('hint: ' + error.hint);
+  const details = detailLine(error);
+  if (details) lines.push(details);
   if (Array.isArray(error.retries) && error.retries.length) lines.push(error.retries.join('\n'));
   lines.push(
     '[ok=false code=' + error.code + ' effects=' + error.effects + ' retryable=' + error.retryable +

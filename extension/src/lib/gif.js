@@ -319,13 +319,44 @@ function paintIndexed(ctx, indices, width, height) {
  *   The action that triggered this frame, for the delay table, the action
  *   label, and the click/drag marker (P1).
  */
+/**
+ * Hides the extension's own overlay, takes the capture, and puts it back.
+ *
+ * Every frame carried the acting indicator: the pulsing border, the Stop button
+ * in the bottom right and the pill at the bottom centre, with the watermark
+ * lost under the Stop button. That is browser chrome rather than the page, and
+ * the tool's own description tells the caller to review a recording before
+ * sharing it, so the frames have to show the page.
+ *
+ * The same HIDE_FOR_TOOL_USE the screenshot path sends, and the restore runs
+ * whatever the capture did, so a failed frame never leaves a tab with its
+ * indicator hidden.
+ */
+export async function withOverlayHidden(tabId, capture) {
+  const tell = (type) => {
+    try {
+      const sent = chrome.tabs.sendMessage(tabId, { type });
+      if (sent && typeof sent.catch === 'function') return sent.catch(() => {});
+      return Promise.resolve(sent);
+    } catch {
+      return Promise.resolve();
+    }
+  };
+  await tell('HIDE_FOR_TOOL_USE');
+  try {
+    return await capture();
+  } finally {
+    tell('SHOW_AFTER_TOOL_USE');
+  }
+}
+
 export async function captureFrame(tabId, meta = {}) {
   const rec = recordings.get(tabId);
   if (!rec || rec.frames.length >= MAX_FRAMES) return;
   const { action, point, from, to } = meta;
 
   try {
-    const raw = await captureScreenshot(tabId, { format: 'png' });
+    const raw = await withOverlayHidden(tabId, () => captureScreenshot(tabId, { format: 'png' }));
     const response = await fetch('data:image/png;base64,' + raw);
     const bitmap = await createImageBitmap(await response.blob());
 

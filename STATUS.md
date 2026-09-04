@@ -1,12 +1,12 @@
 # chrome-mcp: status, parity and test coverage
 
-State of the build as of 2026-09-04, extension 0.1.31. 26 tools, 30 test files.
+State of the build as of 2026-09-04, extension 0.1.33. 26 tools, 30 test files.
 
 - Source: about 17,600 lines across the extension, host and tools
 - Tests: about 10,500 lines
 - Verified against Chrome for Testing 152 and against the user's own Chrome 152 on Windows 11
 
-On 2026-09-04 the non-browser files pass, 582 tests across 24 files. The build that was driven against a browser is the one described under "Live verification of wave 2", which ran `test/campaign.test.js` (12 of 12) along with 48 checks by hand. The ten bug fixes merged after it have not been driven against a browser, and the other five browser-driven files were not run.
+On 2026-09-04 the non-browser files pass, 626 tests across 24 files. The build that was driven against a browser is the one described under "Live verification of the first wave-2 bug fixes", which ran 14 checks by hand on 0.1.31. The ten fixes merged after it, on `plan/bugs2`, have not been driven against a browser, and the six browser-driven files were not run.
 
 ## Feature parity with Claude Code's browser integration
 
@@ -443,3 +443,35 @@ Test counts on 2026-09-04, `node --test --test-concurrency=1` per file, no brows
 `node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 42 files under `extension/src`, `host` and `tools`.
 
 The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. The ten bugs the second pass opened are untouched by this merge. The live checks the ten fixes ask for are open: `resize_window` against a maximized window, a session read back after `chrome.runtime.reload()`, the replacement ladder against the interferer, a queued CDP command behind a busy renderer, and `doctor` against a host started with `CHROME_MCP_JOURNAL_REDACT` set.
+
+## Live verification of the first wave-2 bug fixes, 2026-09-04
+
+The pass is written up in `docs/claude-in-chrome-comparison/evidence/VERIFY-0.1.31.md`, one entry per check with the call and the verbatim result. It ran against the development browser started by `node tools/browser.js --interferer` and drove `host/mcp-server.js` from this tree through `tools/mcp-client.js`. The user's Chrome was never driven.
+
+Fourteen checks: the ten fixes merged from `plan/bugs`, a re-run of seven first-pass checks, a re-run of four second-pass checks, the test and bench files, and a recording decoded frame by frame. Ten passed outright, three passed with a caveat now carried as an open bug, and the drag part of the recording check was not exercised because the script used the wrong argument name for the drag origin.
+
+Two commits landed during the pass:
+
+- `e4c2e59` A type into a field inside an iframe was reported as `no_effect` and retried by the host, so the text landed twice. `document.activeElement` in the parent reports the frame element, and the element that actually has focus lives in the frame's own document. `focusedEditable` answers `null` for a frame element now, and the `no_effect` check fires only on an explicit `false`.
+- `56b01c9` A click that opens a tab found no `newTabId` when Chrome named the wrong opener. Chrome fills `openerTabId` from the active tab, and background mode never activates the tab it drives. `tabs.js` keeps a 3 s ledger of page-opened tabs, and a click the watch flagged as opening a tab falls back to it, reporting only a candidate that ended up in the acting tab's group.
+
+Three bugs were opened and are fixed in the section below.
+
+## Second set of bug fixes merged into wave 2, 2026-09-04
+
+`plan/bugs2` was merged into `plan/integration2`, so the ten fixes for the bugs the second verification pass left open sit on top of the third pass's two commits. Extension version 0.1.33.
+
+The merge produced no conflicts. Both branches had bumped `extension/manifest.json` to 0.1.32 on their own, which git resolved as the same change, and the merged value was set to 0.1.33 by hand. `extension/src/lib/tools.js` and `extension/src/content/agent.js` were the two files both branches changed and both merged cleanly, with all four sides present: required-argument validation, screenshot by `imageId`, the `pressesEnter` submit test and the `confirmGate` export from `plan/bugs2`, the iframe `no_effect` check and the new-tab fallback in `readVerify` from the pass, `clickPointFor` with `getClientRects` from `plan/bugs2`, and `focusedEditable` for frame elements from the pass. `extension/src/lib/cdp.js` shows in `git diff --stat` as 39 insertions rather than as all of its lines, so the line endings match the rest of the tree.
+
+What the ten fixes change:
+
+- A `javascript` return value is dropped from the journal when `CHROME_MCP_JOURNAL_REDACT` is on, and when it repeats a string a sensitive write or a denylisted argument already had redacted in this session. This governs the journal only.
+- A `navigate` that changes origin carries the transition warning on its own result. `checkPermission` takes `noteTransition`, and `navigate` passes false, so the origin is recorded by the check that runs on the URL the tab landed on.
+- An unanswered browser confirmation waits 60 s rather than the host's 120 s call timeout, closes the notification on the way out, and returns `confirmation_required` with `retryable` false.
+- A confirmation renders the screenshot id beside the token, the control and the origin, and `computer` takes an `imageId` for action `screenshot`, which returns the stored capture rather than taking a new one.
+- Submit detection reads the same key table the dispatch reads, so Return, NumpadEnter, a chord ending in Enter and a bare newline all open the three second window.
+- A call missing an argument the schema declares required is refused with `bad_request` naming the argument, in the host before a browser is chosen and in the extension from `lib/required.js`. `test/parity.test.js` asserts the two tables agree.
+- Gif frames are captured with the acting indicator hidden, the way screenshots already were.
+- A ref click aims at a line box rather than at the centre of the bounding box, which is not on the element when the element is inline and its text wraps. The covered check reads the same point.
+- A cleared console buffer stays cleared, because entries stamped before the clear are dropped as they arrive rather than replayed by `Runtime.enable`. The warning says which of three things happened.
+- `planCapture` sizes a capture in the unit the capture returns, measured from a capture the tab actually produced, so a scaled capture no longer fails its size check and pays for a discarded capture on every call.

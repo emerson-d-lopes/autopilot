@@ -3,6 +3,7 @@
 import { execute, TOOL_NAMES, refExists } from './lib/tools.js';
 import { parseScript, QuickParseError } from './lib/quick.js';
 import { normalizeCall } from './lib/aliases.js';
+import { REQUIRED_ARGS, missingRequired, missingRequiredMessage } from './lib/required.js';
 import * as shortcuts from './lib/shortcuts.js';
 import * as tabsLib from './lib/tabs.js';
 import * as recorder from './lib/recorder.js';
@@ -274,27 +275,6 @@ async function runTool(name, input, ctx) {
 // ---------------------------------------------------------------------------
 // Batch pre-validation
 // ---------------------------------------------------------------------------
-
-/** Arguments a tool cannot run without. Checked before the batch starts. */
-const REQUIRED_ARGS = {
-  navigate: ['tabId', 'url'],
-  read_page: ['tabId'],
-  get_page_text: ['tabId'],
-  find: ['tabId', 'query'],
-  form_input: ['tabId', 'ref', 'value'],
-  computer: ['tabId', 'action'],
-  file_upload: ['tabId', 'paths'],
-  gif_creator: ['tabId', 'action'],
-  javascript: ['tabId', 'code'],
-  read_console_messages: ['tabId'],
-  read_network_requests: ['tabId'],
-  page_state: ['tabId'],
-  wait_for_page: ['tabId'],
-  resize_window: ['tabId', 'width', 'height'],
-  tabs_close: ['tabId'],
-  shortcuts_execute: ['shortcutId'],
-  declare_plan: ['origins'],
-};
 
 const COMPUTER_ACTIONS = new Set([
   'screenshot', 'zoom', 'wait', 'scroll_to', 'hover',
@@ -609,6 +589,21 @@ async function handleMessage(message) {
           'This session is stopped. Press Resume on the tab indicator or the popup to continue.',
           { effects: 'none' }
         );
+        respond({ type: 'tool_response', id, callId, error: serializeError(err) }, bornAt, tool);
+        return;
+      }
+
+      // A call missing an argument the tool cannot run without is refused here,
+      // before the debugger is attached or the indicator is drawn. The batch
+      // validator has always done this per item; this covers the direct call,
+      // and the sequence tools, which never reach tools.execute.
+      const missing = missingRequired(tool, args);
+      if (missing.length) {
+        const err = new ToolError('bad_request', missingRequiredMessage(tool, missing), {
+          effects: 'none',
+          hint: 'Add ' + missing.join(' and ') + ' and call again.',
+          details: { tool, missing },
+        });
         respond({ type: 'tool_response', id, callId, error: serializeError(err) }, bornAt, tool);
         return;
       }

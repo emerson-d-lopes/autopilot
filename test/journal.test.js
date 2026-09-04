@@ -358,3 +358,66 @@ test('a write with no evidence after it says so rather than leaving the column e
   const entry = journal.makeEntry(writeCall({ control: 'Delete', origin: 'https://example.com', before: null, after: [] }));
   assert.match(journal.formatMarkdown(entry), /before=none after=none/);
 });
+
+// --- F3, a javascript return value ------------------------------------------
+
+test('the redaction switch covers a javascript return value', () => {
+  journal.forgetRedactedValues();
+  process.env.CHROME_MCP_JOURNAL_REDACT = '1';
+  try {
+    const entry = journal.makeEntry({
+      request: { tool: 'javascript', args: { tabId: 4, code: 'document.title' }, callId: 'call_6_hlg9q3' },
+      response: { result: { result: 'redaction check message', type: 'string' } },
+      startedAt: 0,
+      finishedAt: 4,
+    });
+    assert.equal(entry.value, '[value redacted]');
+    assert.equal(JSON.stringify(entry).includes('redaction check message'), false);
+    assert.equal(journal.formatMarkdown(entry).includes('redaction check message'), false);
+  } finally {
+    delete process.env.CHROME_MCP_JOURNAL_REDACT;
+    journal.forgetRedactedValues();
+  }
+});
+
+test('a javascript value that repeats what a write redacted is redacted too', () => {
+  journal.forgetRedactedValues();
+  try {
+    // The write row hides the value because the field was sensitive.
+    const write = journal.makeEntry(writeCall({ ...SENT, value: 'hunter2 passphrase', sensitive: true }));
+    assert.equal(write.write.value, '[value redacted]');
+
+    const echoed = journal.makeEntry({
+      request: { tool: 'javascript', args: { tabId: 3, code: 'document.querySelector("input").value' } },
+      response: { result: { result: 'hunter2 passphrase' } },
+      startedAt: 0,
+      finishedAt: 4,
+    });
+    assert.equal(echoed.value, '[value redacted]', 'the text the write row hid is two lines above it');
+    assert.equal(JSON.stringify(echoed).includes('hunter2 passphrase'), false);
+  } finally {
+    journal.forgetRedactedValues();
+  }
+});
+
+test('an unrelated javascript value is still recorded', () => {
+  journal.forgetRedactedValues();
+  journal.makeEntry(writeCall({ ...SENT, value: 'hunter2 passphrase', sensitive: true }));
+  const entry = journal.makeEntry({
+    request: { tool: 'javascript', args: { tabId: 3, code: 'document.title' } },
+    response: { result: { result: 'Fixture page' } },
+    startedAt: 0,
+    finishedAt: 4,
+  });
+  assert.equal(entry.value, '"Fixture page"');
+  journal.forgetRedactedValues();
+});
+
+test('a very short value is not remembered, since it would match everything', () => {
+  journal.forgetRedactedValues();
+  assert.equal(journal.noteRedactedValue('ok'), false);
+  assert.equal(journal.noteRedactedValue('hunter2'), true);
+  assert.equal(journal.holdsRedactedValue('"hunter2"'), true);
+  assert.equal(journal.holdsRedactedValue('"ok"'), false);
+  journal.forgetRedactedValues();
+});

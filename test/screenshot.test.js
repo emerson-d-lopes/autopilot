@@ -25,6 +25,9 @@ const {
   normalizeQuality,
   clampScale,
   planCapture,
+  recordCaptureUnit,
+  getCaptureUnit,
+  clearCaptureUnit,
   decodeImageSize,
   fitToBudget,
   devicePixelRatioFrom,
@@ -298,15 +301,19 @@ test('a viewport larger than the budget is clipped down inside CDP', () => {
   assert.ok(estimateTokens(plan.target.width, plan.target.height) <= DEFAULT_MAX_TOKENS + 5);
 });
 
-test('a target larger than the CSS viewport keeps the canvas path', () => {
+test('a target larger than the CSS viewport is still a downscale of the surface', () => {
   // 1000x700 at dpr 2 is a 2000x1400 surface. What fits the token budget is
-  // still 1338 wide, more than the 1000 CSS pixels a clip would render from, so
-  // the clip would enlarge rather than downscale.
+  // 1338 wide, more than the 1000 CSS pixels of the box and well under the 2000
+  // the surface renders, so the clip scale is measured against the surface.
   const plan = planCapture({ cssWidth: 1000, cssHeight: 700, dpr: 2 });
   assert.equal(plan.sourceWidth, 2000);
   assert.ok(plan.target.width > 1000, 'got ' + plan.target.width);
-  assert.ok(plan.clip.scale > 1);
-  assert.equal(plan.useClipPath, false);
+  assert.ok(Math.abs(plan.clip.scale - plan.target.width / 2000) < 1e-9);
+  assert.ok(plan.clip.scale < 1);
+  assert.equal(plan.useClipPath, true);
+  // What the surface renders for that clip is the target, which is the check
+  // the capture makes on the bytes that come back.
+  assert.equal(Math.round(1000 * plan.clip.scale * 2), plan.target.width);
 });
 
 test('a retina viewport whose budget lands below CSS size takes the clip path', () => {
@@ -345,6 +352,66 @@ test('a zoom region is offset by the scroll position, since CDP clips in page co
 
 test('a zoom region of zero size is refused', () => {
   assert.throws(() => planCapture({ cssWidth: 800, cssHeight: 600, region: [10, 10, 10, 300] }), /non-zero/);
+});
+
+// ---------------------------------------------------------------------------
+// The unit a capture on this tab actually returns
+// ---------------------------------------------------------------------------
+
+test('a plan sized from the metrics ratio asks for a frame the debugger cannot return', () => {
+  // The 0.1.28 numbers: a 973x551 CSS viewport, metrics ratio 2.25, and a
+  // capture through the extension debugger that comes back at 972x542.
+  const guessed = planCapture({ cssWidth: 973, cssHeight: 551, dpr: 2.25, scale: 0.5 });
+  const returnedWidth = Math.round(973 * guessed.clip.scale * (972 / 973));
+  const returnedHeight = Math.round(551 * guessed.clip.scale * (542 / 551));
+  assert.ok(
+    Math.abs(returnedHeight - guessed.target.height) > 2,
+    'the guessed plan is off by more than the tolerance, got ' + returnedHeight + ' for ' + guessed.target.height
+  );
+  assert.ok(returnedWidth > 0);
+});
+
+test('a plan sized from the measured unit lands on the size the capture returns', () => {
+  const unitX = 972 / 973;
+  const unitY = 542 / 551;
+  const plan = planCapture({ cssWidth: 973, cssHeight: 551, dpr: 2.25, unitX, unitY, scale: 0.5 });
+  const returnedWidth = Math.round(973 * plan.clip.scale * unitX);
+  const returnedHeight = Math.round(551 * plan.clip.scale * unitY);
+  assert.ok(Math.abs(returnedWidth - plan.target.width) <= 2, 'got ' + returnedWidth + ' for ' + plan.target.width);
+  assert.ok(Math.abs(returnedHeight - plan.target.height) <= 2, 'got ' + returnedHeight + ' for ' + plan.target.height);
+  assert.equal(plan.useClipPath, true, 'the clip path is reachable once the unit is measured');
+  // Half the edges of the unscaled frame, so the scaled capture costs about a
+  // quarter of the tokens rather than more than an unscaled one.
+  const full = planCapture({ cssWidth: 973, cssHeight: 551, dpr: 2.25, unitX, unitY });
+  assert.equal(plan.target.width, Math.round(full.target.width * 0.5));
+  const ratio =
+    estimateTokens(plan.target.width, plan.target.height) / estimateTokens(full.target.width, full.target.height);
+  assert.ok(Math.abs(ratio - 0.25) < 0.02, 'got ' + ratio);
+});
+
+test('a measured unit is kept per tab and per viewport size', () => {
+  clearCaptureUnit(77);
+  assert.equal(getCaptureUnit(77, { cssWidth: 973, cssHeight: 551 }), null, 'nothing is known before a capture');
+  recordCaptureUnit(77, { x: 972 / 973, y: 542 / 551, cssWidth: 973, cssHeight: 551 });
+  const held = getCaptureUnit(77, { cssWidth: 973, cssHeight: 551 });
+  assert.ok(held && Math.abs(held.y - 542 / 551) < 1e-9);
+  assert.equal(
+    getCaptureUnit(77, { cssWidth: 1200, cssHeight: 800 }),
+    null,
+    'a resized viewport renders a different surface, so the measurement is dropped'
+  );
+  assert.equal(getCaptureUnit(77, { region: true }), null, 'a region measurement is held separately');
+  recordCaptureUnit(77, { region: true, x: 1, y: 1 });
+  assert.ok(getCaptureUnit(77, { region: true }), 'a region unit carries between regions');
+  clearCaptureUnit(77);
+  assert.equal(getCaptureUnit(77, { cssWidth: 973, cssHeight: 551 }), null);
+});
+
+test('a nonsense measurement is refused rather than stored', () => {
+  clearCaptureUnit(78);
+  assert.equal(recordCaptureUnit(78, { x: 0, y: 1, cssWidth: 800, cssHeight: 600 }), null);
+  assert.equal(recordCaptureUnit(78, { x: NaN, y: 1, cssWidth: 800, cssHeight: 600 }), null);
+  assert.equal(getCaptureUnit(78, { cssWidth: 800, cssHeight: 600 }), null);
 });
 
 test('the device pixel ratio comes from the two units the layout metrics report', () => {

@@ -74,8 +74,60 @@ export function summarizeArgs(tool, args = {}, { deny = [] } = {}) {
   return out;
 }
 
-/** A one-line account of what came back, sized for a log rather than a reply. */
-export function summarizeResult(tool, response = {}) {
+// ---------------------------------------------------------------------------
+// F3. Values this session has already redacted once
+// ---------------------------------------------------------------------------
+//
+// The journal redacted a write's value and then wrote the same text two lines
+// below it, because `javascript` returns whatever the page hands back and
+// read_page, get_page_text and find report counts rather than content. So the
+// strings a write redacted are remembered for the life of the host and a
+// javascript value carrying one is redacted too.
+//
+// This holds plaintext in memory and never writes it. It is the only way to
+// recognise the same text coming back through another tool.
+
+const REDACTED_VALUE_LIMIT = 50;
+
+/** Strings short enough to match by accident are not worth matching on. */
+const MIN_REDACTED_LENGTH = 4;
+
+/** @type {Set<string>} */
+const redactedValues = new Set();
+
+export function noteRedactedValue(value) {
+  if (typeof value !== 'string') return false;
+  const text = value.trim();
+  if (text.length < MIN_REDACTED_LENGTH) return false;
+  redactedValues.add(text);
+  while (redactedValues.size > REDACTED_VALUE_LIMIT) {
+    redactedValues.delete(redactedValues.values().next().value);
+  }
+  return true;
+}
+
+/** True when this text is, or contains, something already redacted this session. */
+export function holdsRedactedValue(text) {
+  if (typeof text !== 'string' || !text) return false;
+  for (const value of redactedValues) {
+    if (text.includes(value)) return true;
+  }
+  return false;
+}
+
+/** Test seam, so one suite's remembered values do not leak into the next. */
+export function forgetRedactedValues() {
+  redactedValues.clear();
+}
+
+/**
+ * A one-line account of what came back, sized for a log rather than a reply.
+ *
+ * `redact` is the journal switch. A javascript value is the one payload that
+ * travels into the journal, so it is dropped when the switch is on and when it
+ * carries a string a sensitive write already had redacted.
+ */
+export function summarizeResult(tool, response = {}, { redact = redactionOn() } = {}) {
   if (response.error) {
     const err = response.error;
     const out = { ok: false, error: clip(err.message || String(err), 300) };
@@ -105,8 +157,13 @@ export function summarizeResult(tool, response = {}) {
     if (failed) out.error = clip((failed.error && failed.error.message) || 'failed', 300);
   }
   if (r.navigated !== undefined) out.navigated = r.navigated;
-  if (r.value !== undefined && tool === 'javascript') out.value = clip(JSON.stringify(r.value), 120);
-  if (r.result !== undefined && tool === 'javascript') out.value = clip(JSON.stringify(r.result), 120);
+  if (tool === 'javascript') {
+    const returned = r.value !== undefined ? r.value : r.result;
+    if (returned !== undefined) {
+      const serialized = JSON.stringify(returned);
+      out.value = redact || holdsRedactedValue(serialized) ? '[value redacted]' : clip(serialized, 120);
+    }
+  }
   return out;
 }
 
@@ -131,7 +188,11 @@ export function writeEvidence(result = {}, { redact = redactionOn() } = {}) {
   if (write.confirmedBy) row.confirmedBy = write.confirmedBy;
   if (write.undo) row.undo = write.undo;
   if (write.value !== undefined && write.value !== null) {
-    row.value = redact || write.sensitive ? '[value redacted]' : clip(String(write.value), 200);
+    const hidden = redact || write.sensitive;
+    row.value = hidden ? '[value redacted]' : clip(String(write.value), 200);
+    // Remembered so the same text coming back through a javascript return
+    // value is redacted as well.
+    if (hidden) noteRedactedValue(String(write.value));
   }
   return row;
 }
@@ -159,15 +220,24 @@ export function makeEntry({ request, response, startedAt, finishedAt }) {
   };
   if (callId) entry.callId = callId;
 
-  if (redactionOn()) entry.redacted = true;
-  else entry.args = summarizeArgs(tool, args, { deny: deniedKeys(tool, { sensitive: result.sensitive }) });
+  const redact = redactionOn();
+  if (redact) {
+    entry.redacted = true;
+    // The values the arguments carried are still recognised later, even though
+    // none of them is written here.
+    for (const key of deniedKeys(tool, {})) noteRedactedValue(args[key]);
+  } else {
+    const deny = deniedKeys(tool, { sensitive: result.sensitive });
+    for (const key of deny) noteRedactedValue(args[key]);
+    entry.args = summarizeArgs(tool, args, { deny });
+  }
 
   // A write keeps its own field whatever the redaction switch says, because the
   // point of the switch is to drop values, not to hide that a write happened.
-  const write = writeEvidence(result);
+  const write = writeEvidence(result, { redact });
   if (write) entry.write = write;
 
-  return { ...entry, ...summarizeResult(tool, response || {}) };
+  return { ...entry, ...summarizeResult(tool, response || {}, { redact }) };
 }
 
 /**

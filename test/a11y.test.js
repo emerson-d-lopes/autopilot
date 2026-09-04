@@ -182,6 +182,112 @@ test('RESOLVE_REF returns geometry for a live element', async () => {
   assert.equal(resolved.geometry.inViewport, true);
 });
 
+// ---------------------------------------------------------------------------
+// The click point on an element whose text wraps
+// ---------------------------------------------------------------------------
+
+/** A DOMRect-shaped literal, which is all the geometry code reads. */
+function rectAt(left, top, width, height) {
+  return { left, top, width, height, right: left + width, bottom: top + height, x: left, y: top };
+}
+
+/**
+ * The fixture's hover menu, measured in the 0.1.28 pass: a 51px wide menu where
+ * "Hidden link" wraps onto two lines, so the box is 51x37 and its centre falls
+ * past the end of the short second line.
+ */
+function wrappedLinkPage() {
+  const page = loadPage('<!doctype html><body><nav id="menu"><a id="wrap" href="/x">Hidden link</a></nav></body>');
+  const doc = page.window.document;
+  // jsdom lays nothing out, so the document element reports a zero viewport and
+  // every point would read as outside it.
+  Object.defineProperty(doc.documentElement, 'clientWidth', { value: 1024, configurable: true });
+  Object.defineProperty(doc.documentElement, 'clientHeight', { value: 768, configurable: true });
+  const link = doc.getElementById('wrap');
+  const lines = [rectAt(39, 294, 51, 18), rectAt(39, 312, 25, 19)];
+  link.getBoundingClientRect = () => rectAt(39, 294, 51, 37);
+  link.getClientRects = () => lines;
+  // The browser reports the link on either line box and the menu everywhere
+  // else inside the box, which is what makes the box centre land on the parent.
+  doc.elementFromPoint = (x, y) => {
+    for (const line of lines) {
+      if (x >= line.left && x <= line.right && y >= line.top && y <= line.bottom) return link;
+    }
+    return doc.getElementById('menu');
+  };
+  return { ...page, doc, link, lines };
+}
+
+test('a click on a wrapped inline element aims at a line box, not past the end of one', async () => {
+  const { call, doc, lines } = wrappedLinkPage();
+  const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);
+  const link = nodes.find((n) => n.role === 'link');
+
+  const resolved = await call({ type: 'RESOLVE_REF', ref: link.ref });
+  const { centerX, centerY } = resolved.geometry;
+
+  assert.equal(resolved.geometry.pointSource, 'clientRect');
+  assert.equal(doc.elementFromPoint(centerX, centerY).id, 'wrap', 'the point the click uses is on the element');
+  const first = lines[0];
+  assert.ok(centerY >= first.top && centerY <= first.bottom, 'it is the first line box, got y ' + centerY);
+  // The box centre, which is what the tool used to aim at, is not on it.
+  assert.equal(doc.elementFromPoint(39 + 51 / 2, 294 + 37 / 2).id, 'menu');
+});
+
+test('a line box off the top of the viewport is skipped for one that is on screen', async () => {
+  const { call, doc, link } = wrappedLinkPage();
+  const lines = [rectAt(39, -40, 51, 18), rectAt(39, 20, 25, 19)];
+  link.getClientRects = () => lines;
+  link.getBoundingClientRect = () => rectAt(39, -40, 51, 79);
+  doc.elementFromPoint = (x, y) => {
+    for (const line of lines) {
+      if (x >= line.left && x <= line.right && y >= line.top && y <= line.bottom) return link;
+    }
+    return doc.getElementById('menu');
+  };
+
+  const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);
+  const resolved = await call({ type: 'RESOLVE_REF', ref: nodes.find((n) => n.role === 'link').ref });
+  assert.ok(resolved.geometry.centerY > 0, 'the point is inside the viewport, got ' + resolved.geometry.centerY);
+  assert.equal(doc.elementFromPoint(resolved.geometry.centerX, resolved.geometry.centerY).id, 'wrap');
+});
+
+test('an element covered on every line box is still reported as covered', async () => {
+  const { call, doc } = wrappedLinkPage();
+  const banner = doc.createElement('div');
+  banner.id = 'banner';
+  banner.textContent = 'Cookie banner';
+  doc.body.appendChild(banner);
+  doc.elementFromPoint = () => banner;
+
+  const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);
+  const resolved = await call({ type: 'RESOLVE_REF', ref: nodes.find((n) => n.role === 'link').ref });
+  assert.match(String(resolved.occludedBy), /Cookie banner|generic|div/i);
+});
+
+test('a line box with something over it is passed over for one that is clear', async () => {
+  const { call, doc, link, lines } = wrappedLinkPage();
+  const banner = doc.createElement('div');
+  banner.id = 'banner';
+  doc.body.appendChild(banner);
+  // The banner covers the first line box only.
+  doc.elementFromPoint = (x, y) => (y >= lines[0].top && y <= lines[0].bottom ? banner : link);
+
+  const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);
+  const resolved = await call({ type: 'RESOLVE_REF', ref: nodes.find((n) => n.role === 'link').ref });
+  assert.equal(resolved.occludedBy, null, 'the second line box is clear, so the click has somewhere to land');
+  assert.ok(resolved.geometry.centerY > lines[0].bottom, 'and that is where it aims, got ' + resolved.geometry.centerY);
+});
+
+test('an element with one rect keeps the centre of its box', async () => {
+  const { call } = loadPage(LOGIN_PAGE);
+  const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);
+  const button = nodes.find((n) => n.role === 'button');
+  const resolved = await call({ type: 'RESOLVE_REF', ref: button.ref });
+  assert.equal(resolved.geometry.centerX, 150);
+  assert.equal(resolved.geometry.pointSource, undefined);
+});
+
 test('a ref for a removed element reports a recoverable error', async () => {
   const { call, window } = loadPage(LOGIN_PAGE);
   const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);

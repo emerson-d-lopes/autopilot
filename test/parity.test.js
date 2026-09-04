@@ -8,7 +8,8 @@ import { installChromeStub } from './chrome-stub.js';
 
 installChromeStub();
 
-const { TOOLS, TOOL_NAMES } = await import('../host/schemas.js');
+const { TOOLS, TOOL_NAMES, missingRequired: hostMissing } = await import('../host/schemas.js');
+const { REQUIRED_ARGS, missingRequired } = await import('../extension/src/lib/required.js');
 const { handlers } = await import('../extension/src/lib/tools.js');
 const { READ_ONLY_TOOLS } = await import('../extension/src/lib/permissions.js');
 
@@ -79,4 +80,58 @@ test('the schema list matches what the extension reports to the host', () => {
   // means the host would advertise tools the browser cannot run.
   const extensionNames = Object.keys(handlers).concat([...ROUTER_TOOLS], [...SERVER_TOOLS]).sort();
   assert.deepEqual(extensionNames, [...TOOL_NAMES].sort());
+});
+
+// ---------------------------------------------------------------------------
+// Required arguments: the host checks the schema, the extension checks a copy
+// ---------------------------------------------------------------------------
+
+test('the extension requires everything the schema declares required', () => {
+  for (const tool of TOOLS) {
+    const declared = (tool.inputSchema.required || []).filter((key) => key !== 'browser');
+    if (!declared.length) continue;
+    // The three server tools never reach the extension, so they have no copy.
+    if (SERVER_TOOLS.has(tool.name) && tool.name !== 'upload_image') continue;
+    const held = REQUIRED_ARGS[tool.name] || [];
+    for (const key of declared) {
+      assert.ok(held.includes(key), tool.name + ' declares ' + key + ' required and the extension does not check it');
+    }
+  }
+});
+
+test('the extension does not invent a requirement the schema has not declared', () => {
+  for (const [name, keys] of Object.entries(REQUIRED_ARGS)) {
+    const tool = TOOLS.find((t) => t.name === name);
+    assert.ok(tool, name + ' is checked but not advertised');
+    for (const key of keys) {
+      assert.ok(
+        (tool.inputSchema.required || []).includes(key),
+        name + ' is checked for ' + key + ' which the schema does not require'
+      );
+    }
+  }
+});
+
+test('the two checks answer the same for the same call', () => {
+  const cases = [
+    ['navigate', { tabId: 1 }],
+    ['navigate', { url: 'https://example.com' }],
+    ['navigate', { tabId: 1, url: 'https://example.com' }],
+    ['computer', { tabId: 1 }],
+    ['form_input', { tabId: 1, ref: 'ref_1', value: '' }],
+    ['find', { tabId: 1, query: 'search' }],
+  ];
+  for (const [name, args] of cases) {
+    assert.deepEqual(
+      hostMissing(name, args).sort(),
+      missingRequired(name, args).sort(),
+      name + ' with ' + JSON.stringify(args)
+    );
+  }
+});
+
+test('a value of false, zero or empty string is not treated as missing', () => {
+  assert.deepEqual(missingRequired('form_input', { tabId: 1, ref: 'ref_1', value: false }), []);
+  assert.deepEqual(missingRequired('resize_window', { tabId: 0, width: 0, height: 0 }), []);
+  assert.deepEqual(hostMissing('form_input', { tabId: 1, ref: 'ref_1', value: '' }), []);
 });
