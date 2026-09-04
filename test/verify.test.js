@@ -166,6 +166,21 @@ test('the watch says whether anything that can hold text has focus', async () =>
   assert.equal(report.focusedEditable, true);
 });
 
+test('focus sitting on a frame is reported as unknown rather than as not editable', async () => {
+  // Focus inside a subframe reads as the frame element in the parent document.
+  // Reporting false there made a type into an iframe field fail with no_effect,
+  // and because that error says effects none the host retried it, so the text
+  // was typed twice: jqueryui.com's autocomplete ended up holding "jaja".
+  const { call, window } = loadPage('<!doctype html><body><input id="a"><iframe id="f"></iframe></body>');
+
+  window.document.getElementById('f').focus();
+  await call({ type: 'VERIFY_ARM' });
+  const report = await call({ type: 'VERIFY_REPORT', window: 20 });
+
+  assert.equal(report.focusedEditable, null, 'this document cannot see into the frame');
+  assert.notEqual(report.focusedEditable, false, 'false is what made the type report no_effect');
+});
+
 test('reporting without arming says so rather than inventing a result', async () => {
   const { call } = loadPage('<!doctype html><body></body>');
   const report = await call({ type: 'VERIFY_REPORT', window: 10 });
@@ -998,6 +1013,55 @@ test('a click that opens a tab stops waiting as soon as the tab arrives', async 
   assert.equal(result.newTabId, 101);
   assert.equal(result.evidence.waitedForTab, undefined, 'a tab already recorded costs no extra wait');
   assert.ok(Date.now() - started < 900);
+});
+
+test('a tab Chrome credited to the wrong opener is still reported', async () => {
+  // Chrome fills openerTabId from the window's active tab, and background mode
+  // never activates the tab being driven. Measured on Chrome for Testing 152: a
+  // click on a target="_blank" link in tab 369885084 produced a tab whose
+  // openerTabId was the browser's initial about:blank tab, so the opener route
+  // found nothing and the click reported no newTabId for a tab that existed.
+  const tools = await import('../extension/src/lib/tools.js');
+  const tabsLib = await import('../extension/src/lib/tabs.js');
+  tabsLib.resetRecentOpens();
+  const page = loadPage(BLANK_LINK);
+  const wired = wireSubmit(page);
+  wired.aim(page.window.document.getElementById('blank'));
+  await ownTabGroup();
+
+  // openerTabId 7 is some other tab entirely, which is what Chrome reports.
+  const opened = setTimeout(() => tabsLib.noteOpenedTab({ id: 202, openerTabId: 7 }), 400);
+
+  const ref = await refOf(page, 'blank link');
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+  clearTimeout(opened);
+
+  assert.equal(result.newTabId, 202, 'the tab is named through the ledger rather than the opener');
+  assert.equal(result.evidence.waitedForTab, true);
+  assert.deepEqual(tabsLib.peekAdopted(1), [], 'nothing was credited to the acting tab by mistake');
+  tabsLib.resetRecentOpens();
+});
+
+test('a tab opened outside the acting tab group is not claimed', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const tabsLib = await import('../extension/src/lib/tabs.js');
+  tabsLib.resetRecentOpens();
+  const page = loadPage(BLANK_LINK);
+  const wired = wireSubmit(page);
+  wired.aim(page.window.document.getElementById('blank'));
+  await ownTabGroup();
+
+  const get = globalThis.chrome.tabs.get;
+  globalThis.chrome.tabs.get = async (id) => ({ ...(await get(id)), id, groupId: id === 303 ? 42 : 7 });
+
+  const opened = setTimeout(() => tabsLib.noteOpenedTab({ id: 303, openerTabId: 7 }), 300);
+  const ref = await refOf(page, 'blank link');
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+  clearTimeout(opened);
+  globalThis.chrome.tabs.get = get;
+
+  assert.equal(result.newTabId, undefined, 'a tab in another group belongs to someone else');
+  tabsLib.resetRecentOpens();
 });
 
 // ---------------------------------------------------------------------------

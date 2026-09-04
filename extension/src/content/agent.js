@@ -216,6 +216,27 @@
     return v === '' || v === 'true';
   }
 
+  /** Elements that hold a document of their own, where focus goes out of view. */
+  const FRAME_TAGS = new Set(['IFRAME', 'FRAME', 'OBJECT', 'EMBED']);
+
+  /**
+   * Whether whatever holds focus could take typed text: true, false, or null
+   * when this document cannot tell.
+   *
+   * Focus inside a subframe reads as the frame element here, because that is
+   * what `document.activeElement` reports in the parent. The element that
+   * actually has focus lives in the frame's own document, so calling it not
+   * editable would condemn a type that landed. Measured on jqueryui.com, whose
+   * autocomplete field sits in a demo iframe: typing "ja" into it was reported
+   * as no_effect, the host retried, and the field ended up holding "jaja".
+   */
+  function focusedEditableState() {
+    const el = document.activeElement;
+    if (!el) return false;
+    if (FRAME_TAGS.has(String(el.tagName || '').toUpperCase())) return null;
+    return Boolean(isEditableHost(el) || isTextControl(el));
+  }
+
   // ---------------------------------------------------------------------------
   // Sensitive fields (F1)
   // ---------------------------------------------------------------------------
@@ -1529,10 +1550,7 @@
       // Whether whatever holds focus now could take typed text at all. A type
       // aimed at a button or at nothing has no value to compare, so this is the
       // only thing that separates it from a type that worked.
-      focusedEditable: Boolean(
-        document.activeElement &&
-          (isEditableHost(document.activeElement) || isTextControl(document.activeElement))
-      ),
+      focusedEditable: focusedEditableState(),
       valueSensitive: Boolean(state.focus.sensitive || after.focus.sensitive),
       scroll: { before: state.scroll, after: after.scroll, delta: scrollDelta },
       scrolled,
