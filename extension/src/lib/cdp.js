@@ -148,6 +148,57 @@ function isForeignFrameError(err) {
   return FOREIGN_FRAME.test((err && err.message) || '');
 }
 
+/**
+ * A stable name for why an attach was refused, so "the same cause" is
+ * decidable.
+ *
+ * Chrome's refusal for a foreign extension frame is the same sentence whichever
+ * tab it names, which is the point: a replacement refused for that reason is
+ * refused by the same extension that killed the tab it replaced.
+ */
+export function causeKey(message) {
+  const text = String(message || '');
+  const id = /chrome-extension:\/\/([a-z]{20,})/i.exec(text);
+  if (id) return 'foreign-frame:' + id[1].toLowerCase();
+  if (FOREIGN_FRAME.test(text)) return 'foreign-frame';
+  if (/already attached/i.test(text)) return 'already-attached';
+  return 'attach:' + text.slice(0, 120).toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The tab each replacement stands in for, and why its predecessor was replaced.
+ * @type {Map<number, {rootTabId: number, cause: string}>}
+ */
+const replacementOf = new Map();
+
+/** Original tab and cause already spent on a replacement, so it is spent once. */
+const replacementsMade = new Set();
+
+const MAX_REPLACEMENT_RECORDS = 100;
+
+/** Forgets the replacement ladder for a tab. Exported for tests. */
+export function forgetReplacements(tabId) {
+  if (tabId === undefined) {
+    replacementOf.clear();
+    replacementsMade.clear();
+    return;
+  }
+  replacementOf.delete(tabId);
+}
+
+/** The other extensions holding a frame in this tab, by host, for a hint. */
+async function interferingExtensions(tabId) {
+  if (!chrome.webNavigation || !chrome.webNavigation.getAllFrames) return [];
+  try {
+    const frames = (await chrome.webNavigation.getAllFrames({ tabId })) || [];
+    const own = 'chrome-extension://' + chrome.runtime.id;
+    const foreign = frames.filter((f) => /^chrome-extension:\/\//.test(f.url || '') && !String(f.url).startsWith(own));
+    return [...new Set(foreign.map((f) => String(f.url).split('/')[2]))];
+  } catch {
+    return [];
+  }
+}
+
 function rawAttach(tabId) {
   return new Promise((resolve, reject) => {
     chrome.debugger.attach({ tabId }, PROTOCOL_VERSION, () => {
@@ -397,8 +448,47 @@ async function attachAfterRefusal(tabId, firstError) {
     if (!isForeignFrameError(err)) throw err;
   }
 
+  // The ladder stops here when the tab is itself a replacement refused for the
+  // reason its predecessor was refused for. Left uncapped, an extension that
+  // injects into every page produced a replacement per call, six tabs across
+  // three runs, and never a working one.
+  const cause = causeKey(firstError.message);
+  const origin = replacementOf.get(tabId);
+  const rootTabId = origin ? origin.rootTabId : tabId;
+  const spent = replacementsMade.has(rootTabId + ' ' + cause);
+
+  if (spent) {
+    const blame = await interferingExtensions(tabId);
+    const named = blame.length ? ' Another extension (' + blame.join(', ') + ') has a frame in this tab.' : '';
+    throw new ToolError(
+      'attach_refused',
+      'Tab ' +
+        tabId +
+        ' was refused for the same reason as the tab it replaced, so it was not replaced again.' +
+        named +
+        (await describeFrames(tabId)),
+      {
+        cause: firstError.message,
+        hint: blame.length
+          ? 'Disable ' + blame.join(' or ') + ' for this profile, or drive the page from a profile without it.'
+          : 'Disable the extension holding a frame in this tab, or drive the page from a profile without it.',
+        effects: 'none',
+        retryable: false,
+        details: { tabId, replacedTabId: rootTabId === tabId ? undefined : rootTabId, cause },
+      }
+    );
+  }
+
   const replacement = sessionReplacer ? await sessionReplacer(tabId).catch(() => null) : null;
   if (replacement) {
+    replacementsMade.add(rootTabId + ' ' + cause);
+    replacementOf.set(replacement.newTabId, { rootTabId, cause });
+    while (replacementsMade.size > MAX_REPLACEMENT_RECORDS) {
+      replacementsMade.delete(replacementsMade.values().next().value);
+    }
+    while (replacementOf.size > MAX_REPLACEMENT_RECORDS) {
+      replacementOf.delete(replacementOf.keys().next().value);
+    }
     throw new ToolError(
       'tab_replaced',
       'Tab ' + tabId + ' could not be driven and was replaced by tab ' + replacement.newTabId + ' on the same URL.',
@@ -424,6 +514,7 @@ async function attachAfterRefusal(tabId, firstError) {
 export function forgetTab(tabId) {
   attachments.delete(tabId);
   awake.delete(tabId);
+  replacementOf.delete(tabId);
   throttledTabs.delete(tabId);
   beforeunloadPolicy.delete(tabId);
   lastDialog.delete(tabId);

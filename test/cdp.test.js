@@ -1077,3 +1077,127 @@ test('a plain 0, and ctrl held with an unrelated key, are not refused', async ()
   assert.ok(calls.some((c) => c.method === 'Input.dispatchKeyEvent'), 'ordinary keys still dispatch');
   await cdp.detachAll();
 });
+
+// ---------------------------------------------------------------------------
+// Open bug 3: the replacement ladder has a cap
+// ---------------------------------------------------------------------------
+//
+// With another extension injecting into every page, every tab is refused, the
+// replacement is refused in turn, and three runs produced six tabs and no
+// working call. A replacement refused for the reason its predecessor was
+// refused for stops the ladder.
+
+/** A frame tree carrying another extension's frame, which is what refuses the attach. */
+function scriptInterferingFrames(host = 'otherextensionidaaaa') {
+  chrome.webNavigation = {
+    async getAllFrames() {
+      return [
+        { frameId: 0, parentFrameId: -1, url: 'https://x.test/home' },
+        { frameId: 1, parentFrameId: 0, url: 'chrome-extension://' + host + '/inject.html' },
+      ];
+    },
+  };
+}
+
+test('causeKey calls two foreign-frame refusals the same cause and a different one different', () => {
+  assert.equal(cdp.causeKey(STALE), cdp.causeKey(STALE));
+  assert.equal(cdp.causeKey(STALE), 'foreign-frame');
+  assert.notEqual(
+    cdp.causeKey('Cannot access a chrome-extension://abcdefghijklmnopqrst/ URL of different extension'),
+    cdp.causeKey(STALE)
+  );
+  assert.equal(cdp.causeKey('Another debugger is already attached'), 'already-attached');
+});
+
+test('a replacement refused for the same cause returns attach_refused instead of another tab', async () => {
+  cdp.forgetReplacements();
+  scriptRefusingAttach({ refusals: 99 });
+  scriptInterferingFrames();
+  await chrome.storage.local.set({ attachRecovery: false });
+  const asked = [];
+  cdp.setSessionReplacer(async (tabId) => {
+    asked.push(tabId);
+    return { oldTabId: tabId, newTabId: 4300, url: 'https://x.test/home' };
+  });
+
+  await assert.rejects(
+    () => cdp.attach(30),
+    (err) => {
+      assert.equal(err.code, 'tab_replaced');
+      assert.equal(err.details.newTabId, 4300);
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () => cdp.attach(4300),
+    (err) => {
+      assert.equal(err.code, 'attach_refused', 'the ladder stops rather than opening a third tab');
+      assert.equal(err.retryable, false);
+      assert.equal(err.effects, 'none');
+      assert.match(err.message, /same reason as the tab it replaced/);
+      assert.match(err.message, /otherextensionidaaaa/, 'the interfering extension frame is named');
+      assert.match(err.hint, /Disable otherextensionidaaaa/);
+      assert.equal(err.details.replacedTabId, 30);
+      return true;
+    }
+  );
+
+  assert.deepEqual(asked, [30], 'exactly one replacement was opened for this tab');
+  cdp.setSessionReplacer(null);
+  await chrome.storage.local.clear();
+  delete chrome.webNavigation;
+});
+
+test('the same original tab is replaced once per cause, not once per call', async () => {
+  cdp.forgetReplacements();
+  scriptRefusingAttach({ refusals: 99 });
+  scriptInterferingFrames();
+  await chrome.storage.local.set({ attachRecovery: false });
+  const asked = [];
+  cdp.setSessionReplacer(async (tabId) => {
+    asked.push(tabId);
+    return { oldTabId: tabId, newTabId: 4400, url: 'https://x.test/home' };
+  });
+
+  await assert.rejects(() => cdp.attach(50), (err) => err.code === 'tab_replaced');
+  await assert.rejects(
+    () => cdp.attach(50),
+    (err) => {
+      assert.equal(err.code, 'attach_refused');
+      return true;
+    }
+  );
+  assert.deepEqual(asked, [50]);
+
+  cdp.setSessionReplacer(null);
+  await chrome.storage.local.clear();
+  delete chrome.webNavigation;
+});
+
+test('a replacement refused for a different cause is still replaced once', async () => {
+  cdp.forgetReplacements();
+  scriptRefusingAttach({ refusals: 99 });
+  scriptInterferingFrames();
+  await chrome.storage.local.set({ attachRecovery: false });
+  const asked = [];
+  cdp.setSessionReplacer(async (tabId) => {
+    asked.push(tabId);
+    return { oldTabId: tabId, newTabId: 4500 + asked.length, url: 'https://x.test/home' };
+  });
+
+  await assert.rejects(() => cdp.attach(60), (err) => err.code === 'tab_replaced');
+
+  // A second extension, so the refusal on the replacement is not the one that
+  // killed the tab it replaced.
+  scriptRefusingAttach({
+    refusals: 99,
+    message: 'Cannot access a chrome-extension://abcdefghijklmnopqrst/ URL of different extension',
+  });
+  await assert.rejects(() => cdp.attach(4501), (err) => err.code === 'tab_replaced');
+
+  assert.deepEqual(asked, [60, 4501], 'a new cause earns one more replacement');
+  cdp.setSessionReplacer(null);
+  await chrome.storage.local.clear();
+  delete chrome.webNavigation;
+});
