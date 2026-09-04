@@ -723,7 +723,7 @@ export function clearScalingContext(tabId) {
 // recent stamp waits for a paint that postdates it. A capture on a tab nothing
 // has touched waits for nothing.
 
-/** @type {Map<number, number>} */
+/** @type {Map<number, {at: number, window: number}>} */
 const lastInput = new Map();
 
 /** How long after an input a capture still waits for the paint that follows it. */
@@ -732,13 +732,36 @@ export const PAINT_WAIT_WINDOW_MS = 2000;
 /** Ceiling on the wait, so a page that never paints costs a fixed amount. */
 export const PAINT_CEILING_MS = 300;
 
-export function noteInput(tabId, at = Date.now()) {
+/**
+ * Records the input and how long the action that sent it spends verifying.
+ *
+ * An action that watches for its own effect answers only when its window
+ * closes, so the capture that follows it arrives that much later. A submit
+ * watches for 3000 ms against a paint window of 2000 ms, which put every
+ * capture after an Enter or a Send outside the window: the capture was correct
+ * and carried no `paint` evidence at all. The window is the action's own
+ * verification window plus the ordinary 2000 ms, so the grace after the action
+ * returns is the same whatever the action watched for.
+ *
+ * @param {number} tabId
+ * @param {number} [at] when the input was dispatched
+ * @param {{window?: number}} [options] the action's verification window, 0 for none
+ */
+export function noteInput(tabId, at = Date.now(), { window = 0 } = {}) {
   if (tabId === undefined || tabId === null) return;
-  lastInput.set(tabId, at);
+  const watched = Number.isFinite(window) && window > 0 ? window : 0;
+  lastInput.set(tabId, { at, window: PAINT_WAIT_WINDOW_MS + watched });
 }
 
 export function lastInputAt(tabId) {
-  return lastInput.get(tabId) || 0;
+  const entry = lastInput.get(tabId);
+  return entry ? entry.at : 0;
+}
+
+/** How long this tab's last input keeps a capture waiting for a paint. */
+export function paintWaitWindow(tabId) {
+  const entry = lastInput.get(tabId);
+  return entry ? entry.window : PAINT_WAIT_WINDOW_MS;
 }
 
 export function clearInputMark(tabId) {
@@ -747,6 +770,6 @@ export function clearInputMark(tabId) {
 
 /** True when a capture on this tab should wait for a paint before reading pixels. */
 export function needsPaintWait(tabId, now = Date.now()) {
-  const at = lastInput.get(tabId);
-  return Boolean(at) && now - at < PAINT_WAIT_WINDOW_MS;
+  const entry = lastInput.get(tabId);
+  return Boolean(entry && entry.at) && now - entry.at < entry.window;
 }

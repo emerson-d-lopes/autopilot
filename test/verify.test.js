@@ -879,6 +879,30 @@ test('an Enter in a composer is treated as a submit', async () => {
   assert.equal(wired.thread.textContent, 'sent with the keyboard');
 });
 
+test('a submit leaves the paint window open for the capture that follows it', async () => {
+  // The submit watch runs for up to SUBMIT_WINDOW_MS, so a capture right after
+  // it used to land outside the 2000 ms paint window and carry no paint
+  // evidence. Bug 2 from the third live pass.
+  const tools = await import('../extension/src/lib/tools.js');
+  const shot = await import('../extension/src/lib/screenshot.js');
+  const page = loadPage(THREAD);
+  const wired = wireSubmit(page);
+  wired.editor.textContent = 'sent with the keyboard';
+  wired.editor.focus();
+  await ownTabGroup();
+  shot.clearInputMark(1);
+
+  const at = Date.now();
+  await tools.execute('computer', { action: 'key', tabId: 1, text: 'Enter' }, { clientId: 'default' });
+
+  assert.ok(
+    shot.paintWaitWindow(1) >= tools.SUBMIT_WINDOW_MS,
+    'the window is ' + shot.paintWaitWindow(1) + ', the submit watch is ' + tools.SUBMIT_WINDOW_MS
+  );
+  assert.equal(shot.needsPaintWait(1, at + tools.SUBMIT_WINDOW_MS), true);
+  shot.clearInputMark(1);
+});
+
 test('the submit watch never carries a sensitive value', async () => {
   const page = loadPage(`<!doctype html><body>
     <form id="f"><input id="p" type="password"><button type="submit">Submit</button></form>

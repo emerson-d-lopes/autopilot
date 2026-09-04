@@ -13,6 +13,7 @@ const {
   noteInput,
   lastInputAt,
   needsPaintWait,
+  paintWaitWindow,
   clearInputMark,
   PAINT_WAIT_WINDOW_MS,
   PAINT_CEILING_MS,
@@ -40,6 +41,8 @@ const {
   isBatching,
   pendingContextFor,
 } = await import('../extension/src/lib/screenshot.js');
+
+const { SUBMIT_WINDOW_MS } = await import('../extension/src/lib/tools.js');
 
 test('a tall viewport is bounded by the default token budget, not just the long edge', () => {
   // 1568x1411 sits under the long-edge cap and still costs about 2800 tokens.
@@ -135,6 +138,36 @@ test('the mark is per tab, so one tab acting does not slow a capture on another'
   noteInput(95, 3_000_000);
   assert.equal(needsPaintWait(96, 3_000_010), false);
   assert.equal(needsPaintWait(95, 3_000_010), true);
+});
+
+test('a submit keeps the paint window open past its own three second watch', () => {
+  // The submit watch answers only when its window closes, so the capture that
+  // follows lands about SUBMIT_WINDOW_MS after the input. On a 2000 ms window
+  // that capture carried no paint evidence. Bug 2 from the third live pass.
+  const now = 4_000_000;
+  noteInput(94, now, { window: SUBMIT_WINDOW_MS });
+  assert.ok(paintWaitWindow(94) >= SUBMIT_WINDOW_MS, 'the window covers the submit watch');
+  assert.equal(needsPaintWait(94, now + SUBMIT_WINDOW_MS), true, 'the capture right after the watch closes');
+  assert.equal(needsPaintWait(94, now + SUBMIT_WINDOW_MS + 100), true);
+  assert.equal(needsPaintWait(94, now + SUBMIT_WINDOW_MS + PAINT_WAIT_WINDOW_MS), false, 'and it does close');
+});
+
+test('an input with no watch of its own keeps the ordinary paint window', () => {
+  const now = 5_000_000;
+  noteInput(93, now);
+  assert.equal(paintWaitWindow(93), PAINT_WAIT_WINDOW_MS);
+  assert.equal(needsPaintWait(93, now + PAINT_WAIT_WINDOW_MS - 1), true);
+  assert.equal(needsPaintWait(93, now + PAINT_WAIT_WINDOW_MS), false);
+  for (const bad of [0, -1, undefined, NaN]) {
+    noteInput(93, now, { window: bad });
+    assert.equal(paintWaitWindow(93), PAINT_WAIT_WINDOW_MS, String(bad));
+  }
+});
+
+test('a tab with no input at all reports the ordinary paint window', () => {
+  clearInputMark(92);
+  assert.equal(paintWaitWindow(92), PAINT_WAIT_WINDOW_MS);
+  assert.equal(needsPaintWait(92, Date.now()), false);
 });
 
 test('the paint wait is bounded, so a page that never paints costs a fixed amount', () => {

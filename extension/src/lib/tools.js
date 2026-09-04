@@ -323,7 +323,9 @@ async function readVerify(tabId, armed, { window = VERIFY_WINDOW_MS } = {}) {
  */
 async function dispatchVerified(tabId, dispatch, { point, window, ref, retry = true } = {}) {
   cdp.clearThrottleFlag(tabId);
-  shot.noteInput(tabId);
+  // The capture that follows this action arrives after the verification window
+  // closes, so the paint clock is told how long that window is (R3).
+  shot.noteInput(tabId, Date.now(), { window });
   let armed = await armVerify(tabId, point, ref);
   await dispatch();
   let outcome = await readVerify(tabId, armed, { window });
@@ -336,7 +338,7 @@ async function dispatchVerified(tabId, dispatch, { point, window, ref, retry = t
 
   await cdp.wake(tabId, { force: true }).catch(() => {});
   cdp.clearThrottleFlag(tabId);
-  shot.noteInput(tabId);
+  shot.noteInput(tabId, Date.now(), { window });
   armed = await armVerify(tabId, point, ref);
   await dispatch();
   outcome = await readVerify(tabId, armed, { window });
