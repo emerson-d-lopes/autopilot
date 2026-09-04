@@ -765,6 +765,50 @@ test('a Send that does nothing reports unknown and says to re-read', async () =>
   assert.equal(wired.thread.textContent, '');
 });
 
+test('a click that opened a modal reports applied, not unknown', async () => {
+  // From the 0.1.35 rehearsal: the Delete menu item opened GitHub's confirm
+  // modal, the watch counted 40 mutations and focus on its Cancel button, and
+  // the result said effects: unknown because no submit signal had fired. The
+  // watch saw the page move, so applied is the truthful value and the missing
+  // submit evidence belongs in a warning.
+  const tools = await import('../extension/src/lib/tools.js');
+  const perms = await import('../extension/src/lib/permissions.js');
+  const page = loadPage(`<!doctype html><body>
+    <div id="comment">a comment</div>
+    <button id="del">Delete</button>
+    <div id="modals"></div>
+  </body>`);
+  const wired = wireSubmit(page, { behaviour: 'nothing' });
+  const { window } = page;
+  const del = window.document.getElementById('del');
+  wired.aim(del);
+  del.addEventListener('click', () => {
+    const modal = window.document.createElement('div');
+    modal.setAttribute('role', 'dialog');
+    modal.innerHTML = '<p>Are you sure you want to delete this?</p>';
+    const cancel = window.document.createElement('button');
+    cancel.textContent = 'Cancel';
+    modal.appendChild(cancel);
+    window.document.getElementById('modals').appendChild(modal);
+    cancel.focus();
+  });
+  await ownTabGroup();
+  perms.invalidatePolicyCache();
+
+  const ref = await refOf(page, 'Delete');
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+
+  assert.deepEqual(result.evidence.submit.fired, [], 'no submit signal fired');
+  assert.ok(result.evidence.mutations >= 1, 'the watch counted the modal going in: ' + result.evidence.mutations);
+  assert.equal(result.evidence.focusChanged, true, 'focus moved to the modal');
+  assert.equal(result.effects, 'applied');
+  assert.equal(result.hint, undefined, 'nothing tells the caller to retry a click that did something');
+  assert.ok(
+    result.warnings.some((w) => /no submit evidence fired/.test(w)),
+    'warnings: ' + result.warnings.join(' | ')
+  );
+});
+
 test('a sent message reports that nothing undoes it', async () => {
   const tools = await import('../extension/src/lib/tools.js');
   const page = loadPage(THREAD);
