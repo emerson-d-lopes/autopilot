@@ -7,6 +7,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { installChromeStub } from './chrome-stub.js';
 
 installChromeStub();
@@ -1385,4 +1386,44 @@ test('awaitTurn gives a page call the same deadline, since sendMessage has none'
   await first;
   await cdp.awaitTurn(74, 'READ_PAGE', 150);
   await cdp.detachAll();
+});
+
+// ---------------------------------------------------------------------------
+// A cosmetic page call must not spend the caller's whole deadline
+// ---------------------------------------------------------------------------
+
+test('hiding the indicator before a capture gives up early on a frozen renderer', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  assert.ok(
+    tools.OVERLAY_TURN_TIMEOUT_MS <= 2000,
+    'the overlay budget is a fraction of a command deadline: ' + tools.OVERLAY_TURN_TIMEOUT_MS
+  );
+
+  scriptSlowDebugger({ delay: 4000 });
+  await cdp.attach(76);
+  const busy = cdp.send(76, 'Runtime.evaluate', { expression: 'busy()' }, { timeout: 8000 });
+  await new Promise((r) => setTimeout(r, 20));
+
+  // What the swallowed HIDE_FOR_TOOL_USE costs before the capture sends its
+  // first command. On the default deadline this was 20 s, and the capture then
+  // waited 20 s of its own, so a 20 s timeout reached the caller after 40 s.
+  const started = Date.now();
+  await assert.rejects(
+    () => cdp.awaitTurn(76, 'HIDE_FOR_TOOL_USE', tools.OVERLAY_TURN_TIMEOUT_MS),
+    (err) => err.code === 'timeout'
+  );
+  const cost = Date.now() - started;
+  assert.ok(cost < 2000, 'the hide gave up in ' + cost + 'ms');
+
+  await busy;
+  await cdp.detachAll();
+});
+
+test('every indicator hide and show carries the overlay budget', () => {
+  const source = readFileSync(new URL('../extension/src/lib/tools.js', import.meta.url), 'utf8');
+  const calls = source.match(/pageCall\([^;]*?(?:HIDE_FOR_TOOL_USE|SHOW_AFTER_TOOL_USE)[^;]*?\)\s*\.catch/g) || [];
+  assert.ok(calls.length >= 4, 'found ' + calls.length + ' indicator page calls');
+  for (const call of calls) {
+    assert.match(call, /OVERLAY_TURN_TIMEOUT_MS/, 'an indicator page call waits on the default deadline: ' + call);
+  }
 });
