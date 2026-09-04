@@ -1,5 +1,7 @@
 # What would make chrome-mcp better, faster and more reliable than Claude in Chrome
 
+The project was named chrome-mcp and its extension was named Lantern when these items were written. It is now Autopilot. The references below keep the old name because they describe the build that was measured.
+
 Every item merges two sources: the static reverse-engineering of Claude in Chrome 1.0.90 in [`evidence/X-official-internals.md`](evidence/X-official-internals.md) part 3, and what the live campaign actually measured, in the other nine files under [`evidence/`](evidence/). The findings are summarized in [REPORT.md](REPORT.md).
 
 Every item states what to change, the measured or observed fact that motivates it with its citation, where in this repo it lands, effort and priority. Effort is small (under an hour), medium (a few hours), large (a day or more). Line numbers in `chrome-mcp` paths were read from the source tree at version 0.1.9. Line numbers in citations to `X-official-internals.md` refer to prettified copies of the official bundles, described in that file's method section.

@@ -1,6 +1,6 @@
-# chrome-mcp
+# Autopilot
 
-An MCP server that drives your real Chrome through a Manifest V3 extension and the DevTools Protocol. The extension is called Lantern: it works in the background, in its own tab group, and its popup shows what it is doing. Built to match the capability set documented in [SPEC.md](SPEC.md).
+An MCP server that drives your real Chrome through a Manifest V3 extension and the DevTools Protocol. It works in the background, in its own tab group, and its popup shows what it is doing. Built to match the capability set documented in [SPEC.md](SPEC.md).
 
 It works against the browser you are already signed into, so it can act on Gmail, Notion, an internal dashboard, or a localhost dev server without any API credentials.
 
@@ -24,8 +24,8 @@ It works against the browser you are already signed into, so it can act on Gmail
 ## Install
 
 ```bash
-git clone https://github.com/emerson-d-lopes/chrome-mcp.git
-cd chrome-mcp
+git clone https://github.com/emerson-d-lopes/autopilot.git
+cd autopilot
 npm install
 npm run install-host    # registers the native messaging host for Chrome, Edge, Brave, Vivaldi
 ```
@@ -44,13 +44,13 @@ Then point your MCP client at the server. It speaks MCP over stdio, so any clien
 **Claude Code**
 
 ```bash
-claude mcp add chrome-mcp -- node "<repo>/host/mcp-server.js"
+claude mcp add autopilot -- node "<repo>/host/mcp-server.js"
 ```
 
 **Claude Desktop**: `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`)
 
 ```json
-{ "mcpServers": { "chrome-mcp": { "command": "node", "args": ["<repo>/host/mcp-server.js"] } } }
+{ "mcpServers": { "autopilot": { "command": "node", "args": ["<repo>/host/mcp-server.js"] } } }
 ```
 
 **Cursor**: `.cursor/mcp.json` in the project or `~/.cursor/mcp.json`, same `mcpServers` shape as above.
@@ -58,19 +58,19 @@ claude mcp add chrome-mcp -- node "<repo>/host/mcp-server.js"
 **VS Code (Copilot agent mode)**: `.vscode/mcp.json`
 
 ```json
-{ "servers": { "chrome-mcp": { "type": "stdio", "command": "node", "args": ["<repo>/host/mcp-server.js"] } } }
+{ "servers": { "autopilot": { "type": "stdio", "command": "node", "args": ["<repo>/host/mcp-server.js"] } } }
 ```
 
 **OpenCode**: `opencode.json`
 
 ```json
-{ "mcp": { "chrome-mcp": { "type": "local", "command": ["node", "<repo>/host/mcp-server.js"], "enabled": true } } }
+{ "mcp": { "autopilot": { "type": "local", "command": ["node", "<repo>/host/mcp-server.js"], "enabled": true } } }
 ```
 
 **Codex CLI**: `~/.codex/config.toml`
 
 ```toml
-[mcp_servers.chrome-mcp]
+[mcp_servers.autopilot]
 command = "node"
 args = ["<repo>/host/mcp-server.js"]
 ```
@@ -81,7 +81,7 @@ args = ["<repo>/host/mcp-server.js"]
 
 On Windows, give the path with forward slashes or doubled backslashes inside JSON. The server finds the browser through a registry directory the native host writes, so no port or URL is configured anywhere. With one browser connected it is used automatically; with several, the session calls `select_browser`.
 
-Two environment variables are read by the server: `CHROME_MCP_BROWSER_ID` pins a browser for the session, and `CHROME_MCP_LOG_DIR` moves the action journal.
+Two environment variables are read by the server: `AUTOPILOT_BROWSER_ID` pins a browser for the session, and `AUTOPILOT_LOG_DIR` moves the action journal. The project was called chrome-mcp until 0.2.0, so the matching `CHROME_MCP_*` names are still read for one release and the host logs a line when it uses one.
 
 Check everything at once:
 
@@ -122,7 +122,7 @@ Tool names and argument spellings from Claude in Chrome (`tabs_create_mcp`, `jav
 
 ## The extension
 
-Lantern shows up as a monochrome mark in the toolbar. Its popup shows the connection state, the sessions this browser holds with their status marks, and the last few calls. Clicking a session reveals its tabs, which is the one way a Lantern tab is ever brought to the front. The settings page holds the permission mode, blocked and allowed hosts, saved shortcuts, and granted sites.
+Autopilot shows up as a monochrome mark in the toolbar. Its popup shows the connection state, the sessions this browser holds with their status marks, and the last few calls. Clicking a session reveals its tabs, which is the one way an Autopilot tab is ever brought to the front. The settings page holds the permission mode, blocked and allowed hosts, saved shortcuts, and granted sites.
 
 Both pages are built on the Ash Lumen design system (`extension/src/ui/tokens.css` and `components.css`, copied from the `ash-lumen` package) with a small layout and motion file of their own. The icon is `extension/src/ui/icon.svg`, rendered to the PNG sizes Chrome needs by `npm run icons` through the development browser.
 
@@ -160,7 +160,7 @@ It is presentation only. Input is dispatched through CDP and is byte for byte id
 
 ## Action journal
 
-Every call is recorded by the native host, which sees each request and its response. Two files per browser per day under `%TEMP%\chrome-mcp-logs\<browser id>\` (or `CHROME_MCP_LOG_DIR`): `<date>.jsonl` with one object per call, and `<date>.md`, a timeline a person can read:
+Every call is recorded by the native host, which sees each request and its response. Two files per browser per day under `%TEMP%\autopilot-logs\<browser id>\` (or `AUTOPILOT_LOG_DIR`): `<date>.jsonl` with one object per call, and `<date>.md`, a timeline a person can read:
 
 ```
 - 05:48:14 **navigate** tab 12 https://httpbin.org/forms/post `url="https://httpbin.org/forms/post"` (505ms) url=https://httpbin.org/forms/post
@@ -170,7 +170,7 @@ Every call is recorded by the native host, which sees each request and its respo
 
 Each entry has the time, the tool, the tab and the page it was on after the call, the arguments with bulk removed (no image data, long strings clipped), the duration, and either a short account of the result or the error. `npm run log` prints today's timeline, `npm run log -- --tail 20` the last twenty calls, `--json` the raw entries, `--date 2026-09-03` another day. The journal never blocks a call: a write failure is dropped.
 
-The host's own lifecycle log (connections, disconnections, transport errors) is separate, at `%TEMP%\chrome-mcp-host.log`.
+The host's own lifecycle log (connections, disconnections, transport errors) is separate, at `%TEMP%\autopilot-host.log`.
 
 ## Several browsers
 

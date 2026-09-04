@@ -1,13 +1,13 @@
-# How chrome-mcp compares
+# How Autopilot compares
 
-Written 2026-09-03. Compares this project (the Lantern extension plus the `chrome-mcp` server) with the browser tools an agent can pick from today. Facts about the other projects come from their published docs and from search summaries of them, cited at the end. Facts about this project come from running it. Where a number is measured, the section says how.
+Written 2026-09-03. Compares this project (the Autopilot extension plus its MCP server) with the browser tools an agent can pick from today. Facts about the other projects come from their published docs and from search summaries of them, cited at the end. Facts about this project come from running it. Where a number is measured, the section says how.
 
 ## The field
 
 | Project | Browser it drives | Transport | Page model | Status |
 |---|---|---|---|---|
 | Claude in Chrome (Anthropic) | The user's own Chrome, Edge, Brave, Arc, Vivaldi, Opera, through a Web Store extension | Native messaging to Claude Code, remote sessions through a bridge host | Accessibility tree with `ref_N` handles, screenshots, `find` through a nested model call | Shipped, 9 million installs by June 2026 |
-| chrome-mcp (this project) | The user's own Chromium browser through an unpacked extension | Native messaging host, named pipe, MCP over stdio | Same tree and refs, local `find`, `quick` script protocol | Working, unreleased |
+| Autopilot (this project) | The user's own Chromium browser through an unpacked extension | Native messaging host, named pipe, MCP over stdio | Same tree and refs, local `find`, `quick` script protocol | Working, unreleased |
 | Playwright MCP (Microsoft) | A browser it launches itself, or the user's Chrome through an optional extension mode | MCP, in-process Playwright | Accessibility snapshot with refs, over 20 core tools and over 70 with every category enabled | Shipped, maintained by the Playwright team |
 | Chrome DevTools MCP (Google) | A Chrome it launches, or a running one over a DevTools URL | MCP, Puppeteer over CDP | Snapshot with `uid` handles, plus performance traces, network, console, memory, Lighthouse: 26 tools | Shipped, official Chrome DevTools project |
 | Browser MCP | The user's own Chrome through an extension | Extension to a local server over a WebSocket | Adapted from Playwright MCP: navigation, clicks, keys, waits, snapshots | Shipped |
@@ -18,7 +18,7 @@ Two families. One launches a fresh browser, which is repeatable and has no login
 
 ## Feature by feature
 
-| Capability | Claude in Chrome | chrome-mcp | Playwright MCP | Chrome DevTools MCP | Browser MCP |
+| Capability | Claude in Chrome | Autopilot | Playwright MCP | Chrome DevTools MCP | Browser MCP |
 |---|---|---|---|---|---|
 | Uses the user's logged-in profile | Yes | Yes | Only in extension mode | Only when connecting to a running Chrome started with a debugging port | Yes |
 | Element handles from a tree | `ref_N` | `ref_N` | refs from `browser_snapshot` | `uid` from `take_snapshot` | refs |
@@ -42,7 +42,7 @@ Two families. One launches a fresh browser, which is repeatable and has no login
 
 Numbers for this project are medians from the action journal of the runs on 2026-09-03 against the development browser (Chrome for Testing 152, Windows 11), with the session tab hidden behind another tab. The other projects publish no comparable per-call figures, so their column is what their architecture implies.
 
-| Call | chrome-mcp, measured | What it involves | Others |
+| Call | Autopilot, measured | What it involves | Others |
 |---|---|---|---|
 | `read_page` (accessibility tree, 13 nodes) | 6ms | Content script walks the DOM | Playwright and DevTools MCP build the snapshot from the browser's accessibility tree over CDP, typically tens of ms |
 | `form_input` | 4ms | Content script sets the value and fires events | Comparable |

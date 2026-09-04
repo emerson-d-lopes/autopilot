@@ -1,6 +1,6 @@
-# chrome-mcp: status, parity and test coverage
+# Autopilot: status, parity and test coverage
 
-State of the build as of 2026-09-04, extension 0.1.39. 26 tools, 30 test files.
+State of the build as of 2026-09-04, extension 0.2.0. 26 tools, 30 test files.
 
 - Source: about 17,600 lines across the extension, host and tools
 - Tests: about 10,500 lines
@@ -12,7 +12,7 @@ On 2026-09-04 the non-browser files pass, 640 tests across 24 files, and `campai
 
 Claude Code drives Chrome through Anthropic's `claude-in-chrome` extension, which exposes 22 tools. This is the mapping.
 
-| Claude Code | chrome-mcp | Notes |
+| Claude Code | Autopilot | Notes |
 |---|---|---|
 | `tabs_context_mcp` | `tabs_context` | `createIfEmpty` opens an unselected tab in the window the user is looking at, and nothing is ever brought to the front. Claude in Chrome opens a new window and selects its tabs |
 | `tabs_create_mcp` | `tabs_create` | |
@@ -193,7 +193,7 @@ npm run test:resilience # the slow recovery tests on their own
 
 The browser-driven files share one bridge, so the suite runs with `--test-concurrency=1`. Running them in parallel had the recovery tests killing the bridge underneath the live tests.
 
-With more than one browser connected the browser-driven files pick, in order, `CHROME_MCP_BROWSER_ID`, the browser recorded in `.browsers/dev-browser-id` by `npm run browser`, then the earliest connected. The full run takes about five minutes with a browser up. During development run the file you are working on, and `npm run test:fast` skips the recovery tests.
+With more than one browser connected the browser-driven files pick, in order, `AUTOPILOT_BROWSER_ID`, the browser recorded in `.browsers/dev-browser-id` by `npm run browser`, then the earliest connected. The full run takes about five minutes with a browser up. During development run the file you are working on, and `npm run test:fast` skips the recovery tests.
 
 ## Known limits
 
@@ -214,7 +214,7 @@ Five branches off `main`, merged onto `plan/integration` in the order harness, h
 What each branch landed:
 
 - `plan/harness` (Phase 0): the campaign fixture and its Node server (`/slow`, `/big`, `/redirect`, `/spa`, `/dialog`, `/api/*`, plus `/sensitive.html`, `/unload.html`, `/scroll.html`, `/composer.html`), `test/campaign.test.js` as the "already ahead" table, and `tools/bench.js` behind `npm run bench`.
-- `plan/host-contract` (Phase 1, host half): `host/errors.js` as the one result shape and error catalogue, contract marshalling with retries and correlation ids in `host/mcp-server.js`, output caps and credential-shaped redaction on the read path, a parked response queue with a generation stamp, journal rotation and the `CHROME_MCP_JOURNAL_REDACT` switch.
+- `plan/host-contract` (Phase 1, host half): `host/errors.js` as the one result shape and error catalogue, contract marshalling with retries and correlation ids in `host/mcp-server.js`, output caps and credential-shaped redaction on the read path, a parked response queue with a generation stamp, journal rotation and the `AUTOPILOT_JOURNAL_REDACT` switch.
 - `plan/attach-recovery` (C2, C5, C6 extension half, R14): the attach recovery ladder with tab replacement, dialogs answered and reported in the result, a bounded frozen renderer, an offscreen document keeping the worker alive, stale results dropped after a reconnect, and batch pre-validation.
 - `plan/content-verify` (C3, R2, R3, R5, R7, S4, S7, P5, P9, F1): every input arms a watch in the page and reports `effects` and `evidence`, `get_page_text` falls back to `body` and names the container, per-key typing carries real key codes, drags dwell either side of the movement, `read_page interactive` fits a news page inline, sensitive fields are redacted at the source.
 - `plan/profiles` (M1 to M5): profile directory, name and account per connected browser, a user-set label from the options page, signed-in site detection, `select_browser` by label, profile, account or site, a per-call `browser` argument, and the profile row in `npm run doctor`.
@@ -444,7 +444,7 @@ Test counts on 2026-09-04, `node --test --test-concurrency=1` per file, no brows
 
 `node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 42 files under `extension/src`, `host` and `tools`.
 
-The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. The ten bugs the second pass opened are untouched by this merge. The live checks the ten fixes ask for are open: `resize_window` against a maximized window, a session read back after `chrome.runtime.reload()`, the replacement ladder against the interferer, a queued CDP command behind a busy renderer, and `doctor` against a host started with `CHROME_MCP_JOURNAL_REDACT` set.
+The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. The ten bugs the second pass opened are untouched by this merge. The live checks the ten fixes ask for are open: `resize_window` against a maximized window, a session read back after `chrome.runtime.reload()`, the replacement ladder against the interferer, a queued CDP command behind a busy renderer, and `doctor` against a host started with `AUTOPILOT_JOURNAL_REDACT` set.
 
 ## Live verification of the first wave-2 bug fixes, 2026-09-04
 
@@ -467,7 +467,7 @@ The merge produced no conflicts. Both branches had bumped `extension/manifest.js
 
 What the ten fixes change:
 
-- A `javascript` return value is dropped from the journal when `CHROME_MCP_JOURNAL_REDACT` is on, and when it repeats a string a sensitive write or a denylisted argument already had redacted in this session. This governs the journal only.
+- A `javascript` return value is dropped from the journal when `AUTOPILOT_JOURNAL_REDACT` is on, and when it repeats a string a sensitive write or a denylisted argument already had redacted in this session. This governs the journal only.
 - A `navigate` that changes origin carries the transition warning on its own result. `checkPermission` takes `noteTransition`, and `navigate` passes false, so the origin is recorded by the check that runs on the URL the tab landed on.
 - An unanswered browser confirmation waits 60 s rather than the host's 120 s call timeout, closes the notification on the way out, and returns `confirmation_required` with `retryable` false.
 - A confirmation renders the screenshot id beside the token, the control and the origin, and `computer` takes an `imageId` for action `screenshot`, which returns the stored capture rather than taking a new one.
@@ -627,3 +627,28 @@ The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, 
 1. The session restore, driven by stopping the worker from `chrome://serviceworker-internals`. `tabs_context` after the restart must list both tabs under their old ids, in their group.
 2. A confirmation toast left alone for the deadline, which must still time out, and one answered deliberately after it has been on screen a few seconds, which must be taken.
 3. The image a `confirmation_required` names, which must carry no orange border and no Stop capsule.
+
+## Renamed to Autopilot, 2026-09-04
+
+The project was called chrome-mcp and the extension was called Lantern. Both are now Autopilot, one name across the toolbar label, the popup and options pages, the indicator pill, the doctor and the log output. Extension 0.2.0, since the change is visible.
+
+| What | Was | Is |
+|---|---|---|
+| Display name | Lantern | Autopilot |
+| npm package | `chrome-mcp` | `autopilot-chrome` |
+| MCP server name | `chrome-mcp` | `autopilot` |
+| Native messaging host id | `com.chromemcp.host` | `com.autopilot.host` |
+| Environment variables | `CHROME_MCP_*` | `AUTOPILOT_*` |
+| Journal directory | `%TEMP%\chrome-mcp-logs` | `%TEMP%\autopilot-logs` |
+| Host log | `%TEMP%\chrome-mcp-host.log` | `%TEMP%\autopilot-host.log` |
+| Pipe and registry directory | `chrome-mcp-*` | `autopilot-*` |
+| Page globals | `__chromeMcpAgent`, `__cmcp_` | `__autopilotAgent`, `__ap_` |
+| Extension stylesheet | `ui/lantern.css` | `ui/autopilot.css` |
+
+Two compatibility paths are kept for one release. `host/env.js` reads `AUTOPILOT_<name>` first and falls back to `CHROME_MCP_<name>`, and the native host writes one line into its log naming any old variable in use. `npm run log` reads `%TEMP%\chrome-mcp-logs` alongside the new directory, so earlier journals are still printed.
+
+`npm run install-host` removes the `com.chromemcp.host` registration from every browser it finds, deletes the stale local host manifest, and names what it removed. `npm run doctor` prints a note when a browser still carries the old entry.
+
+The `evidence/` folder under `docs/claude-in-chrome-comparison/` is a record of what was measured in September 2026 and keeps the old names. REPORT.md, IMPROVEMENTS.md and PLAN.md say the project was renamed and keep their bodies as written, for the same reason.
+
+Verified: 673 tests pass across 24 non-browser files, `node tools/check-errors-copy.js` reports the extension copy matches, and `node --check` passes on every file under `extension/src`, `host`, `tools` and `test`. The extension itself was not loaded into a browser, so the toolbar label, the popup, the indicator pill text and the new native host registration are unverified.

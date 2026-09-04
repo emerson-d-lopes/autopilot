@@ -1,6 +1,6 @@
 # Implementation brief for plan agents
 
-You are implementing part of [PLAN.md](PLAN.md) in `C:\Users\edfl\workspace\chrome-mcp`. Read PLAN.md, then the items you own in [IMPROVEMENTS.md](IMPROVEMENTS.md) (they carry file and function locations read from the 0.1.9 source), then README.md, STATUS.md, HANDOFF.md and SPEC.md at the repo root. Read the source files you will touch in full before editing.
+You are implementing part of [PLAN.md](PLAN.md) in `C:\Users\edfl\workspace\autopilot`. Read PLAN.md, then the items you own in [IMPROVEMENTS.md](IMPROVEMENTS.md) (they carry file and function locations read from the 0.1.9 source), then README.md, STATUS.md, HANDOFF.md and SPEC.md at the repo root. Read the source files you will touch in full before editing.
 
 ## Ground rules
 
@@ -11,7 +11,7 @@ You are implementing part of [PLAN.md](PLAN.md) in `C:\Users\edfl\workspace\chro
 - Live verification against a browser is done AFTER merge by a separate pass, not by you. Your job is correct code, unit tests, and precise notes on what the live pass must check. Write those notes in your final report under "Live checks required".
 - Shell escaping strips backslashes from regexes when patching through `node -e`. Use the Edit tool or write patch files.
 - Do not delete or rewrite existing tests. Do not change tool names or argument names in `host/schemas.js`, only add.
-- Keep chrome-mcp's measured advantages intact (IMPROVEMENTS.md, "Where chrome-mcp is already ahead, keep it"). If a change would alter one of them, stop and say so in the report instead.
+- Keep Autopilot's measured advantages intact (IMPROVEMENTS.md, "Where chrome-mcp is already ahead, keep it"). If a change would alter one of them, stop and say so in the report instead.
 
 ## Writing rules for any prose you produce (STATUS.md entries, comments, commit messages, reports)
 
