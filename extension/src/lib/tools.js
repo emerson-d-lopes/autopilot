@@ -168,6 +168,43 @@ function peekAdoptedTabs(openerTabId) {
 }
 
 /**
+ * Page-opened tabs that appeared during this click's wait, whatever Chrome
+ * named as their opener (`tabs.openedSince`).
+ *
+ * Chrome fills openerTabId from the active tab, and background mode never
+ * activates the tab it is driving, so the opener route finds nothing. Only a
+ * click the watch flagged as opening a tab looks here, and only a candidate
+ * that ended up in the acting tab's group is reported, so a tab another window
+ * opened at the same moment is not claimed.
+ */
+async function openedDuringWait(tabId, since) {
+  let ids = [];
+  try {
+    if (typeof tabsLib.openedSince !== 'function') return [];
+    const found = tabsLib.openedSince(since);
+    ids = Array.isArray(found) ? found.filter((id) => typeof id === 'number' && id !== tabId) : [];
+  } catch {
+    return [];
+  }
+  if (!ids.length) return [];
+  let groupId;
+  try {
+    groupId = (await chrome.tabs.get(tabId)).groupId;
+  } catch {
+    return [];
+  }
+  const mine = [];
+  for (const id of ids) {
+    try {
+      if ((await chrome.tabs.get(id)).groupId === groupId) mine.push(id);
+    } catch {
+      /* it was closed again before this ran */
+    }
+  }
+  return mine;
+}
+
+/**
  * How long a click that looks like it opens a tab waits for the tab.
  *
  * Chrome creates the tab well after the 250 ms verification window closes. Only
@@ -233,17 +270,21 @@ async function readVerify(tabId, armed, { window = VERIFY_WINDOW_MS } = {}) {
   // window.open, gets its tab after the ordinary window has closed. The watch
   // said so at arm time, so only that click waits.
   let waitedForTab = false;
+  let opened = [];
   if (armed.opensTab && !peekAdoptedTabs(tabId).length) {
     const deadline = armed.at + NEW_TAB_WINDOW_MS;
     while (Date.now() < deadline) {
       await waitMs(NEW_TAB_POLL_MS);
       windowMs = Date.now() - armed.at;
       if (peekAdoptedTabs(tabId).length) break;
+      opened = await openedDuringWait(tabId, armed.at);
+      if (opened.length) break;
     }
     waitedForTab = true;
   }
 
-  const newTabIds = adoptedTabs(tabId);
+  let newTabIds = adoptedTabs(tabId);
+  if (!newTabIds.length && opened.length) newTabIds = opened;
   const newTabId = newTabIds.length ? newTabIds[0] : null;
   const watched = Boolean(report && report.ok);
   const evidence = {

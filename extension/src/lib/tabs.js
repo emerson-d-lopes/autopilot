@@ -625,6 +625,52 @@ export function noteOpenedTab(tab) {
   const seen = adoptedByOpener.get(openerTabId) || [];
   if (!seen.includes(tab.id)) seen.push(tab.id);
   adoptedByOpener.set(openerTabId, seen);
+  noteRecentOpen(tab.id, openerTabId);
+}
+
+// ---------------------------------------------------------------------------
+// Tabs a page opened, when Chrome names the wrong opener
+// ---------------------------------------------------------------------------
+//
+// Chrome fills openerTabId from the window's active tab rather than from the
+// tab whose renderer opened the new one. Nothing here ever activates a tab, so
+// the acting tab is never the active one and the opener never points at it.
+// Measured on the fixture with Chrome for Testing 152: a click on a
+// target="_blank" link in tab 369885084 produced a tab whose openerTabId was
+// 369885023, the browser's initial about:blank tab, and the same click through
+// window.open named whichever tab happened to be active.
+//
+// A click the watch flagged as opening a tab falls back to this ledger, which
+// records every page-opened tab with the moment it appeared. Only tabs Chrome
+// gave an opener at all are in it, so a tab the extension created with
+// chrome.tabs.create is never a candidate.
+
+/** @type {Array<{tabId: number, openerTabId: number, at: number}>} */
+const recentOpens = [];
+
+/** How long a page-opened tab stays a candidate. Twice the click's own wait. */
+const RECENT_OPEN_MS = 3000;
+
+function noteRecentOpen(tabId, openerTabId, at = Date.now()) {
+  recentOpens.push({ tabId, openerTabId, at });
+  while (recentOpens.length && at - recentOpens[0].at > RECENT_OPEN_MS) recentOpens.shift();
+}
+
+/**
+ * Page-opened tabs that appeared at or after `since`, oldest first.
+ *
+ * Reading does not consume, so a caller that finds one still reports it through
+ * `adopted`, and a caller that finds none is not left holding a stale id.
+ */
+export function openedSince(since, now = Date.now()) {
+  return recentOpens
+    .filter((r) => r.at >= since && now - r.at <= RECENT_OPEN_MS)
+    .map((r) => r.tabId);
+}
+
+/** Drops every recorded open. Tests only. */
+export function resetRecentOpens() {
+  recentOpens.length = 0;
 }
 
 export async function adoptOpenedTab(tab) {
@@ -676,6 +722,9 @@ export function peekAdopted(openerTabId) {
 
 /** Drops a closed tab from the adoption bookkeeping. */
 export function forgetAdopted(tabId) {
+  for (let i = recentOpens.length - 1; i >= 0; i--) {
+    if (recentOpens[i].tabId === tabId) recentOpens.splice(i, 1);
+  }
   adoptedByOpener.delete(tabId);
   for (const [opener, ids] of adoptedByOpener) {
     const left = ids.filter((id) => id !== tabId);
