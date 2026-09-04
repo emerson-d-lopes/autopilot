@@ -28,26 +28,14 @@ export const INTERACTIVE_MAX_CHARS = 20000;
 const VERIFY_WINDOW_MS = 250;
 const VERIFY_NAV_WINDOW_MS = 1000;
 
-/**
- * How long a cosmetic page call waits for a busy renderer.
- *
- * Hiding the acting indicator before a capture is best effort: its failure is
- * swallowed, and the capture runs either way. On the default deadline that
- * swallowed failure cost a frozen renderer's full 20 s before the capture had
- * sent its first command, and the capture then waited 20 s of its own, so a
- * screenshot behind a busy loop reported a 20 s timeout after 40 s. A
- * responsive page answers this in a few milliseconds.
- */
-export const OVERLAY_TURN_TIMEOUT_MS = 1000;
-
 /** Sends a message to the page agent, injecting it first if the page predates the extension. */
-async function pageCall(tabId, message, { retry = true, turnTimeout } = {}) {
+async function pageCall(tabId, message, { retry = true, label } = {}) {
   // A message to the content script reaches the same renderer a CDP command
   // does, and chrome.tabs.sendMessage has no timeout, so a read_page issued
   // while the page is in a busy loop waited the whole loop out. When the tab is
   // already waiting on a CDP command, this waits with that command's deadline
   // and reports timeout instead.
-  if (cdp.busyFor(tabId) > 0) await cdp.awaitTurn(tabId, (message && message.type) || 'page call', turnTimeout);
+  if (cdp.busyFor(tabId) > 0) await cdp.awaitTurn(tabId, label || (message && message.type) || 'page call');
   try {
     const response = await chrome.tabs.sendMessage(tabId, message);
     if (response === undefined) throw new Error('no response from page agent');
@@ -62,8 +50,26 @@ async function pageCall(tabId, message, { retry = true, turnTimeout } = {}) {
       throw new Error(describePageError(text, tabId));
     }
     await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_SCRIPTS });
-    return pageCall(tabId, message, { retry: false, turnTimeout });
+    return pageCall(tabId, message, { retry: false, label });
   }
+}
+
+/**
+ * Hides the acting indicator before a capture.
+ *
+ * The hide and the capture wait on the same renderer, so a hide that timed out
+ * on the CDP queue means the capture would time out too, one full deadline
+ * later. Swallowing that wait cost the caller both of them: a screenshot on a
+ * tab in a 50 s busy loop reported its 20 s timeout after 40 s. The queue wait
+ * happens here and its timeout is the capture's answer. The message itself
+ * stays best effort, so a page with no content script is captured with the
+ * indicator up rather than not captured at all.
+ *
+ * `queue` is a test seam.
+ */
+export async function hideForCapture(tabId, label, queue = cdp) {
+  if (queue.busyFor(tabId) > 0) await queue.awaitTurn(tabId, label);
+  await pageCall(tabId, { type: 'HIDE_FOR_TOOL_USE' }).catch(() => {});
 }
 
 function describePageError(text, tabId) {
@@ -751,7 +757,7 @@ async function computerTool(ctx, input) {
         };
       }
       const paint = await waitForPaint(tabId);
-      await pageCall(tabId, { type: 'HIDE_FOR_TOOL_USE' }, { turnTimeout: OVERLAY_TURN_TIMEOUT_MS }).catch(() => {});
+      await hideForCapture(tabId, 'screenshot');
       try {
         const image = await shot.capture(tabId, {
           maxTokens: input.maxTokens,
@@ -772,7 +778,7 @@ async function computerTool(ctx, input) {
           warnings,
         };
       } finally {
-        pageCall(tabId, { type: 'SHOW_AFTER_TOOL_USE' }, { turnTimeout: OVERLAY_TURN_TIMEOUT_MS }).catch(() => {});
+        pageCall(tabId, { type: 'SHOW_AFTER_TOOL_USE' }).catch(() => {});
       }
     }
 
@@ -781,7 +787,7 @@ async function computerTool(ctx, input) {
         throw new ToolError('bad_request', 'zoom requires region [x0, y0, x1, y1]');
       }
       const paint = await waitForPaint(tabId);
-      await pageCall(tabId, { type: 'HIDE_FOR_TOOL_USE' }, { turnTimeout: OVERLAY_TURN_TIMEOUT_MS }).catch(() => {});
+      await hideForCapture(tabId, 'zoom');
       try {
         const image = await shot.capture(tabId, {
           region: input.region,
@@ -797,7 +803,7 @@ async function computerTool(ctx, input) {
           warnings: [...(image.warnings || [])],
         };
       } finally {
-        pageCall(tabId, { type: 'SHOW_AFTER_TOOL_USE' }, { turnTimeout: OVERLAY_TURN_TIMEOUT_MS }).catch(() => {});
+        pageCall(tabId, { type: 'SHOW_AFTER_TOOL_USE' }).catch(() => {});
       }
     }
 

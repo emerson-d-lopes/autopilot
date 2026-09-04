@@ -1389,41 +1389,42 @@ test('awaitTurn gives a page call the same deadline, since sendMessage has none'
 });
 
 // ---------------------------------------------------------------------------
-// A cosmetic page call must not spend the caller's whole deadline
+// A capture must not pay a frozen renderer twice
 // ---------------------------------------------------------------------------
 
-test('hiding the indicator before a capture gives up early on a frozen renderer', async () => {
+test('a queue timeout while hiding the indicator is what the capture reports', async () => {
   const tools = await import('../extension/src/lib/tools.js');
-  assert.ok(
-    tools.OVERLAY_TURN_TIMEOUT_MS <= 2000,
-    'the overlay budget is a fraction of a command deadline: ' + tools.OVERLAY_TURN_TIMEOUT_MS
-  );
-
-  scriptSlowDebugger({ delay: 4000 });
-  await cdp.attach(76);
-  const busy = cdp.send(76, 'Runtime.evaluate', { expression: 'busy()' }, { timeout: 8000 });
-  await new Promise((r) => setTimeout(r, 20));
-
-  // What the swallowed HIDE_FOR_TOOL_USE costs before the capture sends its
-  // first command. On the default deadline this was 20 s, and the capture then
-  // waited 20 s of its own, so a 20 s timeout reached the caller after 40 s.
-  const started = Date.now();
+  const timeout = Object.assign(new Error('CDP screenshot waited 20000ms'), { code: 'timeout' });
+  const asked = [];
   await assert.rejects(
-    () => cdp.awaitTurn(76, 'HIDE_FOR_TOOL_USE', tools.OVERLAY_TURN_TIMEOUT_MS),
-    (err) => err.code === 'timeout'
+    () =>
+      tools.hideForCapture(80, 'screenshot', {
+        busyFor: () => 4000,
+        awaitTurn: (tabId, label) => {
+          asked.push([tabId, label]);
+          return Promise.reject(timeout);
+        },
+      }),
+    (err) => err === timeout
   );
-  const cost = Date.now() - started;
-  assert.ok(cost < 2000, 'the hide gave up in ' + cost + 'ms');
-
-  await busy;
-  await cdp.detachAll();
+  assert.deepEqual(asked, [[80, 'screenshot']], 'the wait is labelled for the caller, not for the message');
 });
 
-test('every indicator hide and show carries the overlay budget', () => {
-  const source = readFileSync(new URL('../extension/src/lib/tools.js', import.meta.url), 'utf8');
-  const calls = source.match(/pageCall\([^;]*?(?:HIDE_FOR_TOOL_USE|SHOW_AFTER_TOOL_USE)[^;]*?\)\s*\.catch/g) || [];
-  assert.ok(calls.length >= 4, 'found ' + calls.length + ' indicator page calls');
-  for (const call of calls) {
-    assert.match(call, /OVERLAY_TURN_TIMEOUT_MS/, 'an indicator page call waits on the default deadline: ' + call);
+test('a page that cannot take the hide is still captured', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const before = globalThis.chrome.tabs.sendMessage;
+  globalThis.chrome.tabs.sendMessage = () => Promise.reject(new Error('Receiving end does not exist'));
+  globalThis.chrome.scripting = { executeScript: () => Promise.reject(new Error('no host permission')) };
+  try {
+    await tools.hideForCapture(81, 'screenshot', { busyFor: () => 0, awaitTurn: () => Promise.resolve() });
+  } finally {
+    globalThis.chrome.tabs.sendMessage = before;
   }
+});
+
+test('both capture paths hide through hideForCapture', () => {
+  const source = readFileSync(new URL('../extension/src/lib/tools.js', import.meta.url), 'utf8');
+  const hides = source.split('\n').filter((line) => line.includes('HIDE_FOR_TOOL_USE'));
+  assert.equal(hides.length, 1, 'the hide is sent from one place: ' + hides.join(' | '));
+  assert.equal((source.match(/hideForCapture\(tabId, '/g) || []).length, 2, 'screenshot and zoom both use it');
 });
