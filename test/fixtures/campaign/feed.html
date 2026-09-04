@@ -1,0 +1,59 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Feed fixture</title>
+<style>
+body{font-family:sans-serif;margin:0}
+main{max-width:640px;margin:0 auto;padding:12px}
+.post{border:1px solid #ccc;border-radius:8px;padding:12px;margin:12px 0}
+/* The clipped copy a screen reader reads. It is rendered, so innerText has it. */
+.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);clip-path:inset(50%);white-space:nowrap}
+/* An overlay a page fades out but never removes. Still rendered, still read. */
+.overlay{opacity:0;position:absolute;pointer-events:none}
+/* The two the extractor must keep out, on either side of the same wrapper. */
+.gone{display:none}
+.invisible{visibility:hidden}
+/* Sections the renderer defers until they come near the viewport. */
+.deferred{content-visibility:auto;contain-intrinsic-size:auto 400px}
+/* Rendered a long way down the page, so it is offscreen and not hidden. */
+#tail{margin-top:2400px}
+</style></head><body>
+<header><nav><a href="/">Home</a> <a href="/network">My network</a></nav></header>
+<main>
+  <h1>Feed</h1>
+
+  <!-- The shape LinkedIn's feed has: the visible copy of a label sits in an
+       aria-hidden span beside the accessible copy in a clipped span. -->
+  <div class="post" id="post-1"><div><div><div><div>
+    <span class="visually-hidden">Ada Lovelace, first degree connection</span>
+    <span aria-hidden="true">Ada Lovelace</span>
+    <span aria-hidden="true"> &middot; 1st</span>
+    <div><div><p>Analytical engines do not originate anything, they do what we order them to perform.</p></div></div>
+    <div class="overlay">Promoted placement slot</div>
+    <div><button type="button"><span aria-hidden="true">Like</span><span class="visually-hidden">Like Ada Lovelace's post</span></button></div>
+  </div></div></div></div></div>
+
+  <!-- Deferred rendering. checkVisibility reports false for a subtree the
+       renderer is skipping, and this text is still the page's text. -->
+  <section class="deferred" id="post-2"><div><div><div>
+    <span aria-hidden="true">Grace Hopper</span>
+    <p>The most damaging phrase in the language is that we have always done it this way.</p>
+  </div></div></div></section>
+
+  <!-- Rendered, far down the page. Offscreen is not hidden. -->
+  <div class="post" id="tail"><div><div>
+    <span aria-hidden="true">Katherine Johnson</span>
+    <p>You tell me when you want it and where you want it to land, and I will do it backwards.</p>
+  </div></div></div>
+
+  <!-- Neither of these is on the page for anyone, so neither may be returned. -->
+  <div class="post">
+    <div class="gone"><p>Collapsed panel copy</p></div>
+    <div class="invisible"><p>Invisible panel copy</p></div>
+    <p>Visible sibling of both panels.</p>
+  </div>
+</main>
+<footer>Site footer</footer>
+<script>
+// Reports what innerText holds, so a live check can compare the two numbers
+// the way the LinkedIn evidence did.
+window.feedInnerTextLength = () => document.querySelector('main').innerText.length;
+</script>
+</body></html>

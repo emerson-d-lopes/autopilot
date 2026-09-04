@@ -332,12 +332,31 @@
   // shows for a second. The classifier says which controls are worth the longer
   // window, and the undo table says whether the site offers a way back.
 
-  const SUBMIT_WORDS = ['send', 'post', 'save', 'publish', 'reply', 'submit'];
+  // Being submit-shaped only buys the longer window. Whether a control can be
+  // undone is the separate IRREVERSIBLE_WORDS list above, so a word can be here
+  // without being treated as a write that cannot be taken back.
+  //
+  // GitHub's Create, Comment, Close issue and the modal's Delete all landed
+  // their navigation or their 2xx after the 250 ms window in the 0.1.35
+  // rehearsal, which is what the longer window exists for.
+  const SUBMIT_WORDS = [
+    'send', 'post', 'save', 'publish', 'reply', 'submit', 'create', 'comment',
+    'close', 'delete', 'remove', 'confirm', 'apply', 'update', 'ok', 'done', 'yes',
+  ];
 
   const SUBMIT_RE = new RegExp('(^|[^a-z])(' + SUBMIT_WORDS.join('|') + ')([^a-z]|$)', 'i');
 
-  /** Writes the site can reverse with another control, so W7 can name it. */
-  const REVERSIBLE_WORDS = ['save', 'post', 'publish', 'comment', 'update', 'apply', 'edit', 'rename', 'add'];
+  /**
+   * Writes the site can reverse with another control, so W7 can name it.
+   *
+   * `close` and `reopen` are a pair: a closed issue reopens and a reopened one
+   * closes, and whichever control is on the page after the click is the one
+   * findUndoControl returns.
+   */
+  const REVERSIBLE_WORDS = [
+    'save', 'post', 'publish', 'comment', 'update', 'apply', 'edit', 'rename', 'add',
+    'close', 'reopen',
+  ];
 
   const REVERSIBLE_RE = new RegExp('(^|[^a-z])(' + REVERSIBLE_WORDS.join('|') + ')([^a-z]|$)', 'i');
 
@@ -346,7 +365,7 @@
 
   /** Controls that reverse a write, looked for on the page after one lands. */
   const UNDO_RE =
-    /(^|[^a-z])(undo|revert|restore|discard|unsend|unpublish|delete|remove|edit|cancel\s+(edit|post|comment))([^a-z]|$)/i;
+    /(^|[^a-z])(undo|revert|restore|discard|unsend|unpublish|delete|remove|edit|reopen|close\s+issue|cancel\s+(edit|post|comment))([^a-z]|$)/i;
 
   function isSubmitShaped(el, role, name) {
     if (!el) return false;
@@ -1123,11 +1142,13 @@
    * under a `content-visibility` ancestor that the visibility filter rejects
    * wholesale. Either one returns zero characters with nothing to say why.
    *
-   * So the walk is run up to three times: the chosen container with the
-   * visibility filter on, then `document.body` with it on, then `document.body`
-   * with it relaxed to the checks that cannot be wrong (the hidden attribute,
-   * aria-hidden, display none, visibility hidden). The counts from every pass
-   * are reported, so an empty result says which filter emptied it.
+   * So each container is walked with the visibility filter on, and again with
+   * `checkVisibility` dropped from it when that call was the only thing that
+   * rejected anything. The longer of the two is the answer, so a pass that kept
+   * a fraction of the page no longer wins over one that kept all of it: on
+   * linkedin.com/feed the strict pass kept 28 text nodes and rejected 383 while
+   * `main.innerText` was 8989 characters. The counts from the winning pass are
+   * reported, so a thin result says which filter thinned it.
    */
   function pageText(maxChars = 50000) {
     const chosen =
@@ -1147,26 +1168,34 @@
       };
     }
 
-    const attempts = [{ container: chosen, strict: true }];
-    if (chosen !== document.body && document.body) attempts.push({ container: document.body, strict: true });
-    attempts.push({ container: chosen, strict: false });
-    if (chosen !== document.body && document.body) attempts.push({ container: document.body, strict: false });
+    const containers = [chosen];
+    if (chosen !== document.body && document.body) containers.push(document.body);
 
-    let last = null;
-    for (const attempt of attempts) {
-      const result = collectText(attempt.container, maxChars, attempt.strict);
-      last = {
-        ...result,
-        container: describeContainer(attempt.container) + (attempt.strict ? '' : ' (visibility filter relaxed)'),
-        fallback: attempt !== attempts[0],
-      };
-      if (result.text.length) return last;
+    const label = (result, container, strict) => ({
+      ...result,
+      container: describeContainer(container) + (strict ? '' : ' (visibility filter relaxed)'),
+      fallback: container !== chosen || !strict,
+    });
+
+    let best = null;
+    for (const container of containers) {
+      const strict = label(collectText(container, maxChars, true), container, true);
+      // The relaxed pass differs from the strict one by `checkVisibility` and
+      // nothing else, so it is only worth running when that call rejected
+      // something. Every other rejection reason is in both passes.
+      const relaxed = strict.rejectedUnrendered
+        ? label(collectText(container, maxChars, false), container, false)
+        : null;
+      const better = relaxed && relaxed.text.length > strict.text.length ? relaxed : strict;
+      if (better.text.length) return better;
+      if (!best) best = better;
     }
-    return last;
+    return best;
   }
 
   function collectText(article, maxChars, strict) {
     let rejectedHidden = 0;
+    let rejectedUnrendered = 0;
     let rejectedEmpty = 0;
     let rejectedChrome = 0;
     let textNodes = 0;
@@ -1185,21 +1214,35 @@
 
     // Hidden ancestors are what getComputedStyle on the parent misses: a text
     // node inside a collapsed panel has a parent whose own display is block.
+    //
+    // The test is what innerText leaves out and nothing more. A page moves text
+    // a person can read out of the way in many ways that keep it rendered:
+    // opacity 0, clip, a negative offset, a transform, content-visibility auto,
+    // aria-hidden on the visible copy of a label whose accessible copy sits in
+    // a clipped span beside it. innerText returns all of that, so this does
+    // too. `checkVisibility` answers a wider question than the one asked here,
+    // reporting false for a subtree the renderer is skipping and for an element
+    // with no box of its own, and on linkedin.com/feed it rejected 383 of the
+    // 411 text nodes the page was showing. It is the one check the relaxed pass
+    // drops, and the only rejections counted in `rejectedUnrendered`.
     const hiddenCache = new Map();
     function hiddenByAncestor(el) {
       if (hiddenCache.has(el)) return hiddenCache.get(el);
       let result = false;
-      if (el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true') result = true;
-      // checkVisibility reports false for a subtree Chrome is skipping under
-      // content-visibility, which is how a virtualized editor's own prose gets
-      // rejected. The relaxed pass drops it and keeps the checks that cannot be
-      // wrong about whether text is on the page.
+      let unrendered = false;
+      const style = getComputedStyle(el);
+      if (el.hasAttribute('hidden')) result = true;
+      else if (!style) result = false;
+      else if (style.display === 'none') result = true;
+      else if (style.visibility === 'hidden' || style.visibility === 'collapse') result = true;
+      // content-visibility: hidden removes the contents. `auto` only defers the
+      // rendering of a section that is still the page's text.
+      else if (style.contentVisibility === 'hidden') result = true;
       else if (strict && typeof el.checkVisibility === 'function') {
-        result = !el.checkVisibility({ visibilityProperty: true });
-      } else {
-        const style = getComputedStyle(el);
-        result = !style || style.display === 'none' || style.visibility === 'hidden';
+        result = !el.checkVisibility({ visibilityProperty: true, contentVisibilityAuto: false });
+        unrendered = result;
       }
+      if (result && unrendered) rejectedUnrendered++;
       if (!result && el.parentElement && el !== article) result = hiddenByAncestor(el.parentElement);
       hiddenCache.set(el, result);
       return result;
@@ -1305,7 +1348,7 @@
       .replace(/[ \t]+/g, ' ')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
-    const counts = { textNodes, rejectedHidden, rejectedEmpty, rejectedChrome };
+    const counts = { textNodes, rejectedHidden, rejectedUnrendered, rejectedEmpty, rejectedChrome };
     if (full.length <= maxChars && total <= maxChars * 2) {
       return { text: full, totalChars: full.length, truncated: false, ...counts };
     }

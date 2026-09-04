@@ -14,6 +14,7 @@ import {
   parseModelFindResponse,
   validateModelMatches,
   quotedLabels,
+  roleGapNote,
   FIND_TREE_CHAR_BUDGET,
 } from '../extension/src/lib/find.js';
 
@@ -421,4 +422,111 @@ test('ranking a 9000 node tree stays under a few milliseconds', () => {
 
 test('the ranking budget is large enough for the whole interactive tree of a 3000 row page', () => {
   assert.ok(FIND_TREE_CHAR_BUDGET >= BIG_BUTTONS.length * 2, 'budget ' + FIND_TREE_CHAR_BUDGET);
+});
+
+// ---------------------------------------------------------------------------
+// A query that names a role: github.com/<repo>/issues/new
+// ---------------------------------------------------------------------------
+//
+// From the 0.1.35 write rehearsal. `find "issue title field"` returned twenty
+// markdown toolbar buttons and `find "submit new issue button"` returned no
+// Create button, while read_page on the same page gave
+// textbox "Add a title" [ref_24], textbox "Markdown value" [ref_35] and
+// button "Create ( )" [ref_46]. The toolbar names are GitHub's own.
+
+const TOOLBAR = [
+  'Add heading text', 'Add bold text', 'Add italic text', 'Add a quote',
+  'Add code', 'Add a link', 'Add a bulleted list', 'Add a numbered list',
+  'Add a task list', 'Directly mention a user or team',
+  'Reference an issue, pull request, or discussion', 'Add saved reply',
+  'Attach files', 'Insert a table', 'Add a comment', 'Slash commands',
+  'Toggle preview', 'Use full screen', 'Markdown help', 'Text formatting help',
+];
+
+const NEW_ISSUE = [
+  'main [ref_10]',
+  '  form "New issue" [ref_20]',
+  '    textbox "Add a title" [ref_24] placeholder="Title" required=true',
+  '    heading "Add a description" [ref_25] level=2',
+  '    toolbar [ref_30]',
+  ...TOOLBAR.map((name, i) => '      button "' + name + '" [ref_' + (31 + i) + ']'),
+  '    textbox "Markdown value" [ref_35] placeholder="Type your description here..."',
+  '    button "Create ( )" [ref_46]',
+  '    button "Cancel" [ref_47]',
+].join('\n');
+
+test('a query naming a field ranks the title textbox above the toolbar', () => {
+  const matches = scoreCandidates(NEW_ISSUE, 'issue title field', 20);
+
+  assert.equal(matches[0].ref, 'ref_24', 'top match: ' + JSON.stringify(matches.slice(0, 3)));
+  assert.equal(matches[0].role, 'textbox');
+  assert.equal(
+    matches.some((m) => m.role === 'button'),
+    false,
+    'a query for a field does not answer with buttons: ' + matches.map((m) => m.role).join(', ')
+  );
+});
+
+test('a query naming the submit button ranks Create first', () => {
+  const matches = scoreCandidates(NEW_ISSUE, 'submit new issue button', 20);
+
+  assert.equal(matches[0].ref, 'ref_46', 'top match: ' + JSON.stringify(matches.slice(0, 3)));
+  assert.equal(matches[0].name, 'Create ( )');
+  assert.ok(
+    matches[0].score > matches[1].score,
+    'Create wins outright: ' + matches[0].score + ' vs ' + matches[1].score
+  );
+});
+
+test('the toolbar buttons are still reachable by their own names', () => {
+  // The role filter must not hide a control the query actually names.
+  const matches = scoreCandidates(NEW_ISSUE, 'reference an issue button', 20);
+  assert.equal(matches[0].name, 'Reference an issue, pull request, or discussion');
+});
+
+test('the nearest form name reaches the controls inside it', () => {
+  const outside = [
+    'form "New issue" [ref_1]',
+    '  button "Create" [ref_2]',
+    'form "Newsletter" [ref_3]',
+    '  button "Create" [ref_4]',
+  ].join('\n');
+  const matches = scoreCandidates(outside, 'create the new issue button', 20);
+  assert.equal(matches[0].ref, 'ref_2', 'the button in the issue form outranks its twin');
+});
+
+// ---------------------------------------------------------------------------
+// The line that says the query named a role nothing on the page has
+// ---------------------------------------------------------------------------
+
+test('a query naming a role no candidate has is reported as such', () => {
+  const buttonsOnly = [
+    'button "Edit title" [ref_1]',
+    'button "Copy title" [ref_2]',
+    'button "Add a title" [ref_3]',
+  ].join('\n');
+  const matches = scoreCandidates(buttonsOnly, 'issue title field', 20);
+
+  assert.equal(matches.length, 3, 'the ranking still answers with what it has');
+  assert.equal(roleGapNote('issue title field', matches), 'no textbox matched, 3 buttons shown instead');
+});
+
+test('no line when the query named the role a match carries', () => {
+  const matches = scoreCandidates(NEW_ISSUE, 'issue title field', 20);
+  assert.equal(roleGapNote('issue title field', matches), null);
+});
+
+test('no line when the query named no role at all', () => {
+  const matches = scoreCandidates(NEW_ISSUE, 'markdown', 20);
+  assert.equal(roleGapNote('markdown', matches), null);
+});
+
+test('no line when nothing matched, since the empty result already says so', () => {
+  assert.equal(roleGapNote('issue title field', []), null);
+});
+
+test('the line counts each role it is showing instead', () => {
+  const mixed = ['link "Sign in" [ref_1] href=/in', 'link "Join" [ref_2] href=/join', 'button "Menu" [ref_3]'].join('\n');
+  const matches = scoreCandidates(mixed, 'sign in checkbox', 20);
+  assert.equal(roleGapNote('sign in checkbox', matches), 'no checkbox matched, 1 link shown instead');
 });

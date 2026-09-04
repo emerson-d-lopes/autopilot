@@ -765,6 +765,50 @@ test('a Send that does nothing reports unknown and says to re-read', async () =>
   assert.equal(wired.thread.textContent, '');
 });
 
+test('a click that opened a modal reports applied, not unknown', async () => {
+  // From the 0.1.35 rehearsal: the Delete menu item opened GitHub's confirm
+  // modal, the watch counted 40 mutations and focus on its Cancel button, and
+  // the result said effects: unknown because no submit signal had fired. The
+  // watch saw the page move, so applied is the truthful value and the missing
+  // submit evidence belongs in a warning.
+  const tools = await import('../extension/src/lib/tools.js');
+  const perms = await import('../extension/src/lib/permissions.js');
+  const page = loadPage(`<!doctype html><body>
+    <div id="comment">a comment</div>
+    <button id="del">Delete</button>
+    <div id="modals"></div>
+  </body>`);
+  const wired = wireSubmit(page, { behaviour: 'nothing' });
+  const { window } = page;
+  const del = window.document.getElementById('del');
+  wired.aim(del);
+  del.addEventListener('click', () => {
+    const modal = window.document.createElement('div');
+    modal.setAttribute('role', 'dialog');
+    modal.innerHTML = '<p>Are you sure you want to delete this?</p>';
+    const cancel = window.document.createElement('button');
+    cancel.textContent = 'Cancel';
+    modal.appendChild(cancel);
+    window.document.getElementById('modals').appendChild(modal);
+    cancel.focus();
+  });
+  await ownTabGroup();
+  perms.invalidatePolicyCache();
+
+  const ref = await refOf(page, 'Delete');
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+
+  assert.deepEqual(result.evidence.submit.fired, [], 'no submit signal fired');
+  assert.ok(result.evidence.mutations >= 1, 'the watch counted the modal going in: ' + result.evidence.mutations);
+  assert.equal(result.evidence.focusChanged, true, 'focus moved to the modal');
+  assert.equal(result.effects, 'applied');
+  assert.equal(result.hint, undefined, 'nothing tells the caller to retry a click that did something');
+  assert.ok(
+    result.warnings.some((w) => /no submit evidence fired/.test(w)),
+    'warnings: ' + result.warnings.join(' | ')
+  );
+});
+
 test('a sent message reports that nothing undoes it', async () => {
   const tools = await import('../extension/src/lib/tools.js');
   const page = loadPage(THREAD);
@@ -930,6 +974,67 @@ test('the classifier marks a submit button, a named Send, and neither for a plai
   assert.equal(agent.isSubmitShaped(el('plain'), 'link', 'About'), false);
   assert.equal(agent.undoClass(el('named'), 'button', 'Post comment'), 'reversible');
   assert.equal(agent.undoClass(el('named'), 'button', 'Send message'), 'sent');
+});
+
+test('the GitHub controls that missed the window are submit-shaped', () => {
+  // From the 0.1.35 write rehearsal: Create, Comment, Close issue and the
+  // modal's Delete each ran the 250 ms window, and the navigation or the 2xx
+  // that proved the write landed arrived after it closed.
+  const page = loadPage(`<!doctype html><body>
+    <div><button id="c">Create</button><button id="m">Comment</button>
+    <button id="x">Close issue</button><button id="d">Delete</button>
+    <button id="p">Preview</button><a id="a" href="/blog">Read the changelog</a></div>
+  </body>`);
+  const { window, agent } = page;
+  const el = (id) => window.document.getElementById(id);
+
+  assert.equal(agent.isSubmitShaped(el('c'), 'button', 'Create'), true);
+  assert.equal(agent.isSubmitShaped(el('m'), 'button', 'Comment'), true);
+  assert.equal(agent.isSubmitShaped(el('x'), 'button', 'Close issue'), true);
+  assert.equal(agent.isSubmitShaped(el('d'), 'menuitem', 'Delete'), true, 'the menu item, not only the modal button');
+  assert.equal(agent.isSubmitShaped(el('p'), 'button', 'Preview'), false, 'a control that writes nothing keeps the short window');
+  assert.equal(agent.isSubmitShaped(el('a'), 'link', 'Read the changelog'), false);
+  for (const word of ['confirm', 'remove', 'apply', 'update', 'OK', 'Done', 'Yes']) {
+    assert.equal(agent.isSubmitShaped(el('c'), 'button', word), true, word + ' is submit-shaped');
+  }
+});
+
+test('being submit-shaped does not make a control irreversible', () => {
+  // The two lists are separate on purpose: Create and Comment get the longer
+  // window without being reported as writes that cannot be taken back.
+  const page = loadPage('<!doctype html><body><button id="b">Create</button></body>');
+  const { window, agent } = page;
+  const el = window.document.getElementById('b');
+
+  assert.equal(agent.isSubmitShaped(el, 'button', 'Create'), true);
+  assert.equal(agent.isIrreversibleControl(el, 'button', 'Create'), false);
+  assert.equal(agent.isIrreversibleControl(el, 'button', 'Comment'), false);
+  assert.equal(agent.isIrreversibleControl(el, 'button', 'Delete comment'), true, 'delete is still irreversible');
+});
+
+test('a Close issue click names Reopen issue as the way back', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(`<!doctype html><body>
+    <div id="state">Open</div>
+    <button id="close">Close issue</button>
+  </body>`);
+  const wired = wireSubmit(page, { behaviour: 'nothing' });
+  const closeBtn = page.window.document.getElementById('close');
+  wired.aim(closeBtn);
+  // The site swaps the control for its opposite, which is where the undo
+  // lookup finds the name to report.
+  closeBtn.addEventListener('click', () => {
+    page.window.document.getElementById('state').textContent = 'Closed';
+    closeBtn.textContent = 'Reopen issue';
+  });
+  await ownTabGroup();
+
+  const ref = await refOf(page, 'Close issue');
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+
+  assert.equal(result.undo, 'Reopen issue');
+  assert.equal(result.evidence.submit.windowMs >= 0, true, 'the click ran the submit watch');
+  assert.equal(result.irreversible, undefined, 'closing an issue is not on the irreversible list');
 });
 
 // ---------------------------------------------------------------------------
@@ -1229,4 +1334,27 @@ test('a resize never activates a tab or focuses a window', async () => {
     false,
     'no window was focused'
   );
+});
+
+// ---------------------------------------------------------------------------
+// The find result says when the query named a role the page does not have
+// ---------------------------------------------------------------------------
+
+test('find warns that no candidate carries the role the query named', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(`<!doctype html><body>
+    <button>Edit title</button><button>Copy title</button><button>Add a title</button>
+  </body>`);
+  wireSubmit(page, { behaviour: 'nothing' });
+  await ownTabGroup();
+
+  const result = await tools.execute('find', { tabId: 1, query: 'issue title field' }, { clientId: 'default' });
+
+  assert.equal(result.effects, 'none');
+  assert.ok(result.matches.length, 'the ranking still answers with what it has');
+  assert.ok(
+    result.warnings.some((w) => /^no textbox matched, \d+ buttons? shown instead$/.test(w)),
+    'warnings: ' + result.warnings.join(' | ')
+  );
+  assert.match(result.evidence.roleGap, /no textbox matched/);
 });

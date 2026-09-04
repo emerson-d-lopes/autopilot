@@ -1,6 +1,6 @@
 # chrome-mcp: status, parity and test coverage
 
-State of the build as of 2026-09-04, extension 0.1.37. 26 tools, 30 test files.
+State of the build as of 2026-09-04, extension 0.1.39. 26 tools, 30 test files.
 
 - Source: about 17,600 lines across the extension, host and tools
 - Tests: about 10,500 lines
@@ -538,3 +538,46 @@ Three bugs are open, with reproductions in the evidence file:
 - The before-write capture a confirmation points at carries the acting indicator, which the screenshot path and the gif frames both hide.
 
 `node --test --test-concurrency=1` over the 24 non-browser files: 640 of 640, plus `campaign.test.js` at 12 of 12. `node tools/check-errors-copy.js` reports the copy matches.
+## Fixes for the five bugs the 0.1.35 checks on the user's Chrome opened, 2026-09-04
+
+Extension 0.1.38, branch `plan/bugs3`. Each fix has its own commit and its own test, and none of them has been driven against a browser. The evidence they come from is `docs/claude-in-chrome-comparison/evidence/USER-CHROME-0.1.35.md`.
+
+- `get_page_text` returns what a feed shows. On linkedin.com/feed it kept 28 text nodes and rejected 383 as hidden while `main.innerText` was 8989 characters and `visibilityState` was `visible`. The hidden test asked a wider question than the one that matters: `checkVisibility` reports false for a subtree the renderer is skipping and for an element with no box of its own, and `aria-hidden` kept out the visible copy of every label on a site that puts the accessible copy in a clipped span beside it. The test is now what `innerText` leaves out and nothing more, `checkVisibility` survives as the one check the relaxed pass drops, counted in a new `rejectedUnrendered`, and the pass that read more of the container wins. `test/fixtures/campaign/feed.html` carries the shape.
+- GitHub's write controls get the submit window. Create, Comment, Close issue and the modal Delete each ran the 250 ms window, and the navigation or the 2xx that proved the write landed arrived after it closed. `SUBMIT_WORDS` now covers create, comment, close, delete, remove, confirm, apply, save, update, submit, ok, done and yes, which changes the window only: irreversibility stays governed by `IRREVERSIBLE_WORDS`. `close` and `reopen` join the undo classifier as a pair, so a Close issue click reports `undo: "Reopen issue"`.
+- A click that opened a modal reports `applied`. The Delete menu item opened GitHub's confirm modal, the watch counted 40 mutations and focus on its Cancel button, and the result said `unknown` because no submit signal had fired. `unknown` is now reserved for a watch that saw nothing inside the extended window, and the missing submit evidence is a warning instead. The click and key paths share `applySubmitEvidence` for it.
+- `find` weighs the role a query names. On the new-issue page "issue title field" returned twenty markdown toolbar buttons and "submit new issue button" returned no Create button. Field, input, box, textbox, textarea, button, link, checkbox, menu, dropdown, select and tab now filter the candidates when the page has that role, the weak hints they override go back to the scorer as ordinary terms, a placeholder scores above the rest of the attribute text, and the accessible name of the nearest enclosing form reaches every control inside it.
+- A `find` result says when the query named a role nothing on the page carries, as one line in `warnings` and under `evidence.roleGap`, so twenty buttons returned for a field query do not read as twenty fields.
+
+Test counts on 2026-09-04, `node --test --test-concurrency=1` per file, no browser running:
+
+| File | Tests | Pass |
+|---|---|---|
+| a11y.test.js | 55 | 55 |
+| aliases.test.js | 6 | 6 |
+| batch.test.js | 16 | 16 |
+| campaign-server.test.js | 15 | 15 |
+| cdp.test.js | 67 | 67 |
+| errors.test.js | 44 | 44 |
+| find.test.js | 59 | 59 |
+| gif.test.js | 34 | 34 |
+| indicator.test.js | 10 | 10 |
+| ipc.test.js | 18 | 18 |
+| journal.test.js | 28 | 28 |
+| parity.test.js | 12 | 12 |
+| permissions.test.js | 34 | 34 |
+| probe-detect.test.js | 8 | 8 |
+| profile.test.js | 20 | 20 |
+| protocol.test.js | 14 | 14 |
+| recorder.test.js | 12 | 12 |
+| redact.test.js | 22 | 22 |
+| registry.test.js | 20 | 20 |
+| screenshot.test.js | 52 | 52 |
+| sensitive.test.js | 16 | 16 |
+| sessions.test.js | 14 | 14 |
+| tabs.test.js | 26 | 26 |
+| verify.test.js | 55 | 55 |
+| **Total** | **657** | **657** |
+
+The 23 files excluding `campaign-server` run together as 642 of 642. `node tools/check-errors-copy.js` reports the extension copy matches, and `node --check` passes on all 43 files under `extension/src`, `host` and `tools`.
+
+The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. The live checks these five ask for are the fixture pages, not LinkedIn or GitHub: `get_page_text` on `/feed.html` against `javascript` reading `feedInnerTextLength()`, a click on the composer fixture's Save draft and on a Close issue control, a click that opens a modal, and `find "issue title field"` and `find "submit new issue button"` on a page carrying both a title textbox and a Create button.

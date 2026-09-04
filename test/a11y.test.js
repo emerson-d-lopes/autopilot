@@ -669,6 +669,93 @@ test('GET_PAGE_TEXT reports the counts that explain an empty result', async () =
   assert.equal(typeof result.rejectedEmpty, 'number');
 });
 
+// A feed page's shape, from the 0.1.35 checks on linkedin.com/feed, where
+// get_page_text kept 28 text nodes and rejected 383 as hidden while
+// main.innerText was 8989 characters long. Every string here is one innerText
+// returns: a clipped span is rendered, an aria-hidden span is rendered (and is
+// where the visible copy of a label sits on that site), an opacity 0 overlay is
+// rendered, a content-visibility section is deferred rather than removed, and a
+// post far down the page is offscreen rather than hidden. The two panels the
+// walk must drop are the only two nobody can read.
+const FEED = `<!doctype html><body>
+  <header><nav><a href="/">Home</a></nav></header>
+  <main>
+    <div><div><div><div>
+      <span style="position:absolute;clip:rect(0,0,0,0)">Ada Lovelace, first degree connection</span>
+      <span aria-hidden="true">Ada Lovelace</span>
+      <div><div><p>Analytical engines do not originate anything.</p></div></div>
+      <div style="opacity:0;position:absolute">Promoted placement slot</div>
+      <div><button type="button"><span aria-hidden="true">Like</span></button></div>
+    </div></div></div></div>
+    <section data-content-visibility="auto"><div><div>
+      <span aria-hidden="true">Grace Hopper</span>
+      <p>The most damaging phrase is that we have always done it this way.</p>
+    </div></div></section>
+    <div data-offscreen="true"><div>
+      <span aria-hidden="true">Katherine Johnson</span>
+      <p>Tell me where you want it to land and I will do it backwards.</p>
+    </div></div>
+    <div>
+      <div style="display:none"><p>Collapsed panel copy</p></div>
+      <div style="visibility:hidden"><p>Invisible panel copy</p></div>
+      <p>Visible sibling of both panels.</p>
+    </div>
+  </main>
+  <footer>Site footer</footer>
+</body>`;
+
+const FEED_VISIBLE = [
+  'Ada Lovelace, first degree connection',
+  'Ada Lovelace',
+  'Analytical engines do not originate anything.',
+  'Promoted placement slot',
+  'Like',
+  'Grace Hopper',
+  'The most damaging phrase is that we have always done it this way.',
+  'Katherine Johnson',
+  'Tell me where you want it to land and I will do it backwards.',
+  'Visible sibling of both panels.',
+];
+
+test('GET_PAGE_TEXT on a feed keeps every node innerText would include', async () => {
+  const { call } = loadPageWith(FEED);
+  const result = await call({ type: 'GET_PAGE_TEXT', maxChars: 50000 });
+
+  for (const line of FEED_VISIBLE) {
+    assert.ok(result.text.includes(line), 'missing from the text: ' + line + '\n' + result.text);
+  }
+  assert.equal(/Collapsed panel copy/.test(result.text), false, 'display:none stays out');
+  assert.equal(/Invisible panel copy/.test(result.text), false, 'visibility:hidden stays out');
+  assert.equal(/Site footer/.test(result.text), false, 'page chrome stays out');
+  assert.equal(result.textNodes, FEED_VISIBLE.length, JSON.stringify(result));
+  assert.equal(result.rejectedHidden, 2, 'only the two unreadable panels were rejected');
+  assert.equal(result.container, 'main');
+  assert.equal(result.fallback, false, 'the first pass already returns the page');
+});
+
+test('GET_PAGE_TEXT keeps a deferred section that checkVisibility rejects', async () => {
+  // Chrome answers checkVisibility false for a subtree it is skipping under
+  // content-visibility. The relaxed pass drops that one check, and the pass
+  // that read more of the page is the one returned, so a thin strict result no
+  // longer wins over a complete relaxed one.
+  const { call } = loadPageWith(FEED, { contentVisibilitySkips: true });
+  const result = await call({ type: 'GET_PAGE_TEXT', maxChars: 50000 });
+
+  for (const line of FEED_VISIBLE) {
+    assert.ok(result.text.includes(line), 'missing from the text: ' + line + '\n' + result.text);
+  }
+  assert.match(result.container, /visibility filter relaxed/);
+  assert.equal(/Collapsed panel copy/.test(result.text), false, 'the relaxed pass still drops display:none');
+  assert.equal(/Invisible panel copy/.test(result.text), false, 'the relaxed pass still drops visibility:hidden');
+});
+
+test('GET_PAGE_TEXT reports how many nodes only checkVisibility rejected', async () => {
+  const { call } = loadPageWith(FEED, { contentVisibilitySkips: true });
+  const result = await call({ type: 'GET_PAGE_TEXT', maxChars: 50000 });
+  assert.equal(typeof result.rejectedUnrendered, 'number');
+  assert.equal(result.rejectedUnrendered, 0, 'the winning relaxed pass rejected nothing that way');
+});
+
 test('GET_PAGE_TEXT keeps the container it used when the first one works', async () => {
   const { call } = loadPage('<!doctype html><body><main><p>Plain prose.</p></main></body>');
   const result = await call({ type: 'GET_PAGE_TEXT' });

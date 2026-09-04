@@ -5,7 +5,7 @@ import * as shot from './screenshot.js';
 import * as perms from './permissions.js';
 import * as tabsLib from './tabs.js';
 import * as recorder from './recorder.js';
-import { scoreCandidates, shouldWiden, NARROW_SCOPE_RATIO, FIND_TREE_CHAR_BUDGET } from './find.js';
+import { scoreCandidates, shouldWiden, roleGapNote, NARROW_SCOPE_RATIO, FIND_TREE_CHAR_BUDGET } from './find.js';
 import * as gif from './gif.js';
 import * as shortcuts from './shortcuts.js';
 import { ToolError, withCode } from './errors.js';
@@ -511,6 +511,44 @@ function submitEvidence(report, network, outcome) {
 }
 
 /**
+ * Folds the submit evidence into a click or key result.
+ *
+ * Three outcomes, and the middle one is the fix for a click that opened a
+ * modal. A submit signal fired, so the write landed: `applied`. Nothing fired
+ * and the watch still counted mutations, a focus move, a scroll or a
+ * navigation, so something happened even though nothing says the write left
+ * the page: `applied`, with the gap said in a warning. GitHub's Delete menu
+ * item is that case, 40 mutations and focus on the modal's Cancel button, and
+ * it used to report `unknown` for an effect the caller could see. Nothing
+ * fired and the watch saw nothing at all: `unknown`, which is the honest
+ * answer for a press that may still have reached the server.
+ */
+function applySubmitEvidence(result, submit, outcome) {
+  result.evidence = { ...result.evidence, submit };
+  const quiet = (warnings) => warnings.filter((w) => !/no observable change/.test(w));
+
+  if (submit.fired.length) {
+    result.effects = 'applied';
+    result.warnings = quiet(result.warnings);
+    return result;
+  }
+  if (outcome.effects === 'applied') {
+    result.effects = 'applied';
+    result.warnings = quiet(result.warnings).concat(
+      'the page changed within ' + SUBMIT_WINDOW_MS +
+        'ms but no submit evidence fired, so this may have opened a step rather than completed one'
+    );
+    return result;
+  }
+  result.effects = 'unknown';
+  result.hint = 're-read the page before retrying';
+  result.warnings = quiet(result.warnings).concat(
+    'no submit evidence within ' + SUBMIT_WINDOW_MS + 'ms: re-read the page before retrying'
+  );
+  return result;
+}
+
+/**
  * The confirmation gate for an irreversible control (W4).
  *
  * Returns how it was approved, or throws `confirmation_required` carrying a
@@ -891,17 +929,7 @@ async function computerTool(ctx, input) {
       };
 
       if (submit) {
-        result.evidence = { ...result.evidence, submit };
-        if (submit.fired.length) {
-          result.effects = 'applied';
-          result.warnings = result.warnings.filter((w) => !/no observable change/.test(w));
-        } else {
-          result.effects = 'unknown';
-          result.hint = 're-read the page before retrying';
-          result.warnings = result.warnings
-            .filter((w) => !/no observable change/.test(w))
-            .concat('no submit evidence within ' + SUBMIT_WINDOW_MS + 'ms: re-read the page before retrying');
-        }
+        applySubmitEvidence(result, submit, outcome);
         const undo = await undoHint(tabId, element.undoClass);
         if (undo) result.undo = undo;
       }
@@ -1091,17 +1119,7 @@ async function computerTool(ctx, input) {
       if (submitting) {
         const report = await pageCall(tabId, { type: 'SUBMIT_REPORT', window: 0 }).catch(() => null);
         const submit = submitEvidence(report, networkSince(tabId, netBefore, url), outcome);
-        result.evidence = { ...result.evidence, submit };
-        if (submit.fired.length) {
-          result.effects = 'applied';
-          result.warnings = result.warnings.filter((w) => !/no observable change/.test(w));
-        } else {
-          result.effects = 'unknown';
-          result.hint = 're-read the page before retrying';
-          result.warnings = result.warnings
-            .filter((w) => !/no observable change/.test(w))
-            .concat('no submit evidence within ' + SUBMIT_WINDOW_MS + 'ms: re-read the page before retrying');
-        }
+        applySubmitEvidence(result, submit, outcome);
         const undo = await undoHint(tabId, target && target.undoClass);
         if (undo) result.undo = undo;
         if (irreversible) {
@@ -1533,6 +1551,11 @@ export const handlers = {
       warnings.push('the tree was truncated at ' + tree.shownNodes + ' of ' + tree.nodes + ' nodes, so the match may be outside it');
     }
 
+    // The query named a role and nothing on the page has it, so the list below
+    // is a different kind of thing from the one asked for.
+    const roleGap = roleGapNote(input.query, matches);
+    if (roleGap) warnings.push(roleGap);
+
     return {
       query: input.query,
       matches,
@@ -1541,7 +1564,7 @@ export const handlers = {
       widened: Boolean(widenedBecause) || undefined,
       truncated: tree.truncated || false,
       effects: 'none',
-      evidence: { scope, searched: tree.nodes, widenedBecause: widenedBecause || undefined },
+      evidence: { scope, searched: tree.nodes, widenedBecause: widenedBecause || undefined, roleGap: roleGap || undefined },
       warnings,
     };
   },
