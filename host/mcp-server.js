@@ -38,6 +38,7 @@ import {
   retryDecision,
   newCallId,
   contractLine,
+  stepContractLine,
   formatError,
   ToolFailure,
 } from './errors.js';
@@ -528,6 +529,30 @@ function formatTreeResult(result) {
   return [textBlock(header + '\n\n' + body)];
 }
 
+/**
+ * The line under a clipped read saying how much was left out.
+ *
+ * read_page has always said "158 more nodes not shown, 310 in total". These two
+ * said "3 URL(s) clipped to 300 characters" with no row count at all, so a
+ * reader could not tell whether entries had been dropped as well as clipped.
+ *
+ * @param {string} unit  what the rows are, for the count
+ * @param {string} part  what was clipped inside a row
+ */
+function clipNote(result, unit, part) {
+  const parts = [];
+  const returned = result.returned ?? 0;
+  const total = result.total ?? returned;
+  parts.push(returned < total ? 'showing ' + returned + ' of ' + total + ' ' + unit : returned + ' ' + unit);
+  if (result.clipped) {
+    parts.push(
+      result.clipped + ' ' + part + (result.clipped === 1 ? '' : 's') + ' clipped to ' + result.clippedTo +
+        ' characters' + (result.longestClipped ? ', the longest was ' + result.longestClipped : '')
+    );
+  }
+  return '\n\n[' + parts.join(', ') + ']';
+}
+
 function formatConsole(result) {
   if (!result.entries.length) {
     return [textBlock('No console messages' + (result.capturing ? '.' : ' (capture is not active for this tab).'))];
@@ -536,9 +561,7 @@ function formatConsole(result) {
     const where = e.url ? ' (' + e.url.split('/').pop() + (e.line ? ':' + e.line : '') + ')' : '';
     return '[' + (e.level || 'log') + '] ' + e.text + where;
   });
-  const note =
-    result.returned < result.total ? '\n\n[showing ' + result.returned + ' of ' + result.total + ' entries]' : '';
-  return [textBlock(lines.join('\n') + note)];
+  return [textBlock(lines.join('\n') + clipNote(result, 'entries', 'message'))];
 }
 
 function formatNetwork(result) {
@@ -548,9 +571,7 @@ function formatNetwork(result) {
     const size = r.encodedDataLength ? ' ' + Math.round(r.encodedDataLength / 1024) + 'kb' : '';
     return [status, r.method || '', r.url].filter(Boolean).join(' ') + size;
   });
-  const note =
-    result.returned < result.total ? '\n\n[showing ' + result.returned + ' of ' + result.total + ' requests]' : '';
-  return [textBlock(lines.join('\n') + note)];
+  return [textBlock(lines.join('\n') + clipNote(result, 'requests', 'URL'))];
 }
 
 function formatFind(result) {
@@ -595,9 +616,19 @@ function formatSequence(result, { quick = false } = {}) {
     const label = quick && step.lineNo ? 'line ' + step.lineNo + ' ' + step.command : '[' + step.index + '] ' + step.name;
     if (!step.ok) {
       summary.push(label + ' FAILED: ' + step.error.message);
+      if (step.error.code) {
+        summary.push(
+          '  [ok=false code=' + step.error.code + ' effects=' + step.error.effects +
+            ' retryable=' + step.error.retryable + ']'
+        );
+      }
       continue;
     }
     summary.push(label + ' ok');
+    // The step's own contract, so evidence produced inside a script is visible
+    // rather than folded into one line for the whole run.
+    const contract = stepContractLine(step);
+    if (contract) summary.push(contract);
     const inner = formatResult(step.name, step.result, step.input || {});
     // A step that produced an image also produced the line naming its id, size
     // and saved path, which is what a later upload_image or a message needs.

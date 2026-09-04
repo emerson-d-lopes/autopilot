@@ -1386,6 +1386,45 @@
     return n;
   }
 
+  /** Matches window.open, self.open, top.open and a bare open( in an attribute. */
+  const INLINE_OPEN_RE = /(?:^|[^.\w$])(?:(?:window|self|top)\s*\.\s*)?open\s*\(/;
+
+  /**
+   * Whether pressing this element opens a tab.
+   *
+   * The tab a click opens is created after the 250 ms verification window has
+   * closed, so the click reported no newTabId even though the tab existed. The
+   * watch says up front whether waiting longer is worth it, which keeps the
+   * grace off every other click.
+   */
+  function opensNewTab(el) {
+    let node = el;
+    for (let hops = 0; node && hops < 30; hops++) {
+      if (node.nodeType === Node.ELEMENT_NODE && node.getAttribute) {
+        const target = node.getAttribute('target');
+        if (target && target.trim().toLowerCase() === '_blank') return true;
+        const onclick = node.getAttribute('onclick');
+        if (onclick && INLINE_OPEN_RE.test(onclick)) return true;
+        const onmouseup = node.getAttribute('onmouseup');
+        if (onmouseup && INLINE_OPEN_RE.test(onmouseup)) return true;
+      }
+      const root = node.parentElement ? null : node.getRootNode && node.getRootNode();
+      node = node.parentElement || (root && root.host) || null;
+    }
+    return false;
+  }
+
+  /** The element a watch is armed on, by ref when named and by point otherwise. */
+  function watchTarget(point, named) {
+    if (named) return named;
+    if (!point || typeof point.x !== 'number' || typeof point.y !== 'number') return null;
+    try {
+      return document.elementFromPoint(point.x, point.y);
+    } catch {
+      return null;
+    }
+  }
+
   function armWatch(point, ref) {
     if (watch && watch.observer) watch.observer.disconnect();
     // The element whose value is worth watching. A tool that names the element
@@ -1417,9 +1456,16 @@
       characterData: true,
     });
     watch = state;
+    let opensTab = false;
+    try {
+      opensTab = opensNewTab(watchTarget(point, named));
+    } catch {
+      /* the arm never fails on what it could not read */
+    }
     return {
       ok: true,
       armed: true,
+      opensTab,
       focus: { present: state.focus.present, ref: state.focus.ref, name: state.focus.name },
       scroll: state.scroll,
     };

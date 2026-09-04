@@ -892,3 +892,253 @@ test('the classifier marks a submit button, a named Send, and neither for a plai
   assert.equal(agent.undoClass(el('named'), 'button', 'Post comment'), 'reversible');
   assert.equal(agent.undoClass(el('named'), 'button', 'Send message'), 'sent');
 });
+
+// ---------------------------------------------------------------------------
+// Open bug 2: newTabId for a click that opens a tab
+// ---------------------------------------------------------------------------
+//
+// Chrome creates the tab after the 250 ms window has closed, so the click
+// reported no newTabId for a tab that existed a second later. The watch now
+// says at arm time whether the element opens a tab, and only that click waits.
+
+test('the watch reports that a target=_blank link opens a tab', async () => {
+  const page = loadPage(`<!doctype html><body>
+    <a id="blank" href="https://example.com/" target="_blank">blank link</a>
+    <a id="same" href="/here">same tab link</a>
+    <button id="opener" onclick="window.open('https://example.com/')">popup</button>
+    <button id="plain">plain</button>
+  </body>`);
+  const { window, call } = page;
+
+  const arm = async (id) => {
+    window.document.elementFromPoint = () => window.document.getElementById(id);
+    const armed = await call({ type: 'VERIFY_ARM', point: { x: 10, y: 10 } });
+    await call({ type: 'VERIFY_REPORT', window: 0 });
+    return armed.opensTab;
+  };
+
+  assert.equal(await arm('blank'), true, 'target=_blank');
+  assert.equal(await arm('opener'), true, 'an inline window.open handler');
+  assert.equal(await arm('same'), false, 'a link that stays in the tab');
+  assert.equal(await arm('plain'), false, 'an ordinary button');
+});
+
+test('the watch reads target=_blank off an ancestor of the clicked node', async () => {
+  const page = loadPage(
+    '<!doctype html><body><a id="blank" href="/x" target="_blank"><span id="inner">go</span></a></body>'
+  );
+  page.window.document.elementFromPoint = () => page.window.document.getElementById('inner');
+  const armed = await page.call({ type: 'VERIFY_ARM', point: { x: 10, y: 10 } });
+  assert.equal(armed.opensTab, true);
+});
+
+const BLANK_LINK = `<!doctype html><body>
+  <a id="blank" href="https://example.com/" target="_blank">blank link</a>
+  <button id="plain">plain</button>
+</body>`;
+
+test('a click on a target=_blank link waits for the tab and reports newTabId', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const tabsLib = await import('../extension/src/lib/tabs.js');
+  const page = loadPage(BLANK_LINK);
+  const wired = wireSubmit(page);
+  wired.aim(page.window.document.getElementById('blank'));
+  await ownTabGroup();
+
+  // Chrome opens the tab well after the ordinary window has closed.
+  const opened = setTimeout(() => tabsLib.noteOpenedTab({ id: 99, openerTabId: 1 }), 600);
+
+  const ref = await refOf(page, 'blank link');
+  const started = Date.now();
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+  clearTimeout(opened);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.newTabId, 99, 'the click result names the tab it opened');
+  assert.match(result.note, /new tab \(tab ID 99\)/);
+  assert.equal(result.evidence.newTabId, 99);
+  assert.equal(result.evidence.opensTab, true);
+  assert.equal(result.evidence.waitedForTab, true);
+  assert.ok(Date.now() - started >= 550, 'it waited for the tab rather than reporting none');
+  assert.ok(Date.now() - started < 1600, 'and stopped at the cap');
+  assert.deepEqual(tabsLib.peekAdopted(1), [], 'the read consumed the bookkeeping');
+});
+
+test('an ordinary click does not wait for a tab that is never coming', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(BLANK_LINK);
+  const wired = wireSubmit(page);
+  wired.aim(page.window.document.getElementById('plain'));
+  await ownTabGroup();
+
+  const ref = await refOf(page, 'plain');
+  const started = Date.now();
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+  const elapsed = Date.now() - started;
+
+  assert.equal(result.newTabId, undefined);
+  assert.equal(result.evidence.opensTab, undefined);
+  assert.equal(result.evidence.waitedForTab, undefined, 'no grace is added to an ordinary click');
+  assert.ok(elapsed < 900, 'an ordinary click still costs the ordinary window: ' + elapsed + 'ms');
+});
+
+test('a click that opens a tab stops waiting as soon as the tab arrives', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const tabsLib = await import('../extension/src/lib/tabs.js');
+  const page = loadPage(BLANK_LINK);
+  const wired = wireSubmit(page);
+  wired.aim(page.window.document.getElementById('blank'));
+  await ownTabGroup();
+
+  tabsLib.noteOpenedTab({ id: 101, openerTabId: 1 });
+  const ref = await refOf(page, 'blank link');
+  const started = Date.now();
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+
+  assert.equal(result.newTabId, 101);
+  assert.equal(result.evidence.waitedForTab, undefined, 'a tab already recorded costs no extra wait');
+  assert.ok(Date.now() - started < 900);
+});
+
+// ---------------------------------------------------------------------------
+// Open bug 6: resize_window did not resize
+// ---------------------------------------------------------------------------
+//
+// The evidence a resize produces is the same question the watch answers for a
+// click: did the action land. A resize to 1000x700 left a maximized window at
+// 1200x900 and reported matched "neither", so the failure was visible and the
+// resize never happened. Chrome ignores a size that arrives in the same
+// windows.update as the state change.
+
+/**
+ * A window whose size Chrome only accepts once the state is already normal,
+ * which is the behaviour that made the resize a no-op.
+ */
+function wireWindow(page, { state = 'normal', width = 1200, height = 900, refuses = false, dpr = 1 } = {}) {
+  const { window, call } = page;
+  const updates = [];
+  let bounds = { width, height, state };
+
+  const paint = () => {
+    window.outerWidth = bounds.width;
+    window.outerHeight = bounds.height;
+    window.innerWidth = bounds.width - 12;
+    window.innerHeight = bounds.height - 149;
+  };
+  paint();
+  window.devicePixelRatio = dpr;
+
+  globalThis.chrome.windows = {
+    async get() {
+      return { id: 1, ...bounds };
+    },
+    async update(_id, props) {
+      updates.push({ ...props });
+      if (props.state) {
+        bounds = { ...bounds, state: props.state };
+        return;
+      }
+      // A maximized window ignores a size, and so does a window manager that
+      // has decided otherwise.
+      if (bounds.state !== 'normal' || refuses) return;
+      if (typeof props.width === 'number') bounds = { ...bounds, width: props.width, height: props.height };
+      paint();
+    },
+    async create() {
+      return { tabs: [{ id: 1, windowId: 1 }] };
+    },
+  };
+
+  globalThis.chrome.tabs.sendMessage = (_id, message) => new Promise((resolve) => call(message).then(resolve));
+  return { updates, bounds: () => bounds };
+}
+
+const PLAIN_PAGE = '<!doctype html><body><p>a page to measure</p></body>';
+
+test('a maximized window is set to normal first, then resized', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(PLAIN_PAGE);
+  const wired = wireWindow(page, { state: 'maximized' });
+  await ownTabGroup();
+
+  const result = await tools.execute('resize_window', { tabId: 1, width: 1000, height: 700 }, { clientId: 'default' });
+
+  assert.deepEqual(wired.updates[0], { state: 'normal' }, 'the state change goes on its own');
+  assert.deepEqual(wired.updates[1], { width: 1000, height: 700 }, 'the size follows it');
+  assert.deepEqual(wired.bounds(), { width: 1000, height: 700, state: 'normal' });
+  assert.equal(result.matched, 'outer');
+  assert.equal(result.outerWidth, 1000);
+  assert.equal(result.effects, 'applied');
+  assert.deepEqual(result.evidence.windowBounds.before, { width: 1200, height: 900, state: 'maximized' });
+  assert.deepEqual(result.evidence.windowBounds.after, { width: 1000, height: 700, state: 'normal' });
+  assert.equal(result.warnings.length, 0);
+});
+
+test('a window already normal is resized without touching its state', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(PLAIN_PAGE);
+  const wired = wireWindow(page, { state: 'normal' });
+  await ownTabGroup();
+
+  const result = await tools.execute('resize_window', { tabId: 1, width: 900, height: 650 }, { clientId: 'default' });
+
+  assert.deepEqual(wired.updates, [{ width: 900, height: 650 }], 'one update, and no state change');
+  assert.equal(result.matched, 'outer');
+  assert.equal(result.viewport.width, 888, 'the viewport is reported as well as the outer size');
+});
+
+test('a window manager that refuses the size is reported as a refusal, after a retry', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(PLAIN_PAGE);
+  const wired = wireWindow(page, { state: 'normal', refuses: true });
+  await ownTabGroup();
+
+  const result = await tools.execute('resize_window', { tabId: 1, width: 1000, height: 700 }, { clientId: 'default' });
+
+  assert.equal(wired.updates.length, 2, 'the size was sent again once the read-back showed it had not taken');
+  assert.equal(result.matched, 'neither');
+  assert.equal(result.effects, 'none');
+  assert.ok(
+    result.warnings.some((w) => /1200x900 outer/.test(w)),
+    'warnings: ' + result.warnings.join(' | ')
+  );
+  assert.deepEqual(result.evidence.windowBounds.after, { width: 1200, height: 900, state: 'normal' });
+});
+
+test('a request in device pixels is named as such rather than left unexplained', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(PLAIN_PAGE);
+  wireWindow(page, { state: 'normal', refuses: true, dpr: 2.25 });
+  await ownTabGroup();
+
+  const result = await tools.execute('resize_window', { tabId: 1, width: 2700, height: 2025 }, { clientId: 'default' });
+
+  assert.equal(result.matched, 'neither');
+  assert.equal(result.evidence.devicePixelRatio, 2.25);
+  assert.ok(
+    result.warnings.some((w) => /device pixel ratio of 2.25/.test(w)),
+    'warnings: ' + result.warnings.join(' | ')
+  );
+});
+
+test('a resize never activates a tab or focuses a window', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(PLAIN_PAGE);
+  const wired = wireWindow(page, { state: 'maximized' });
+  const tabUpdates = [];
+  const originalUpdate = globalThis.chrome.tabs.update;
+  globalThis.chrome.tabs.update = async (id, props) => {
+    tabUpdates.push(props);
+  };
+  await ownTabGroup();
+
+  await tools.execute('resize_window', { tabId: 1, width: 1000, height: 700 }, { clientId: 'default' });
+
+  globalThis.chrome.tabs.update = originalUpdate;
+  assert.deepEqual(tabUpdates, [], 'no tab was activated');
+  assert.equal(
+    wired.updates.some((u) => u.focused !== undefined || u.drawAttention !== undefined),
+    false,
+    'no window was focused'
+  );
+});

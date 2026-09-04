@@ -19,6 +19,7 @@ import {
   defaultEffects,
   newCallId,
   contractLine,
+  stepContractLine,
   formatError,
   MAX_ATTEMPTS,
   ERROR_CODES,
@@ -400,4 +401,44 @@ test('extension/src/lib/errors.js is still a copy of host/errors.js', () => {
     body(join(ROOT, 'host', 'errors.js')),
     'the copy has drifted; re-copy host/errors.js over it'
   );
+});
+
+// ---------------------------------------------------------------------------
+// Open bug 7: a step of a script carries its own contract
+// ---------------------------------------------------------------------------
+
+test('a step contract line carries the evidence the step produced', () => {
+  const stepLine = stepContractLine({
+    ok: true,
+    name: 'computer',
+    input: { action: 'screenshot', tabId: 1 },
+    result: {
+      effects: 'none',
+      evidence: { paint: { painted: true, path: 'screencastFrame' } },
+      warnings: [],
+    },
+  });
+  assert.match(stepLine, /ok=true/);
+  assert.match(stepLine, /effects=none/);
+  assert.match(stepLine, /evidence=\{"paint":\{"painted":true,"path":"screencastFrame"\}\}/);
+});
+
+test('a step with no effects of its own falls back to the tool default', () => {
+  const stepLine = stepContractLine({ ok: true, name: 'read_page', input: { tabId: 1 }, result: { text: 'a tree' } });
+  assert.ok(stepLine.includes('effects=' + defaultEffects('read_page', { tabId: 1 })), stepLine);
+  assert.equal(stepLine.includes('evidence='), false, 'no evidence is better than an empty object');
+});
+
+test('a step lists its own warnings under its own line', () => {
+  const stepLine = stepContractLine({
+    ok: true,
+    name: 'computer',
+    input: { action: 'left_click' },
+    result: { effects: 'none', warnings: ['no observable change within 250ms'] },
+  });
+  assert.match(stepLine, /- no observable change within 250ms/);
+});
+
+test('a failed step gets no contract line, since the error carries the contract', () => {
+  assert.equal(stepContractLine({ ok: false, name: 'computer', error: { message: 'gone' } }), null);
 });

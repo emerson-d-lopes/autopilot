@@ -313,6 +313,59 @@ test('a batch result summarises each step', async (t) => {
   assert.match(text, /Stopped at action 1/);
 });
 
+test('a quick script reports the evidence each line produced', async (t) => {
+  // Open bug 7: the script used to return one contract line for the whole run,
+  // so evidence.paint.painted from an SS line was nowhere in the reply.
+  const stack = await startStack('quickevidence', (extension, message) => {
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      result: {
+        quick: true,
+        parsed: 2,
+        completed: true,
+        results: [
+          {
+            index: 0,
+            name: 'computer',
+            lineNo: 1,
+            command: 'C ref_1',
+            ok: true,
+            result: { ok: true, effects: 'applied', evidence: { mutations: 3 }, warnings: [] },
+          },
+          {
+            index: 1,
+            name: 'computer',
+            lineNo: 2,
+            command: 'SS',
+            ok: true,
+            result: {
+              ok: true,
+              effects: 'none',
+              evidence: { paint: { painted: true, path: 'screencastFrame' } },
+              warnings: ['the tab is hidden, so the capture came from a screencast frame'],
+            },
+          },
+        ],
+      },
+    });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'quick',
+    arguments: { tabId: 1, script: 'C ref_1\nSS' },
+  });
+
+  const text = response.result.content.map((b) => b.text || '').join('\n');
+  assert.match(text, /line 1 C ref_1 ok/);
+  assert.match(text, /effects=applied evidence=\{"mutations":3\}/);
+  assert.match(text, /line 2 SS ok/);
+  assert.match(text, /"painted":true/, 'the paint evidence from the SS line is visible');
+  assert.match(text, /- the tab is hidden/, "and so are that line's own warnings");
+  assert.match(text, /\[ok=true effects=\w+ id=call_/, 'the script keeps its own contract line');
+});
+
 test('an unknown tool is rejected without reaching the browser', async (t) => {
   const stack = await startStack('unknown', () => {});
   t.after(stack.stop);
@@ -569,4 +622,44 @@ test('network URLs are clipped and the total is reported', async (t) => {
   assert.ok(!text.includes('p'.repeat(400)), 'the URL was clipped');
   assert.match(text, /showing 1 of 500 requests/);
   assert.match(text, /clipped to 300 characters/);
+  assert.match(text, /1 URL clipped to 300 characters, the longest was 624/, 'the reply says how much was clipped');
+});
+
+test('an unclipped network read still prints the row count', async (t) => {
+  // Open bug 8: the reply carried no row count at all unless something was
+  // dropped, so a reader could not tell a complete list from a partial one.
+  const stack = await startStack('net-count', (extension, message) => {
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      result: { requests: [{ url: 'https://a.test/x', status: 200, method: 'GET' }], total: 1, returned: 1 },
+    });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'read_network_requests',
+    arguments: { tabId: 1 },
+  });
+  const text = response.result.content.map((b) => b.text).join('\n');
+  assert.match(text, /\[1 requests\]/);
+});
+
+test('a clipped console read names how long the message really was', async (t) => {
+  const long = 'e'.repeat(4210);
+  const stack = await startStack('console-caps', (extension, message) => {
+    extension.send({
+      type: 'tool_response',
+      id: message.id,
+      result: { entries: [{ level: 'error', text: long }], total: 1, returned: 1, capturing: true },
+    });
+  });
+  t.after(stack.stop);
+
+  const response = await stack.mcp.request('tools/call', {
+    name: 'read_console_messages',
+    arguments: { tabId: 1 },
+  });
+  const text = response.result.content.map((b) => b.text).join('\n');
+  assert.match(text, /1 message clipped to 500 characters, the longest was 4210/);
 });

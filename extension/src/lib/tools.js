@@ -5,7 +5,7 @@ import * as shot from './screenshot.js';
 import * as perms from './permissions.js';
 import * as tabsLib from './tabs.js';
 import * as recorder from './recorder.js';
-import { scoreCandidates, shouldWiden, NARROW_SCOPE_RATIO } from './find.js';
+import { scoreCandidates, shouldWiden, NARROW_SCOPE_RATIO, FIND_TREE_CHAR_BUDGET } from './find.js';
 import * as gif from './gif.js';
 import * as shortcuts from './shortcuts.js';
 import { ToolError, withCode } from './errors.js';
@@ -29,6 +29,12 @@ const VERIFY_NAV_WINDOW_MS = 1000;
 
 /** Sends a message to the page agent, injecting it first if the page predates the extension. */
 async function pageCall(tabId, message, { retry = true } = {}) {
+  // A message to the content script reaches the same renderer a CDP command
+  // does, and chrome.tabs.sendMessage has no timeout, so a read_page issued
+  // while the page is in a busy loop waited the whole loop out. When the tab is
+  // already waiting on a CDP command, this waits with that command's deadline
+  // and reports timeout instead.
+  if (cdp.busyFor(tabId) > 0) await cdp.awaitTurn(tabId, (message && message.type) || 'page call');
   try {
     const response = await chrome.tabs.sendMessage(tabId, message);
     if (response === undefined) throw new Error('no response from page agent');
@@ -149,6 +155,37 @@ function adoptedTabs(openerTabId) {
   return [];
 }
 
+/** The same read without consuming it, for polling. */
+function peekAdoptedTabs(openerTabId) {
+  try {
+    if (typeof tabsLib.peekAdopted !== 'function') return [];
+    const ids = tabsLib.peekAdopted(openerTabId);
+    return Array.isArray(ids) ? ids.filter((id) => typeof id === 'number') : [];
+  } catch {
+    /* the hook is not wired up on this build */
+  }
+  return [];
+}
+
+/**
+ * How long a click that looks like it opens a tab waits for the tab.
+ *
+ * Chrome creates the tab well after the 250 ms verification window closes. Only
+ * a click the watch flagged waits this long, so an ordinary click still costs
+ * the ordinary window.
+ */
+export const NEW_TAB_WINDOW_MS = 1500;
+
+/** How often the wait for an opened tab checks the adoption bookkeeping. */
+const NEW_TAB_POLL_MS = 50;
+
+/**
+ * A plain timer, not cdp.sleep. The poll reads worker-side bookkeeping, so
+ * sending 30 Runtime.evaluate calls into the tab to time it would queue behind
+ * whatever the renderer is doing and measure that instead.
+ */
+const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function armVerify(tabId, point, ref) {
   const armed = await pageCall(tabId, { type: 'VERIFY_ARM', point: point || null, ref: ref || null }).catch(() => null);
   let url = null;
@@ -158,7 +195,7 @@ async function armVerify(tabId, point, ref) {
   } catch {
     /* the tab is reported gone by the action itself */
   }
-  return { armed: Boolean(armed && armed.ok), url, at: Date.now() };
+  return { armed: Boolean(armed && armed.ok), opensTab: Boolean(armed && armed.opensTab), url, at: Date.now() };
 }
 
 /**
@@ -192,12 +229,28 @@ async function readVerify(tabId, armed, { window = VERIFY_WINDOW_MS } = {}) {
     }
   }
 
+  // A click on target="_blank", or on an inline handler that calls
+  // window.open, gets its tab after the ordinary window has closed. The watch
+  // said so at arm time, so only that click waits.
+  let waitedForTab = false;
+  if (armed.opensTab && !peekAdoptedTabs(tabId).length) {
+    const deadline = armed.at + NEW_TAB_WINDOW_MS;
+    while (Date.now() < deadline) {
+      await waitMs(NEW_TAB_POLL_MS);
+      windowMs = Date.now() - armed.at;
+      if (peekAdoptedTabs(tabId).length) break;
+    }
+    waitedForTab = true;
+  }
+
   const newTabIds = adoptedTabs(tabId);
   const newTabId = newTabIds.length ? newTabIds[0] : null;
   const watched = Boolean(report && report.ok);
   const evidence = {
     windowMs,
     watched,
+    opensTab: armed.opensTab || undefined,
+    waitedForTab: waitedForTab || undefined,
     mutations: watched ? report.mutations : undefined,
     focusChanged: watched ? report.focusChanged : undefined,
     focusedAfter: watched ? report.focusedAfter : undefined,
@@ -475,6 +528,25 @@ async function isPaymentCategory(url) {
     return (policy.blockedHosts || []).some((pattern) => perms.hostMatches(host, pattern));
   } catch {
     return false;
+  }
+}
+
+/**
+ * Whether a ref still names an element on its tab.
+ *
+ * Used by browser_batch to resolve every ref before the first item runs, so a
+ * stale ref at item five costs nothing rather than the side effects of items
+ * one to four. A transport failure answers true: the tab check reports a tab
+ * that cannot be reached, and the item itself reports a page that cannot
+ * answer, so this must not turn either into a batch refusal.
+ */
+export async function refExists(tabId, ref) {
+  try {
+    const resolved = await pageCall(tabId, { type: 'RESOLVE_REF', ref });
+    if (resolved && resolved.ok) return true;
+    return !(resolved && resolved.error);
+  } catch {
+    return true;
   }
 }
 
@@ -1093,6 +1165,25 @@ async function editorInput(input, target) {
 }
 
 // ---------------------------------------------------------------------------
+// Window size
+// ---------------------------------------------------------------------------
+
+/** Two sizes are the same when the window manager rounded by a pixel or two. */
+function nearSize(a, b) {
+  return typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) <= 2;
+}
+
+/** What Chrome says the window is, or null when it cannot be read. */
+async function windowBounds(windowId) {
+  try {
+    const win = await chrome.windows.get(windowId);
+    return { width: win.width, height: win.height, state: win.state };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Tool table
 // ---------------------------------------------------------------------------
 
@@ -1279,7 +1370,7 @@ export const handlers = {
         type: 'FIND_TREE',
         filter,
         depth: 30,
-        maxChars: 200000,
+        maxChars: FIND_TREE_CHAR_BUDGET,
         paymentCategory,
       });
       if (tree.error) throw new ToolError(tree.code || 'ref_stale', tree.error);
@@ -1609,17 +1700,45 @@ export const handlers = {
     return { ...settled, navigated, networkIdle, timedOut: load.timedOut };
   },
 
+  /**
+   * Resizes the window a tab is in.
+   *
+   * Never focuses or activates anything. The size is read back from Chrome
+   * rather than assumed, so a window manager that refused the request is
+   * reported as a refusal rather than as a success.
+   */
   resize_window: async (ctx, input) => {
     const tab = await tabsLib.assertTabInSession(ctx.clientId, input.tabId);
     // A maximized or fullscreen window ignores a size, so it is set to normal
     // first. A minimized one is left minimized: restoring it would bring it
     // in front of the user.
     const win = await chrome.windows.get(tab.windowId);
-    const props = { width: Math.max(200, input.width), height: Math.max(200, input.height) };
-    if (win.state === 'maximized' || win.state === 'fullscreen') props.state = 'normal';
+    const size = { width: Math.max(200, input.width), height: Math.max(200, input.height) };
     const before = await pageCall(input.tabId, { type: 'PAGE_STATE' }).catch(() => null);
-    await chrome.windows.update(tab.windowId, props);
+    const boundsBefore = { width: win.width, height: win.height, state: win.state };
+
+    // A maximized or fullscreen window ignores a size. Chrome also ignores the
+    // size when it arrives in the same update as the state change, which is why
+    // a resize to 1000x700 left a maximized window at 1200x900, so the state is
+    // set on its own first. A minimized window is left minimized: restoring it
+    // would bring it in front of the user.
+    if (win.state === 'maximized' || win.state === 'fullscreen') {
+      await chrome.windows.update(tab.windowId, { state: 'normal' });
+      await cdp.sleep(100, input.tabId);
+    }
+    await chrome.windows.update(tab.windowId, size);
     await cdp.sleep(150, input.tabId);
+
+    // The window manager gets one more chance. A window that was maximized a
+    // moment ago sometimes lands on its pre-maximize bounds rather than the
+    // requested ones, and a second update from a settled normal state takes.
+    let after = await windowBounds(tab.windowId);
+    if (after && !(nearSize(after.width, size.width) && nearSize(after.height, size.height))) {
+      await chrome.windows.update(tab.windowId, size).catch(() => {});
+      await cdp.sleep(150, input.tabId);
+      after = await windowBounds(tab.windowId);
+    }
+
     shot.clearScalingContext(input.tabId);
     const state = await pageCall(input.tabId, { type: 'PAGE_STATE' });
 
@@ -1627,25 +1746,44 @@ export const handlers = {
     // The layout viewport is not the outer size once device pixel ratio and
     // browser chrome are taken out, so the result says which number the request
     // was measured against.
-    const requested = { width: props.width, height: props.height };
-    const outer = { width: state.outerWidth, height: state.outerHeight };
+    const requested = { width: size.width, height: size.height };
+    // Chrome's window bounds are the outer size in the same units the request
+    // used, so they are the answer to "did the resize take". The page's
+    // window.outerWidth stands in when the window cannot be read.
+    const outer =
+      after && typeof after.width === 'number'
+        ? { width: after.width, height: after.height }
+        : { width: state.outerWidth, height: state.outerHeight };
     const viewport = state.viewport;
-    const near = (a, b) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) <= 2;
     let matched = 'neither';
-    if (near(outer.width, requested.width) && near(outer.height, requested.height)) matched = 'outer';
-    else if (near(viewport.width, requested.width) && near(viewport.height, requested.height)) matched = 'viewport';
+    if (nearSize(outer.width, requested.width) && nearSize(outer.height, requested.height)) matched = 'outer';
+    else if (nearSize(viewport.width, requested.width) && nearSize(viewport.height, requested.height)) matched = 'viewport';
 
     const warnings = [];
+    const dpr = state.devicePixelRatio;
     if (matched === 'neither') {
       warnings.push(
         'the window ended at ' + outer.width + 'x' + outer.height + ' outer and ' +
           viewport.width + 'x' + viewport.height + ' viewport, neither of which is the requested size'
       );
+      // A request written in device pixels lands short by exactly the ratio, so
+      // saying which reading does match tells the caller what to ask for.
+      if (typeof dpr === 'number' && dpr !== 1) {
+        if (nearSize(Math.round(outer.width * dpr), requested.width) && nearSize(Math.round(outer.height * dpr), requested.height)) {
+          warnings.push(
+            'the outer size in device pixels is the requested size: this display has a device pixel ratio of ' +
+              dpr + ', and chrome.windows.update takes CSS pixels'
+          );
+        }
+      }
+      if (boundsBefore.state === 'minimized') {
+        warnings.push('the window is minimized, which is left alone rather than restored in front of the user');
+      }
     }
     const changed = Boolean(
-      before && (before.outerWidth !== outer.width || before.outerHeight !== outer.height ||
+      before && (before.outerWidth !== state.outerWidth || before.outerHeight !== state.outerHeight ||
         before.viewport.width !== viewport.width || before.viewport.height !== viewport.height)
-    );
+    ) || Boolean(after && (boundsBefore.width !== after.width || boundsBefore.height !== after.height));
 
     return {
       ...state,
@@ -1666,6 +1804,9 @@ export const handlers = {
         before: before ? { outerWidth: before.outerWidth, outerHeight: before.outerHeight, viewport: before.viewport } : undefined,
         after: { outerWidth: outer.width, outerHeight: outer.height, viewport },
         devicePixelRatio: state.devicePixelRatio,
+        // What Chrome says the window is, read back after the update rather
+        // than assumed from the request.
+        windowBounds: { before: boundsBefore, after: after || undefined },
       },
       warnings: changed ? warnings : warnings.concat('no observable change within 150ms'),
     };

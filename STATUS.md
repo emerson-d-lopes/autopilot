@@ -1,12 +1,12 @@
 # chrome-mcp: status, parity and test coverage
 
-State of the build as of 2026-09-04, extension 0.1.30. 26 tools, 30 test files.
+State of the build as of 2026-09-04, extension 0.1.31. 26 tools, 30 test files.
 
 - Source: about 17,600 lines across the extension, host and tools
 - Tests: about 10,500 lines
 - Verified against Chrome for Testing 152 and against the user's own Chrome 152 on Windows 11
 
-On 2026-09-04 the non-browser files pass. The merged build was driven against a browser by the pass described under "Live verification of wave 2", which ran `test/campaign.test.js` (12 of 12) along with 48 checks by hand. The other five browser-driven files were not run.
+On 2026-09-04 the non-browser files pass, 582 tests across 24 files. The build that was driven against a browser is the one described under "Live verification of wave 2", which ran `test/campaign.test.js` (12 of 12) along with 48 checks by hand. The ten bug fixes merged after it have not been driven against a browser, and the other five browser-driven files were not run.
 
 ## Feature parity with Claude Code's browser integration
 
@@ -386,3 +386,60 @@ Five commits landed:
 What the pass confirmed on the merged build. No `Runtime.enable` in a session that never reads the console, with all four detector pages reporting no bot across three runs each. Screenshots as JPEG at 2.2x fewer bytes, ten captures in 1301 ms. Hidden-tab capture in 107 ms. A coordinate written against a pre-batch screenshot still landing after the batch took its own. Stop and Resume driven by trusted clicks through the DevTools port. Confirm mode's single-use token, and the write journal with and without redaction. The seven first-pass checks re-run to confirm the merge kept those fixes.
 
 Ten new open bugs are listed at the end of the verification file with their reproductions. The ones worth reading first: the screenshot clip fast path never engages because the plan sizes from the metrics device pixel ratio while the capture returns CSS pixels, so every scaled capture warns and pays for a discarded capture; a `navigate` that changes origin carries no transition warning, because the gate reads the tab's URL before the move; and an unanswered ask-in-browser notification waits the full 120 s host timeout and then reports a renderer failure.
+
+## Bug fixes merged into wave 2, 2026-09-04
+
+`plan/bugs` was merged into `plan/integration2`, so the ten fixes for the bugs the first verification pass left open sit on top of wave 2 and on top of the second pass's five commits. Extension version 0.1.31.
+
+One file conflicted, `extension/manifest.json`, where both branches had bumped the version on their own, 0.1.30 against 0.1.29. The merged value is 0.1.31.
+
+`host/mcp-server.js` was the only other file both branches changed. It merged without a conflict and both sides are present: `clipNote` and the per-step contract line from `plan/bugs`, and the `recordedMs` span in `formatGif` from the pass.
+
+`extension/src/lib/cdp.js` came across whole from `plan/bugs`, which is what the merge should do because the pass never touched that file. Its line endings are LF, so it shows in `git diff --stat` as 184 insertions rather than as all 1936 lines.
+
+What the ten fixes change:
+
+- `find` ranked over a tree cut to 200000 characters, which on a 3000 row page left the node the query named outside the search. The ranking budget is 1000000 characters now, and a quoted label or a run of query words in order scores as an exact match and outranks a fuzzy hit.
+- A click on an element that opens a tab reports `newTabId`. The watch decides at arm time whether the element opens a tab, from `target="_blank"` on it or an ancestor or an inline `window.open`, then polls the adoption bookkeeping for up to 1500 ms. Every other click keeps its 250 ms window.
+- The attach replacement ladder is capped at one tab per cause, so a refusal repeating its predecessor's cause returns `attach_refused` naming the extension frame holding the tab.
+- A CDP command queued behind one that has not answered fails with `timeout`, `effects: none` and the reload hint, counted from the moment it was queued. The command it waited behind still finishes. Input dispatch is sent with timeout 0 and is neither tracked nor waited on.
+- A batch resolves every distinct ref against its tab before the first item runs, so a stale ref fails the batch with `batch_invalid` naming the item, the ref and the tab, instead of costing the side effects of the items before it. A ref an earlier `read_page` or `find` on the same tab is about to create is skipped.
+- `resize_window` sends the state change and the size as separate `windows.update` calls, because Chrome ignores a size that arrives with a state change. The result is read back from `chrome.windows`, a size that did not take is retried once, and `matched` is judged against the bounds Chrome reports.
+- Every line of a batch or a `quick` script prints its own `ok`, `effects`, `evidence` and `warnings`, so a screenshot taken inside a script can be checked for `evidence.paint.painted`. A failed step prints its code, effects and retryable flag. `stepContractLine` lives in `host/errors.js` and is mirrored into the extension copy.
+- `read_console_messages` and `read_network_requests` carry `clipped`, `clippedTo` and `longestClipped`, and both replies end with a line giving the row count and the clipping, the way `read_page` already did.
+- `doctor` prints journal redaction and retention as the native host reports them in `browser_status`, one line per connected host, and marks its own shell's reading as the one that does not count.
+- A session survives `chrome.runtime.reload()`. The session table is written to `chrome.storage.session` and `chrome.storage.local` on every change and read back at worker start. Tabs that still exist are grouped again without activating anything, and tabs that are gone are named once, with a warning, on the first `tabs_context` after the restart.
+
+Test counts on 2026-09-04, `node --test --test-concurrency=1` per file, no browser running:
+
+| File | Tests | Pass |
+|---|---|---|
+| a11y.test.js | 47 | 47 |
+| aliases.test.js | 6 | 6 |
+| batch.test.js | 13 | 13 |
+| campaign-server.test.js | 15 | 15 |
+| cdp.test.js | 59 | 59 |
+| errors.test.js | 37 | 37 |
+| find.test.js | 50 | 50 |
+| gif.test.js | 30 | 30 |
+| indicator.test.js | 10 | 10 |
+| ipc.test.js | 18 | 18 |
+| journal.test.js | 24 | 24 |
+| parity.test.js | 8 | 8 |
+| permissions.test.js | 29 | 29 |
+| probe-detect.test.js | 8 | 8 |
+| profile.test.js | 20 | 20 |
+| protocol.test.js | 14 | 14 |
+| recorder.test.js | 8 | 8 |
+| redact.test.js | 22 | 22 |
+| registry.test.js | 20 | 20 |
+| screenshot.test.js | 45 | 45 |
+| sensitive.test.js | 16 | 16 |
+| sessions.test.js | 14 | 14 |
+| tabs.test.js | 23 | 23 |
+| verify.test.js | 46 | 46 |
+| **Total** | **582** | **582** |
+
+`node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 42 files under `extension/src`, `host` and `tools`.
+
+The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. The ten bugs the second pass opened are untouched by this merge. The live checks the ten fixes ask for are open: `resize_window` against a maximized window, a session read back after `chrome.runtime.reload()`, the replacement ladder against the interferer, a queued CDP command behind a busy renderer, and `doctor` against a host started with `CHROME_MCP_JOURNAL_REDACT` set.

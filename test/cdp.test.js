@@ -1077,3 +1077,262 @@ test('a plain 0, and ctrl held with an unrelated key, are not refused', async ()
   assert.ok(calls.some((c) => c.method === 'Input.dispatchKeyEvent'), 'ordinary keys still dispatch');
   await cdp.detachAll();
 });
+
+// ---------------------------------------------------------------------------
+// Open bug 3: the replacement ladder has a cap
+// ---------------------------------------------------------------------------
+//
+// With another extension injecting into every page, every tab is refused, the
+// replacement is refused in turn, and three runs produced six tabs and no
+// working call. A replacement refused for the reason its predecessor was
+// refused for stops the ladder.
+
+/** A frame tree carrying another extension's frame, which is what refuses the attach. */
+function scriptInterferingFrames(host = 'otherextensionidaaaa') {
+  chrome.webNavigation = {
+    async getAllFrames() {
+      return [
+        { frameId: 0, parentFrameId: -1, url: 'https://x.test/home' },
+        { frameId: 1, parentFrameId: 0, url: 'chrome-extension://' + host + '/inject.html' },
+      ];
+    },
+  };
+}
+
+test('causeKey calls two foreign-frame refusals the same cause and a different one different', () => {
+  assert.equal(cdp.causeKey(STALE), cdp.causeKey(STALE));
+  assert.equal(cdp.causeKey(STALE), 'foreign-frame');
+  assert.notEqual(
+    cdp.causeKey('Cannot access a chrome-extension://abcdefghijklmnopqrst/ URL of different extension'),
+    cdp.causeKey(STALE)
+  );
+  assert.equal(cdp.causeKey('Another debugger is already attached'), 'already-attached');
+});
+
+test('a replacement refused for the same cause returns attach_refused instead of another tab', async () => {
+  cdp.forgetReplacements();
+  scriptRefusingAttach({ refusals: 99 });
+  scriptInterferingFrames();
+  await chrome.storage.local.set({ attachRecovery: false });
+  const asked = [];
+  cdp.setSessionReplacer(async (tabId) => {
+    asked.push(tabId);
+    return { oldTabId: tabId, newTabId: 4300, url: 'https://x.test/home' };
+  });
+
+  await assert.rejects(
+    () => cdp.attach(30),
+    (err) => {
+      assert.equal(err.code, 'tab_replaced');
+      assert.equal(err.details.newTabId, 4300);
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () => cdp.attach(4300),
+    (err) => {
+      assert.equal(err.code, 'attach_refused', 'the ladder stops rather than opening a third tab');
+      assert.equal(err.retryable, false);
+      assert.equal(err.effects, 'none');
+      assert.match(err.message, /same reason as the tab it replaced/);
+      assert.match(err.message, /otherextensionidaaaa/, 'the interfering extension frame is named');
+      assert.match(err.hint, /Disable otherextensionidaaaa/);
+      assert.equal(err.details.replacedTabId, 30);
+      return true;
+    }
+  );
+
+  assert.deepEqual(asked, [30], 'exactly one replacement was opened for this tab');
+  cdp.setSessionReplacer(null);
+  await chrome.storage.local.clear();
+  delete chrome.webNavigation;
+});
+
+test('the same original tab is replaced once per cause, not once per call', async () => {
+  cdp.forgetReplacements();
+  scriptRefusingAttach({ refusals: 99 });
+  scriptInterferingFrames();
+  await chrome.storage.local.set({ attachRecovery: false });
+  const asked = [];
+  cdp.setSessionReplacer(async (tabId) => {
+    asked.push(tabId);
+    return { oldTabId: tabId, newTabId: 4400, url: 'https://x.test/home' };
+  });
+
+  await assert.rejects(() => cdp.attach(50), (err) => err.code === 'tab_replaced');
+  await assert.rejects(
+    () => cdp.attach(50),
+    (err) => {
+      assert.equal(err.code, 'attach_refused');
+      return true;
+    }
+  );
+  assert.deepEqual(asked, [50]);
+
+  cdp.setSessionReplacer(null);
+  await chrome.storage.local.clear();
+  delete chrome.webNavigation;
+});
+
+test('a replacement refused for a different cause is still replaced once', async () => {
+  cdp.forgetReplacements();
+  scriptRefusingAttach({ refusals: 99 });
+  scriptInterferingFrames();
+  await chrome.storage.local.set({ attachRecovery: false });
+  const asked = [];
+  cdp.setSessionReplacer(async (tabId) => {
+    asked.push(tabId);
+    return { oldTabId: tabId, newTabId: 4500 + asked.length, url: 'https://x.test/home' };
+  });
+
+  await assert.rejects(() => cdp.attach(60), (err) => err.code === 'tab_replaced');
+
+  // A second extension, so the refusal on the replacement is not the one that
+  // killed the tab it replaced.
+  scriptRefusingAttach({
+    refusals: 99,
+    message: 'Cannot access a chrome-extension://abcdefghijklmnopqrst/ URL of different extension',
+  });
+  await assert.rejects(() => cdp.attach(4501), (err) => err.code === 'tab_replaced');
+
+  assert.deepEqual(asked, [60, 4501], 'a new cause earns one more replacement');
+  cdp.setSessionReplacer(null);
+  await chrome.storage.local.clear();
+  delete chrome.webNavigation;
+});
+
+// ---------------------------------------------------------------------------
+// Open bug 4: a call queued behind a frozen renderer
+// ---------------------------------------------------------------------------
+//
+// An 8 s busy loop in javascript delayed the next call on the same tab by the
+// whole 8 s, and it then succeeded. Nothing was lost, and the caller got no
+// timeout and no reload hint while it waited.
+
+/** A debugger whose commands answer after `delay` ms, so one can be left hanging. */
+function scriptSlowDebugger({ delay = 50 } = {}) {
+  const calls = [];
+  globalThis.chrome.debugger = {
+    attach(_t, _v, done) {
+      chrome.runtime.lastError = null;
+      done();
+    },
+    detach(_t, done) {
+      chrome.runtime.lastError = null;
+      done();
+    },
+    sendCommand(_t, method, _p, done) {
+      const at = Date.now();
+      calls.push({ method, at });
+      setTimeout(() => {
+        chrome.runtime.lastError = null;
+        done({ ok: true, method });
+        chrome.runtime.lastError = null;
+      }, delay);
+    },
+    onEvent: { addListener() {}, removeListener() {} },
+    onDetach: { addListener() {} },
+  };
+  return calls;
+}
+
+test('a command queued behind an unanswered one fails with timeout and the reload hint', async () => {
+  const calls = scriptSlowDebugger({ delay: 600 });
+  await cdp.attach(70);
+
+  const first = cdp.send(70, 'Runtime.evaluate', { expression: 'busy()' }, { timeout: 5000 });
+  await new Promise((r) => setTimeout(r, 20));
+
+  const started = Date.now();
+  await assert.rejects(
+    () => cdp.send(70, 'DOM.getDocument', {}, { timeout: 200, wakeOnTimeout: false }),
+    (err) => {
+      assert.equal(err.code, 'timeout');
+      assert.equal(err.effects, 'none', 'the queued command never ran, so it changed nothing');
+      assert.match(err.hint, /reload the tab with navigate/);
+      assert.match(err.message, /behind Runtime\.evaluate/);
+      assert.equal(err.details.blockedBy, 'Runtime.evaluate');
+      return true;
+    }
+  );
+  const waited = Date.now() - started;
+  assert.ok(waited < 500, 'it gave up on its own timeout, not the first command: ' + waited + 'ms');
+
+  // The first call is left alone and finishes.
+  const result = await first;
+  assert.equal(result.method, 'Runtime.evaluate');
+  assert.equal(
+    calls.filter((c) => c.method === 'DOM.getDocument').length,
+    0,
+    'the queued command was never dispatched'
+  );
+  await cdp.detachAll();
+});
+
+test('a queued command that gets its turn in time still runs', async () => {
+  scriptSlowDebugger({ delay: 60 });
+  await cdp.attach(71);
+
+  const first = cdp.send(71, 'Runtime.evaluate', { expression: '1' }, { timeout: 5000 });
+  const second = cdp.send(71, 'DOM.getDocument', {}, { timeout: 5000 });
+  const [a, b] = await Promise.all([first, second]);
+
+  assert.equal(a.method, 'Runtime.evaluate');
+  assert.equal(b.method, 'DOM.getDocument', 'an ordinary pair of calls is unaffected');
+  await cdp.detachAll();
+});
+
+test('busyFor reports how long the tab has been waiting, and clears when it answers', async () => {
+  scriptSlowDebugger({ delay: 200 });
+  await cdp.attach(72);
+
+  assert.equal(cdp.busyFor(72), 0);
+  const call = cdp.send(72, 'Runtime.evaluate', {}, { timeout: 5000 });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.ok(cdp.busyFor(72) >= 40, 'busyFor: ' + cdp.busyFor(72));
+  await call;
+  assert.equal(cdp.busyFor(72), 0);
+  await cdp.detachAll();
+});
+
+test('input dispatch is not tracked, so a missing acknowledgement blocks nothing', async () => {
+  const calls = scriptSlowDebugger({ delay: 5000 });
+  await cdp.attach(73);
+
+  // Sent with timeout 0, the way sendInput sends it, and never answered.
+  cdp.send(73, 'Input.dispatchMouseEvent', { type: 'mouseMoved' }, { timeout: 0 }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(cdp.busyFor(73), 0, 'an unacknowledged input does not make the tab look busy');
+
+  const started = Date.now();
+  await assert.rejects(
+    () => cdp.send(73, 'DOM.getDocument', {}, { timeout: 150, wakeOnTimeout: false }),
+    (err) => err.code === 'timeout'
+  );
+  assert.ok(Date.now() - started < 400, 'it went out and timed out on its own, rather than queueing');
+  assert.ok(calls.some((c) => c.method === 'DOM.getDocument'), 'the command was dispatched');
+  await cdp.detachAll();
+});
+
+test('awaitTurn gives a page call the same deadline, since sendMessage has none', async () => {
+  scriptSlowDebugger({ delay: 800 });
+  await cdp.attach(74);
+
+  const first = cdp.send(74, 'Runtime.evaluate', { expression: 'busy()' }, { timeout: 5000 });
+  await new Promise((r) => setTimeout(r, 20));
+
+  await assert.rejects(
+    () => cdp.awaitTurn(74, 'READ_PAGE', 150),
+    (err) => {
+      assert.equal(err.code, 'timeout');
+      assert.match(err.message, /CDP READ_PAGE waited 150ms/);
+      assert.match(err.hint, /reload the tab with navigate/);
+      return true;
+    }
+  );
+
+  await first;
+  await cdp.awaitTurn(74, 'READ_PAGE', 150);
+  await cdp.detachAll();
+});

@@ -50,6 +50,24 @@ export const WIDEN_BELOW_SCORE = 3;
 /** Below this share of the page's nodes, a search says how little it covered. */
 export const NARROW_SCOPE_RATIO = 0.1;
 
+/**
+ * Character budget for the tree `find` ranks over.
+ *
+ * Ranking and reporting have different budgets. A page of 3000 rows renders an
+ * interactive tree past 200000 chars, which cut the tree at 4439 of 6000 nodes
+ * and put the one node the query named outside the search. Scoring runs over
+ * the whole tree instead, and the 20 candidates are what gets truncated. The
+ * text never leaves the worker, so the cost is the parse, measured at a few
+ * milliseconds for 9000 nodes by find.test.js.
+ */
+export const FIND_TREE_CHAR_BUDGET = 1000000;
+
+/** Score added when the query quoted the element's label verbatim. */
+export const EXACT_LABEL_BONUS = 10;
+
+/** Score added when the whole multi-word name appears in the query as a run. */
+export const EXACT_NAME_BONUS = 6;
+
 /** Drops href and src values, whose long URLs produce spurious substring hits. */
 export function stripUrlAttributes(attrs) {
   return String(attrs || '')
@@ -118,11 +136,66 @@ function roleHintsFor(tokens) {
 }
 
 /**
+ * Labels the query quoted. `the button labelled exactly "btn 2999"` names one
+ * button out of 3000 that differ by a digit, and the quotes say which part of
+ * the query is the label. Straight and curly double quotes only: an apostrophe
+ * in ordinary prose would otherwise open a quoted run that never closes where
+ * the writer meant it to.
+ */
+export function quotedLabels(query) {
+  const out = [];
+  const re = /"([^"]*)"|“([^”]*)”/g;
+  let m;
+  while ((m = re.exec(String(query || '')))) {
+    const value = (m[1] !== undefined ? m[1] : m[2] || '').trim().toLowerCase();
+    if (value) out.push(value);
+  }
+  return out;
+}
+
+/** Whether `needle` appears in `haystack` as a contiguous run, in order. */
+function containsRun(haystack, needle) {
+  if (!needle.length || needle.length > haystack.length) return false;
+  for (let i = 0; i + needle.length <= haystack.length; i++) {
+    let hit = true;
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) {
+        hit = false;
+        break;
+      }
+    }
+    if (hit) return true;
+  }
+  return false;
+}
+
+/**
+ * How exactly the query names this element.
+ *
+ * Word-level scoring cannot separate "btn 2999" from "btn 0" by much, because
+ * both share the word the role hint consumed, and on a table of "50.20" style
+ * cells it cannot separate 50.20 from 20.50 at all. An exact hit is a different
+ * kind of evidence, so it is scored separately and dominates.
+ */
+function exactnessBonus(name, nameWords, { queryTokens, exactLabels }) {
+  const trimmed = name.trim();
+  if (!trimmed) return 0;
+  if (exactLabels.includes(trimmed)) return EXACT_LABEL_BONUS;
+  // A one-word name is left to the ordinary word match. Boosting it as well put
+  // the "Password" textbox above the "Forgot your password?" link, because a
+  // single shared word is not evidence that the query named that element.
+  if (nameWords.length < 2) return 0;
+  if (nameWords.every((w) => STOPWORDS.has(w))) return 0;
+  if (!containsRun(queryTokens, nameWords)) return 0;
+  return EXACT_NAME_BONUS;
+}
+
+/**
  * Scores one node against the query terms.
  * Name matches dominate, role agreement breaks ties, and an offscreen element
  * loses to an equivalent visible one.
  */
-function scoreNode(node, { phrase, terms, roles, consumed }) {
+function scoreNode(node, { phrase, terms, roles, consumed, queryTokens, exactLabels }) {
   const name = (node.name || '').toLowerCase();
   const attrWords = new Set(tokenize(node.matchableAttrs || ''));
   const nameWords = tokenize(name);
@@ -138,6 +211,9 @@ function scoreNode(node, { phrase, terms, roles, consumed }) {
 
   if (name && name === phrase) score += 10;
   else if (name && name.includes(phrase) && phrase.length > 2) score += 5;
+
+  const exact = exactnessBonus(name, nameWords, { queryTokens, exactLabels });
+  score += exact;
 
   let matchedTerms = 0;
   let roleWordInName = false;
@@ -165,7 +241,7 @@ function scoreNode(node, { phrase, terms, roles, consumed }) {
   }
 
   const meaningful = terms.filter((t) => !consumed.has(t));
-  if (meaningful.length && matchedTerms === 0 && roles.size === 0) return 0;
+  if (meaningful.length && matchedTerms === 0 && roles.size === 0 && !exact) return 0;
   if (meaningful.length && matchedTerms === 0 && roles.size > 0) {
     // Role-only query such as "the submit button" with no distinguishing name.
     score += 0.2;
@@ -195,10 +271,11 @@ export function scoreCandidates(treeText, query, limit = 20) {
   const terms = contentTokens(rawTokens);
   const { roles, consumed } = roleHintsFor(rawTokens);
   const phrase = String(query || '').toLowerCase().trim();
+  const exactLabels = quotedLabels(query);
 
   const scored = [];
   for (const node of nodes) {
-    const score = scoreNode(node, { phrase, terms, roles, consumed });
+    const score = scoreNode(node, { phrase, terms, roles, consumed, queryTokens: rawTokens, exactLabels });
     if (score > 0.5) scored.push({ ...node, score: Math.round(score * 100) / 100 });
   }
 

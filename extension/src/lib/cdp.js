@@ -148,6 +148,57 @@ function isForeignFrameError(err) {
   return FOREIGN_FRAME.test((err && err.message) || '');
 }
 
+/**
+ * A stable name for why an attach was refused, so "the same cause" is
+ * decidable.
+ *
+ * Chrome's refusal for a foreign extension frame is the same sentence whichever
+ * tab it names, which is the point: a replacement refused for that reason is
+ * refused by the same extension that killed the tab it replaced.
+ */
+export function causeKey(message) {
+  const text = String(message || '');
+  const id = /chrome-extension:\/\/([a-z]{20,})/i.exec(text);
+  if (id) return 'foreign-frame:' + id[1].toLowerCase();
+  if (FOREIGN_FRAME.test(text)) return 'foreign-frame';
+  if (/already attached/i.test(text)) return 'already-attached';
+  return 'attach:' + text.slice(0, 120).toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The tab each replacement stands in for, and why its predecessor was replaced.
+ * @type {Map<number, {rootTabId: number, cause: string}>}
+ */
+const replacementOf = new Map();
+
+/** Original tab and cause already spent on a replacement, so it is spent once. */
+const replacementsMade = new Set();
+
+const MAX_REPLACEMENT_RECORDS = 100;
+
+/** Forgets the replacement ladder for a tab. Exported for tests. */
+export function forgetReplacements(tabId) {
+  if (tabId === undefined) {
+    replacementOf.clear();
+    replacementsMade.clear();
+    return;
+  }
+  replacementOf.delete(tabId);
+}
+
+/** The other extensions holding a frame in this tab, by host, for a hint. */
+async function interferingExtensions(tabId) {
+  if (!chrome.webNavigation || !chrome.webNavigation.getAllFrames) return [];
+  try {
+    const frames = (await chrome.webNavigation.getAllFrames({ tabId })) || [];
+    const own = 'chrome-extension://' + chrome.runtime.id;
+    const foreign = frames.filter((f) => /^chrome-extension:\/\//.test(f.url || '') && !String(f.url).startsWith(own));
+    return [...new Set(foreign.map((f) => String(f.url).split('/')[2]))];
+  } catch {
+    return [];
+  }
+}
+
 function rawAttach(tabId) {
   return new Promise((resolve, reject) => {
     chrome.debugger.attach({ tabId }, PROTOCOL_VERSION, () => {
@@ -397,8 +448,47 @@ async function attachAfterRefusal(tabId, firstError) {
     if (!isForeignFrameError(err)) throw err;
   }
 
+  // The ladder stops here when the tab is itself a replacement refused for the
+  // reason its predecessor was refused for. Left uncapped, an extension that
+  // injects into every page produced a replacement per call, six tabs across
+  // three runs, and never a working one.
+  const cause = causeKey(firstError.message);
+  const origin = replacementOf.get(tabId);
+  const rootTabId = origin ? origin.rootTabId : tabId;
+  const spent = replacementsMade.has(rootTabId + ' ' + cause);
+
+  if (spent) {
+    const blame = await interferingExtensions(tabId);
+    const named = blame.length ? ' Another extension (' + blame.join(', ') + ') has a frame in this tab.' : '';
+    throw new ToolError(
+      'attach_refused',
+      'Tab ' +
+        tabId +
+        ' was refused for the same reason as the tab it replaced, so it was not replaced again.' +
+        named +
+        (await describeFrames(tabId)),
+      {
+        cause: firstError.message,
+        hint: blame.length
+          ? 'Disable ' + blame.join(' or ') + ' for this profile, or drive the page from a profile without it.'
+          : 'Disable the extension holding a frame in this tab, or drive the page from a profile without it.',
+        effects: 'none',
+        retryable: false,
+        details: { tabId, replacedTabId: rootTabId === tabId ? undefined : rootTabId, cause },
+      }
+    );
+  }
+
   const replacement = sessionReplacer ? await sessionReplacer(tabId).catch(() => null) : null;
   if (replacement) {
+    replacementsMade.add(rootTabId + ' ' + cause);
+    replacementOf.set(replacement.newTabId, { rootTabId, cause });
+    while (replacementsMade.size > MAX_REPLACEMENT_RECORDS) {
+      replacementsMade.delete(replacementsMade.values().next().value);
+    }
+    while (replacementOf.size > MAX_REPLACEMENT_RECORDS) {
+      replacementOf.delete(replacementOf.keys().next().value);
+    }
     throw new ToolError(
       'tab_replaced',
       'Tab ' + tabId + ' could not be driven and was replaced by tab ' + replacement.newTabId + ' on the same URL.',
@@ -424,6 +514,7 @@ async function attachAfterRefusal(tabId, firstError) {
 export function forgetTab(tabId) {
   attachments.delete(tabId);
   awake.delete(tabId);
+  replacementOf.delete(tabId);
   throttledTabs.delete(tabId);
   beforeunloadPolicy.delete(tabId);
   lastDialog.delete(tabId);
@@ -490,6 +581,98 @@ function frozenError(tabId, method, ms) {
     effects: 'unknown',
     retryable: false,
   });
+}
+
+/**
+ * The command each tab is waiting on, and since when.
+ *
+ * CDP runs a session's commands in order, so a second call on a tab whose
+ * renderer is in an 8 second busy loop used to wait the loop out and then
+ * succeed: no timeout, no reload hint, and a caller with no way to tell a slow
+ * page from a frozen one. A queued command is now given its own timeout from
+ * the moment it was queued.
+ *
+ * Only commands that carry a timeout are tracked. Input dispatch is sent with
+ * timeout 0 on purpose, because the acknowledgement is expected not to come on
+ * a hidden tab, and waiting on that would stall every later command.
+ *
+ * @type {Map<number, {method: string, startedAt: number, done: Promise<void>}>}
+ */
+const inFlight = new Map();
+
+/** How long a tab's current CDP command has gone unanswered, or 0 for none. */
+export function busyFor(tabId) {
+  const ahead = inFlight.get(tabId);
+  return ahead ? Date.now() - ahead.startedAt : 0;
+}
+
+export function queuedTimeoutError(tabId, method, ms, ahead) {
+  const blame = ahead ? ' behind ' + ahead.method + ', unanswered for ' + (Date.now() - ahead.startedAt) + 'ms' : '';
+  return new ToolError(
+    'timeout',
+    'CDP ' + method + ' waited ' + ms + 'ms on tab ' + tabId + blame + '. The renderer is not answering.',
+    {
+      cause: 'the renderer has not answered an earlier command',
+      hint: 'the renderer did not respond, reload the tab with navigate',
+      // The queued command was never dispatched, so nothing it would have done
+      // happened. The command it waited behind is still running.
+      effects: 'none',
+      retryable: true,
+      details: ahead ? { tabId, method, waitedMs: ms, blockedBy: ahead.method } : { tabId, method, waitedMs: ms },
+    }
+  );
+}
+
+/** Resolves true when `promise` settles first, false when the timer wins. */
+function settlesWithin(promise, ms) {
+  let timer = null;
+  const timed = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  return Promise.race([promise.then(() => true, () => true), timed]).then((won) => {
+    if (timer) clearTimeout(timer);
+    return won;
+  });
+}
+
+/**
+ * Waits for the tab's current command to answer, no longer than this command's
+ * own timeout counted from the moment it was queued.
+ */
+async function waitForTurn(tabId, method, timeout) {
+  if (!(timeout > 0)) return;
+  const deadline = Date.now() + timeout;
+  let ahead = inFlight.get(tabId);
+  while (ahead) {
+    const left = deadline - Date.now();
+    if (left <= 0 || !(await settlesWithin(ahead.done, left))) {
+      throw queuedTimeoutError(tabId, method, timeout, ahead);
+    }
+    ahead = inFlight.get(tabId);
+  }
+}
+
+/**
+ * Waits for the tab's CDP queue to clear on behalf of something that is not a
+ * CDP command. A message to the content script reaches the same renderer and
+ * waits out the same busy loop, with no timeout of its own to stop it.
+ */
+export function awaitTurn(tabId, label, timeout = DEFAULT_COMMAND_TIMEOUT) {
+  return waitForTurn(tabId, label, timeout);
+}
+
+/** rawSend, queued behind whatever the tab is already waiting on. */
+async function queuedSend(tabId, method, params, timeout = timeoutFor(method)) {
+  await waitForTurn(tabId, method, timeout);
+  const promise = rawSend(tabId, method, params, timeout);
+  if (!(timeout > 0)) return promise;
+  const entry = { method, startedAt: Date.now(), done: promise.then(() => {}, () => {}) };
+  inFlight.set(tabId, entry);
+  try {
+    return await promise;
+  } finally {
+    if (inFlight.get(tabId) === entry) inFlight.delete(tabId);
+  }
 }
 
 function rawSend(tabId, method, params, timeout = timeoutFor(method)) {
@@ -653,7 +836,7 @@ export async function send(tabId, method, params = {}, options = {}) {
   const { retry = true, timeout = timeoutFor(method), wakeOnTimeout = true } = options;
   installDetachListener();
   try {
-    return await rawSend(tabId, method, params, timeout);
+    return await queuedSend(tabId, method, params, timeout);
   } catch (err) {
     // A renderer that stopped answering is woken the way a hidden tab is, and
     // the command is sent once more before the call is given up on.

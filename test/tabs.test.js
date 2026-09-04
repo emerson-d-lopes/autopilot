@@ -300,3 +300,163 @@ test('a session that was never started is not stopped and has no active tab', ()
   assert.equal(tabs.isStopped('never-seen'), false);
   assert.equal(tabs.isSessionActive('never-seen'), false);
 });
+
+// ---------------------------------------------------------------------------
+// Open bug 10: a session survives an extension reload
+// ---------------------------------------------------------------------------
+//
+// chrome.runtime.reload() threw the worker away with its state, so
+// tabs_context came back with no tabs and the ids the caller held reported
+// that they had been closed. The session table is written on every change and
+// read back at worker start.
+
+/** Two storage areas and a browser holding the given tabs, one group. */
+function scriptBrowser({ openTabs = [11, 12], groupId = 77 } = {}) {
+  const local = new Map([['browserId', 'bw-test']]);
+  const session = new Map();
+  const grouped = new Map(openTabs.map((id) => [id, groupId]));
+  const groupCalls = [];
+  const activations = [];
+
+  const area = (map) => ({
+    async get(key) {
+      if (typeof key === 'string') return map.has(key) ? { [key]: map.get(key) } : {};
+      return Object.fromEntries(map);
+    },
+    async set(obj) {
+      for (const [k, v] of Object.entries(obj)) map.set(k, v);
+    },
+    async clear() {
+      map.clear();
+    },
+  });
+
+  stub.storage = { local: area(local), session: area(session), onChanged: { addListener() {} } };
+  stub.tabGroups = {
+    TAB_GROUP_ID_NONE: -1,
+    async get(id) {
+      if (![...grouped.values()].includes(id)) throw new Error('no group ' + id);
+      return { id, title: 'chrome-mcp' };
+    },
+    async update() {},
+  };
+  stub.tabs.get = async (id) => {
+    if (!grouped.has(id)) throw new Error('No tab with id ' + id);
+    return { id, url: 'https://a.test/' + id, title: 'tab ' + id, groupId: grouped.get(id), windowId: 1, status: 'complete' };
+  };
+  stub.tabs.query = async ({ groupId: q }) =>
+    [...grouped.entries()]
+      .filter(([, g]) => g === q)
+      .map(([id, g]) => ({ id, url: 'https://a.test/' + id, title: 'tab ' + id, groupId: g, windowId: 1, status: 'complete' }));
+  stub.tabs.group = async ({ tabIds, groupId: g }) => {
+    const target = g === undefined ? groupId : g;
+    groupCalls.push({ tabIds: [...tabIds], groupId: g });
+    for (const id of tabIds) grouped.set(id, target);
+    return target;
+  };
+  stub.tabs.update = async (id, props) => {
+    activations.push({ id, props });
+  };
+
+  return {
+    local,
+    session,
+    groupCalls,
+    activations,
+    close: (id) => grouped.delete(id),
+    ungroup: (id) => grouped.set(id, -1),
+  };
+}
+
+test('the session table is written on every change and names the tabs, group and browser', async () => {
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+
+  await tabs.adoptTab('c1', 11);
+  const table = browser.session.get('sessionTable');
+
+  assert.ok(table, 'the table is in chrome.storage.session');
+  assert.deepEqual(table.c1.tabIds, [11, 12]);
+  assert.equal(table.c1.groupId, 77);
+  assert.equal(table.c1.browserId, 'bw-test');
+  assert.deepEqual(
+    browser.local.get('sessionTable'),
+    table,
+    'and in local, which is what survives a reload of the extension'
+  );
+});
+
+test('a worker restart puts the tabs that still exist back in the session', async () => {
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+  await tabs.adoptTab('c1', 11);
+
+  // The reload: the worker's memory and the session storage area both go.
+  tabs.resetSessionTable();
+  browser.session.clear();
+  browser.ungroup(12);
+
+  const restored = await tabs.restoreSessions();
+  assert.equal(restored.tabs, 2, 'both tabs still exist');
+  assert.equal(restored.missing, 0);
+  assert.deepEqual(
+    browser.groupCalls[browser.groupCalls.length - 1],
+    { tabIds: [12], groupId: 77 },
+    'the tab that fell out of the group was put back, and only that one'
+  );
+  assert.deepEqual(browser.activations, [], 'nothing was activated');
+
+  const context = await tabs.tabsContext('c1');
+  assert.equal(context.tabGroupId, 77);
+  assert.deepEqual(context.tabs.map((t) => t.tabId), [11, 12], 'the session kept its tabs');
+  assert.equal(context.missingTabs, undefined);
+});
+
+test('a tab that did not survive the restart is reported once', async () => {
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+  await tabs.adoptTab('c1', 11);
+
+  tabs.resetSessionTable();
+  browser.session.clear();
+  browser.close(12);
+
+  const restored = await tabs.restoreSessions();
+  assert.equal(restored.missing, 1);
+
+  const first = await tabs.tabsContext('c1');
+  assert.deepEqual(first.missingTabs, [12]);
+  assert.ok(
+    first.warnings.some((w) => /tab 12 did not survive the extension restart/.test(w)),
+    'warnings: ' + first.warnings.join(' | ')
+  );
+  assert.deepEqual(first.tabs.map((t) => t.tabId), [11]);
+
+  const second = await tabs.tabsContext('c1');
+  assert.equal(second.missingTabs, undefined, 'reported once, not on every listing');
+  assert.deepEqual(second.warnings, []);
+});
+
+test('a closed tab leaves the table, so a later restart does not report it', async () => {
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+  await tabs.adoptTab('c1', 11);
+
+  browser.close(12);
+  await tabs.forgetRemovedTab(12);
+  assert.deepEqual(browser.local.get('sessionTable').c1.tabIds, [11]);
+
+  tabs.resetSessionTable();
+  browser.session.clear();
+  const restored = await tabs.restoreSessions();
+  assert.equal(restored.missing, 0, 'a tab the session watched close is not a loss to report');
+});
+
+test('a restart with nothing stored is a session with no tabs, not an error', async () => {
+  tabs.resetSessionTable();
+  scriptBrowser({ openTabs: [] });
+  const restored = await tabs.restoreSessions();
+  assert.deepEqual(restored, { sessions: 0, tabs: 0, missing: 0 });
+  const context = await tabs.tabsContext('c1');
+  assert.deepEqual(context.tabs, []);
+});

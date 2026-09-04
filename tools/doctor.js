@@ -121,6 +121,10 @@ if (browsers.length > 1) {
 
 const devId = devBrowserId();
 
+// What each running host says it does with the journal. The host is spawned by
+// Chrome, so its environment is the browser's, not this shell's.
+const hostJournals = [];
+
 for (const browser of browsers) {
   try {
     const link = await connect(browser.socket);
@@ -150,6 +154,8 @@ for (const browser of browsers) {
       }
     });
     link.end();
+
+    if (status && status.journal) hostJournals.push({ browser, journal: status.journal });
 
     check(
       browser.name + ' extension is attached',
@@ -189,11 +195,29 @@ for (const row of retryTable()) {
 }
 console.log('  ' + CODE_NAMES.length + ' error codes in the catalogue: ' + CODE_NAMES.join(', '));
 
+// The journal is written by the native host, which Chrome spawns, so
+// CHROME_MCP_JOURNAL_REDACT and CHROME_MCP_JOURNAL_DAYS have to be in the
+// browser's environment. Reading them here printed this shell's answer as if it
+// were the host's, which was wrong whenever the two differed. Both are printed,
+// each labelled with the process it came from.
 const size = journalSize();
+console.log('\nJournal: ' + JOURNAL_DIR + '\n  ' + size.files + ' file(s), ' + Math.round(size.bytes / 1024) + ' KB');
+for (const { browser, journal } of hostJournals) {
+  console.log(
+    '  host for ' + browser.name + ' (' + browser.id + '): retention ' + journal.retentionDays + ' days, ' +
+      'redaction ' + (journal.redact ? 'on' : 'off') + ', dir ' + journal.dir
+  );
+}
+if (!hostJournals.length) {
+  console.log(
+    '  no running host reported its journal settings' +
+      (browsers.length ? '; reload the extension so the host restarts on this build' : '')
+  );
+}
 console.log(
-  '\nJournal: ' + JOURNAL_DIR + '\n  ' + size.files + ' file(s), ' + Math.round(size.bytes / 1024) + ' KB, ' +
-    'retention ' + retentionDays() + ' days (CHROME_MCP_JOURNAL_DAYS), ' +
-    'redaction ' + (redactionOn() ? 'on' : 'off') + ' (CHROME_MCP_JOURNAL_REDACT)'
+  '  this shell: retention ' + retentionDays() + ' days (CHROME_MCP_JOURNAL_DAYS), ' +
+    'redaction ' + (redactionOn() ? 'on' : 'off') + ' (CHROME_MCP_JOURNAL_REDACT). ' +
+    'The host writes the journal, so its line above is the one that counts.'
 );
 
 const failed = results.filter((r) => !r.ok);

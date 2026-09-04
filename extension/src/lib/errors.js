@@ -493,6 +493,32 @@ export function contractLine(result) {
   return line;
 }
 
+/**
+ * The contract fields for one step of a batch or a quick script.
+ *
+ * A script returned one contract line for the whole run, so a screenshot taken
+ * by an SS line inside it could not be checked for evidence.paint.painted: the
+ * only evidence in the reply was the script's, which is empty. Every step now
+ * carries its own ok, effects, evidence and warnings, indented under the line
+ * that names it, and the script keeps its own line as well.
+ *
+ * @param {{ok: boolean, name: string, input?: object, result?: object}} step
+ * @param {string} indent
+ */
+export function stepContractLine(step, indent = '  ') {
+  if (!step || step.ok === false) return null;
+  const body = step.result && typeof step.result === 'object' && !Array.isArray(step.result) ? step.result : {};
+  const effects = EFFECTS.includes(body.effects) ? body.effects : defaultEffects(step.name, step.input || {});
+  const evidence = body.evidence && typeof body.evidence === 'object' ? body.evidence : {};
+  const warnings = Array.isArray(body.warnings) ? body.warnings.filter(Boolean) : [];
+
+  const parts = ['ok=true', 'effects=' + effects];
+  if (Object.keys(evidence).length) parts.push('evidence=' + JSON.stringify(evidence));
+  let line = indent + '[' + parts.join(' ') + ']';
+  if (warnings.length) line += '\n' + warnings.map((w) => indent + '  - ' + w).join('\n');
+  return line;
+}
+
 /** A failure, with the code, the cause, the hint and the side-effect flag on it. */
 export function formatError(error) {
   const lines = [error.message];

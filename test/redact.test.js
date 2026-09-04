@@ -209,3 +209,55 @@ test('a tool with no caps is handed back unchanged', () => {
   assert.equal(result, input);
   assert.deepEqual(warnings, []);
 });
+
+// ---------------------------------------------------------------------------
+// Open bug 8: clipped output says how much was clipped
+// ---------------------------------------------------------------------------
+
+test('a clipped network read reports the count, the cap and the longest URL', () => {
+  const long = 'https://cdn.example.com/' + 'p'.repeat(600);
+  const longer = 'https://cdn.example.com/' + 'q'.repeat(900);
+  const { result, warnings } = applyCaps('read_network_requests', {
+    requests: [{ url: long, status: 200 }, { url: longer, status: 200 }, { url: 'https://a.test/x', status: 404 }],
+    total: 3,
+    returned: 3,
+  });
+
+  assert.equal(result.clipped, 2, 'two of the three were clipped');
+  assert.equal(result.clippedTo, URL_CAP);
+  assert.equal(result.longestClipped, longer.length);
+  assert.ok(
+    warnings.some((w) => w.includes('the longest was ' + longer.length)),
+    'warnings: ' + warnings.join(' | ')
+  );
+});
+
+test('an unclipped network read still reports how many rows there were', () => {
+  const { result } = applyCaps('read_network_requests', {
+    requests: [{ url: 'https://a.test/x', status: 200 }],
+    total: 12,
+    returned: 1,
+  });
+  assert.equal(result.clipped, 0);
+  assert.equal(result.longestClipped, undefined, 'nothing was clipped, so there is no longest');
+  assert.equal(result.total, 12);
+  assert.equal(result.returned, 1);
+});
+
+test('a clipped console read reports the count, the cap and the longest message', () => {
+  const long = 'e'.repeat(4210);
+  const { result, warnings } = applyCaps('read_console_messages', {
+    entries: [{ level: 'error', text: long }, { level: 'log', text: 'short' }],
+    total: 9,
+    returned: 2,
+  });
+
+  assert.equal(result.clipped, 1);
+  assert.equal(result.clippedTo, MESSAGE_CAP);
+  assert.equal(result.longestClipped, 4210, 'the clipped message says its real length');
+  assert.equal(result.entries[0].textLength, 4210);
+  assert.ok(
+    warnings.some((w) => w.includes('1 message(s) clipped to ' + MESSAGE_CAP + ' characters, the longest was 4210')),
+    'warnings: ' + warnings.join(' | ')
+  );
+});

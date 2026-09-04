@@ -2,6 +2,7 @@
 
 const listeners = [];
 const storage = new Map();
+const sessionStorage = new Map();
 
 export const chromeStub = {
   runtime: {
@@ -25,6 +26,20 @@ export const chromeStub = {
       },
       async clear() {
         storage.clear();
+      },
+    },
+    // Cleared when the extension reloads, which is exactly what the session
+    // table has to survive, so it is stubbed separately from local.
+    session: {
+      async get(key) {
+        if (typeof key === 'string') return sessionStorage.has(key) ? { [key]: sessionStorage.get(key) } : {};
+        return Object.fromEntries(sessionStorage);
+      },
+      async set(obj) {
+        for (const [k, v] of Object.entries(obj)) sessionStorage.set(k, v);
+      },
+      async clear() {
+        sessionStorage.clear();
       },
     },
     onChanged: { addListener() {} },
@@ -91,4 +106,10 @@ export function installChromeStub() {
 
 export function resetStorage() {
   storage.clear();
+  sessionStorage.clear();
+}
+
+/** Empties the session area the way an extension reload does, leaving local alone. */
+export function clearSessionStorage() {
+  sessionStorage.clear();
 }
