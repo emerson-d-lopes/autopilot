@@ -332,12 +332,31 @@
   // shows for a second. The classifier says which controls are worth the longer
   // window, and the undo table says whether the site offers a way back.
 
-  const SUBMIT_WORDS = ['send', 'post', 'save', 'publish', 'reply', 'submit'];
+  // Being submit-shaped only buys the longer window. Whether a control can be
+  // undone is the separate IRREVERSIBLE_WORDS list above, so a word can be here
+  // without being treated as a write that cannot be taken back.
+  //
+  // GitHub's Create, Comment, Close issue and the modal's Delete all landed
+  // their navigation or their 2xx after the 250 ms window in the 0.1.35
+  // rehearsal, which is what the longer window exists for.
+  const SUBMIT_WORDS = [
+    'send', 'post', 'save', 'publish', 'reply', 'submit', 'create', 'comment',
+    'close', 'delete', 'remove', 'confirm', 'apply', 'update', 'ok', 'done', 'yes',
+  ];
 
   const SUBMIT_RE = new RegExp('(^|[^a-z])(' + SUBMIT_WORDS.join('|') + ')([^a-z]|$)', 'i');
 
-  /** Writes the site can reverse with another control, so W7 can name it. */
-  const REVERSIBLE_WORDS = ['save', 'post', 'publish', 'comment', 'update', 'apply', 'edit', 'rename', 'add'];
+  /**
+   * Writes the site can reverse with another control, so W7 can name it.
+   *
+   * `close` and `reopen` are a pair: a closed issue reopens and a reopened one
+   * closes, and whichever control is on the page after the click is the one
+   * findUndoControl returns.
+   */
+  const REVERSIBLE_WORDS = [
+    'save', 'post', 'publish', 'comment', 'update', 'apply', 'edit', 'rename', 'add',
+    'close', 'reopen',
+  ];
 
   const REVERSIBLE_RE = new RegExp('(^|[^a-z])(' + REVERSIBLE_WORDS.join('|') + ')([^a-z]|$)', 'i');
 
@@ -346,7 +365,7 @@
 
   /** Controls that reverse a write, looked for on the page after one lands. */
   const UNDO_RE =
-    /(^|[^a-z])(undo|revert|restore|discard|unsend|unpublish|delete|remove|edit|cancel\s+(edit|post|comment))([^a-z]|$)/i;
+    /(^|[^a-z])(undo|revert|restore|discard|unsend|unpublish|delete|remove|edit|reopen|close\s+issue|cancel\s+(edit|post|comment))([^a-z]|$)/i;
 
   function isSubmitShaped(el, role, name) {
     if (!el) return false;

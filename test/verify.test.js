@@ -932,6 +932,67 @@ test('the classifier marks a submit button, a named Send, and neither for a plai
   assert.equal(agent.undoClass(el('named'), 'button', 'Send message'), 'sent');
 });
 
+test('the GitHub controls that missed the window are submit-shaped', () => {
+  // From the 0.1.35 write rehearsal: Create, Comment, Close issue and the
+  // modal's Delete each ran the 250 ms window, and the navigation or the 2xx
+  // that proved the write landed arrived after it closed.
+  const page = loadPage(`<!doctype html><body>
+    <div><button id="c">Create</button><button id="m">Comment</button>
+    <button id="x">Close issue</button><button id="d">Delete</button>
+    <button id="p">Preview</button><a id="a" href="/blog">Read the changelog</a></div>
+  </body>`);
+  const { window, agent } = page;
+  const el = (id) => window.document.getElementById(id);
+
+  assert.equal(agent.isSubmitShaped(el('c'), 'button', 'Create'), true);
+  assert.equal(agent.isSubmitShaped(el('m'), 'button', 'Comment'), true);
+  assert.equal(agent.isSubmitShaped(el('x'), 'button', 'Close issue'), true);
+  assert.equal(agent.isSubmitShaped(el('d'), 'menuitem', 'Delete'), true, 'the menu item, not only the modal button');
+  assert.equal(agent.isSubmitShaped(el('p'), 'button', 'Preview'), false, 'a control that writes nothing keeps the short window');
+  assert.equal(agent.isSubmitShaped(el('a'), 'link', 'Read the changelog'), false);
+  for (const word of ['confirm', 'remove', 'apply', 'update', 'OK', 'Done', 'Yes']) {
+    assert.equal(agent.isSubmitShaped(el('c'), 'button', word), true, word + ' is submit-shaped');
+  }
+});
+
+test('being submit-shaped does not make a control irreversible', () => {
+  // The two lists are separate on purpose: Create and Comment get the longer
+  // window without being reported as writes that cannot be taken back.
+  const page = loadPage('<!doctype html><body><button id="b">Create</button></body>');
+  const { window, agent } = page;
+  const el = window.document.getElementById('b');
+
+  assert.equal(agent.isSubmitShaped(el, 'button', 'Create'), true);
+  assert.equal(agent.isIrreversibleControl(el, 'button', 'Create'), false);
+  assert.equal(agent.isIrreversibleControl(el, 'button', 'Comment'), false);
+  assert.equal(agent.isIrreversibleControl(el, 'button', 'Delete comment'), true, 'delete is still irreversible');
+});
+
+test('a Close issue click names Reopen issue as the way back', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(`<!doctype html><body>
+    <div id="state">Open</div>
+    <button id="close">Close issue</button>
+  </body>`);
+  const wired = wireSubmit(page, { behaviour: 'nothing' });
+  const closeBtn = page.window.document.getElementById('close');
+  wired.aim(closeBtn);
+  // The site swaps the control for its opposite, which is where the undo
+  // lookup finds the name to report.
+  closeBtn.addEventListener('click', () => {
+    page.window.document.getElementById('state').textContent = 'Closed';
+    closeBtn.textContent = 'Reopen issue';
+  });
+  await ownTabGroup();
+
+  const ref = await refOf(page, 'Close issue');
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+
+  assert.equal(result.undo, 'Reopen issue');
+  assert.equal(result.evidence.submit.windowMs >= 0, true, 'the click ran the submit watch');
+  assert.equal(result.irreversible, undefined, 'closing an issue is not on the irreversible list');
+});
+
 // ---------------------------------------------------------------------------
 // Open bug 2: newTabId for a click that opens a tab
 // ---------------------------------------------------------------------------
