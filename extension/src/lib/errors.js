@@ -288,7 +288,9 @@ export const MATCHERS = [
   [/No tab with id|may have been closed|No target with given id|Target closed|tab .{0,12}was closed/i, 'tab_gone'],
   [/was replaced|replacement tab/i, 'tab_replaced'],
   [/Navigation to .* failed|showing an error page, not the site/i, 'nav_failed'],
-  [/Chrome blocks extensions on chrome:\/\/|restricted (page|URL)|not allowed to act on|permission denied for/i, 'origin_blocked'],
+  // Chrome's own refusals on a chrome:// or Web Store page. It phrases them
+  // several ways depending on which API was called.
+  [/Chrome blocks extensions on chrome:\/\/|Cannot access a chrome:\/\/ URL|Cannot access (the )?contents of (the )?url "chrome(-untrusted)?:|restricted (page|URL)|not allowed to act on|permission denied for/i, 'origin_blocked'],
   [/origin changed|navigated to another origin|origin is no longer/i, 'origin_changed'],
   [/Cannot access a chrome-extension|Detached while handling|Inspected target navigated or closed|Not attached to|Debugger is not attached|Another extension \(/i, 'attach_refused'],
   [/already attached|Cannot attach to this target|debugger is attached by another/i, 'attach_refused'],
