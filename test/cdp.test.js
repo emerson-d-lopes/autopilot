@@ -608,3 +608,251 @@ test('an input event is woken but never dispatched twice', async () => {
   assert.ok(calls.includes('Emulation.setFocusEmulationEnabled'), 'the tab is still woken');
   await cdp.detachAll();
 });
+
+// ---------------------------------------------------------------------------
+// D3: the interval between keystrokes is drawn, not held constant
+// ---------------------------------------------------------------------------
+
+/** A deterministic stand-in for Math.random that cycles a fixed list. */
+function sequence(values) {
+  let i = 0;
+  return () => values[i++ % values.length];
+}
+
+test('every drawn interval lands within 40 percent of the mean', () => {
+  const text = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const delays = cdp.typingDelays(text, 60);
+
+  assert.equal(delays.length, text.length);
+  for (const delay of delays) {
+    assert.ok(delay >= 36, 'no interval is under the lower bound, got ' + delay);
+    assert.ok(delay <= 84, 'no interval is over the upper bound, got ' + delay);
+  }
+});
+
+test('the drawn intervals vary rather than repeating one value', () => {
+  const delays = cdp.typingDelays('x'.repeat(200), 60);
+  const distinct = new Set(delays);
+  assert.ok(distinct.size > 20, 'a constant cadence is the tell being removed, saw ' + distinct.size + ' values');
+});
+
+test('the mean of the drawn intervals sits on the requested cadence', () => {
+  // No spaces, so this is the base distribution without the word pause.
+  const delays = cdp.typingDelays('x'.repeat(5000), 60);
+  const mean = delays.reduce((a, b) => a + b, 0) / delays.length;
+  assert.ok(Math.abs(mean - 60) < 3, 'mean was ' + mean.toFixed(1));
+});
+
+test('a space is sometimes followed by a longer pause', () => {
+  // A draw of 0.5 leaves the jitter at the mean. On a space the next draw
+  // decides whether a pause is taken and the one after sets its length, so the
+  // four-value cycle lines up one pause per space.
+  const always = cdp.typingDelays('a b c', 60, sequence([0.5, 0.5, 0, 0]));
+  const never = cdp.typingDelays('a b c', 60, () => 0.5);
+
+  assert.deepEqual(never, [60, 60, 60, 60, 60], 'without the pause a space is an ordinary keystroke');
+  assert.equal(always[1], 150, 'with it the gap after the space is much longer');
+  assert.equal(always[0], 60, 'and a letter is unaffected');
+});
+
+test('the last character never carries a word pause', () => {
+  // Every draw is 0: the jitter goes to its lower bound, and the pause test
+  // passes wherever one is offered.
+  const trailing = cdp.typingDelays('ab ', 60, () => 0);
+  const inner = cdp.typingDelays('ab c', 60, () => 0);
+
+  assert.equal(inner[2], trailing[2] + 90, 'a space mid-text takes the pause');
+  assert.equal(trailing[2], 36, 'a trailing space does not, since the pause would only be dead time');
+});
+
+test('500 characters stay inside 1.5 times the measured 0.1.7 duration', () => {
+  // The campaign measured perKey at 30911 ms for 500 characters, an interval of
+  // 61.8 ms. The drawn intervals are the whole interval, not a delay added to
+  // dispatch, so the budget is the sum of the draws.
+  const text = 'the quick brown fox jumps over the lazy dog '.repeat(12).slice(0, 500);
+  assert.equal(text.length, 500);
+  let worst = 0;
+  for (let run = 0; run < 200; run++) {
+    worst = Math.max(worst, cdp.typingDelays(text, 60).reduce((a, b) => a + b, 0));
+  }
+  assert.ok(worst < 30911 * 1.5, 'worst of 200 runs was ' + worst + ' ms');
+});
+
+test('a cadence of zero types with no delay at all', () => {
+  assert.deepEqual(cdp.typingDelays('abc', 0), [0, 0, 0]);
+});
+
+test('a cadence that is not a number falls back to the default', () => {
+  const delays = cdp.typingDelays('xxxx', 'fast');
+  for (const delay of delays) assert.ok(delay >= 36 && delay <= 84, 'got ' + delay);
+});
+
+test('a cadence is clamped so one call cannot stall a session', () => {
+  const delays = cdp.typingDelays('xx', 100000);
+  for (const delay of delays) assert.ok(delay <= 1400, 'got ' + delay);
+});
+
+// ---------------------------------------------------------------------------
+// D4: a click is preceded by a path, not a jump
+// ---------------------------------------------------------------------------
+
+/**
+ * A debugger stub that records every mouse event dispatched, and every wait
+ * asked for. `sleep` runs its timer in the page, so the milliseconds requested
+ * are readable from the expression it evaluates.
+ */
+function recordMouse() {
+  const events = [];
+  events.waits = [];
+  globalThis.chrome.debugger = {
+    attach(_t, _v, done) {
+      chrome.runtime.lastError = null;
+      done();
+    },
+    detach(_t, done) {
+      chrome.runtime.lastError = null;
+      done();
+    },
+    sendCommand(_t, method, params, done) {
+      if (method === 'Input.dispatchMouseEvent') events.push({ ...params });
+      if (method === 'Runtime.evaluate') {
+        const ms = /setTimeout\(r, (\d+)\)/.exec(params.expression || '');
+        if (ms) events.waits.push(Number(ms[1]));
+      }
+      chrome.runtime.lastError = null;
+      done({});
+    },
+    onEvent: { addListener() {}, removeListener() {} },
+    onDetach: { addListener() {} },
+  };
+  return events;
+}
+
+const distanceTo = (point, target) => Math.hypot(target.x - point.x, target.y - point.y);
+
+test('a path has between 3 and 6 points and ends on the target', () => {
+  for (let run = 0; run < 200; run++) {
+    const points = cdp.pointerPath({ x: 10, y: 20 }, { x: 500, y: 340 });
+    assert.ok(points.length >= 3 && points.length <= 6, 'got ' + points.length + ' points');
+    assert.deepEqual(points[points.length - 1], { x: 500, y: 340 }, 'the press lands where the caller asked');
+  }
+});
+
+test('every point on a path is closer to the target than the one before it', () => {
+  const pairs = [
+    [{ x: 0, y: 0 }, { x: 900, y: 500 }],
+    [{ x: 900, y: 500 }, { x: 0, y: 0 }],
+    [{ x: 400, y: 300 }, { x: 410, y: 700 }],
+    [{ x: 12, y: 640 }, { x: 1200, y: 12 }],
+  ];
+  for (const [from, to] of pairs) {
+    for (let run = 0; run < 100; run++) {
+      const points = cdp.pointerPath(from, to);
+      let previous = distanceTo(from, to);
+      for (const point of points) {
+        const now = distanceTo(point, to);
+        assert.ok(now < previous, 'path from ' + JSON.stringify(from) + ' backtracked: ' + now + ' >= ' + previous);
+        previous = now;
+      }
+    }
+  }
+});
+
+test('a path bows off the straight line rather than running down it', () => {
+  const from = { x: 0, y: 0 };
+  const to = { x: 400, y: 0 };
+  let bowed = 0;
+  for (let run = 0; run < 100; run++) {
+    const points = cdp.pointerPath(from, to);
+    if (points.slice(0, -1).some((p) => Math.abs(p.y) > 0)) bowed++;
+  }
+  assert.ok(bowed > 80, 'only ' + bowed + ' of 100 paths left the straight line');
+});
+
+test('the last pointer position is kept per tab', async () => {
+  recordMouse();
+  await cdp.attach(70);
+  await cdp.attach(71);
+
+  assert.equal(cdp.lastPointer(70), null, 'a tab that has never been pointed at has no position');
+
+  await cdp.mouseHover(70, 120, 240);
+  await cdp.mouseHover(71, 600, 80);
+
+  assert.deepEqual(cdp.lastPointer(70), { x: 120, y: 240 });
+  assert.deepEqual(cdp.lastPointer(71), { x: 600, y: 80 }, 'one tab does not move another tab pointer');
+
+  cdp.forgetPointer(71);
+  assert.equal(cdp.lastPointer(71), null);
+  assert.deepEqual(cdp.lastPointer(70), { x: 120, y: 240 });
+  await cdp.detachAll();
+});
+
+test('a click after a known position moves along a path before pressing', async () => {
+  const events = recordMouse();
+  await cdp.attach(72);
+
+  await cdp.mouseHover(72, 40, 40);
+  events.length = 0;
+  await cdp.mouseClick(72, 500, 300, { hoverDelay: 0 });
+
+  const moves = events.filter((e) => e.type === 'mouseMoved');
+  const press = events.findIndex((e) => e.type === 'mousePressed');
+  assert.ok(moves.length >= 3 && moves.length <= 6, 'got ' + moves.length + ' moves before the press');
+  assert.ok(press > 0 && events.slice(0, press).every((e) => e.type === 'mouseMoved'), 'every move precedes the press');
+  assert.deepEqual(
+    { x: moves[moves.length - 1].x, y: moves[moves.length - 1].y },
+    { x: 500, y: 300 },
+    'the last move is on the target'
+  );
+  assert.deepEqual(cdp.lastPointer(72), { x: 500, y: 300 });
+  await cdp.detachAll();
+});
+
+test('the first click on a tab is a single move, as before', async () => {
+  const events = recordMouse();
+  await cdp.attach(73);
+
+  await cdp.mouseClick(73, 300, 200, { hoverDelay: 0 });
+
+  assert.equal(events.filter((e) => e.type === 'mouseMoved').length, 1, 'there is no position to travel from');
+  await cdp.detachAll();
+});
+
+test('a click next to the pointer does not manufacture a path', async () => {
+  const events = recordMouse();
+  await cdp.attach(74);
+
+  await cdp.mouseHover(74, 300, 200);
+  events.length = 0;
+  await cdp.mouseClick(74, 303, 202, { hoverDelay: 0 });
+
+  assert.equal(events.filter((e) => e.type === 'mouseMoved').length, 1, 'three pixels is not a journey');
+  await cdp.detachAll();
+});
+
+test('the path rides inside the hover gap instead of adding to it', async () => {
+  const events = recordMouse();
+  await cdp.attach(75);
+
+  await cdp.mouseHover(75, 20, 20);
+  events.waits.length = 0;
+  await cdp.mouseClick(75, 700, 400, { hoverDelay: 100 });
+
+  const asked = events.waits.reduce((a, b) => a + b, 0);
+  assert.ok(events.waits.length > 1, 'the wait is split across the path, not taken in one block');
+  assert.equal(asked, 100, 'and the slices add up to the gap that was already being spent');
+  await cdp.detachAll();
+});
+
+test('a click with no hover gap waits for nothing', async () => {
+  const events = recordMouse();
+  await cdp.attach(76);
+
+  await cdp.mouseHover(76, 20, 20);
+  events.waits.length = 0;
+  await cdp.mouseClick(76, 700, 400, { hoverDelay: 0 });
+
+  assert.deepEqual(events.waits, [], 'a caller who asked for no gap does not get one back');
+  await cdp.detachAll();
+});

@@ -401,6 +401,7 @@ export function forgetTab(tabId) {
   throttledTabs.delete(tabId);
   beforeunloadPolicy.delete(tabId);
   lastDialog.delete(tabId);
+  pointerAt.delete(tabId);
 }
 
 export function detach(tabId, { force = false } = {}) {
@@ -702,7 +703,36 @@ export function clearThrottleFlag(tabId) {
   throttledTabs.delete(tabId);
 }
 
+// ---------------------------------------------------------------------------
+// Pointer position (D4)
+// ---------------------------------------------------------------------------
+//
+// Neither bridge produced a mouse path in the campaign: both jumped straight
+// from one click target to the next with no motion between them
+// (D-bot-detection.md, "What is visible to a site on both bridges"). A path
+// needs a starting point, so the last position dispatched to each tab is kept.
+
+/** @type {Map<number, {x: number, y: number}>} */
+const pointerAt = new Map();
+
+/** The last position a mouseMoved event was dispatched to on this tab, or null. */
+export function lastPointer(tabId) {
+  const point = pointerAt.get(tabId);
+  return point ? { ...point } : null;
+}
+
+export function setLastPointer(tabId, x, y) {
+  pointerAt.set(tabId, { x, y });
+}
+
+export function forgetPointer(tabId) {
+  pointerAt.delete(tabId);
+}
+
 export async function sendInput(tabId, params, ackTimeout = 400) {
+  // Recorded here rather than at each call site, so a drag, a hover and a click
+  // all leave the pointer where the page last saw it.
+  if (params && params.type === 'mouseMoved') setLastPointer(tabId, params.x, params.y);
   let settled = false;
   // No command timeout here: the missing acknowledgement is the expected case
   // on a hidden tab, and it is already handled by the race below.
@@ -764,11 +794,81 @@ export async function sleep(ms, tabId) {
 
 const BUTTON_MASK = { left: 1, right: 2, middle: 4 };
 
+const PATH_MIN_STEPS = 3;
+const PATH_MAX_STEPS = 6;
+/** Below this, a path would be a handful of events inside one pixel or two. */
+const PATH_MIN_DISTANCE = 8;
+/** How far the path bows off the straight line, as a fraction of its length. */
+const PATH_BOW = 0.12;
+const PATH_BOW_MAX_PX = 40;
+
+/**
+ * Points along a slightly curved path from one point to another (D4).
+ *
+ * A quadratic bezier whose control point is offset perpendicular to the line,
+ * so the path bows to one side or the other instead of running straight.
+ * Progress along the line is linear in the step index, which keeps every point
+ * closer to the target than the one before it however the curve bends.
+ *
+ * The last point is the target exactly, so the press that follows lands where
+ * the caller asked and nowhere near it.
+ *
+ * Pure and seedable, so the shape can be asserted without a browser.
+ */
+export function pointerPath(from, to, { steps, rand = Math.random } = {}) {
+  const span = PATH_MAX_STEPS - PATH_MIN_STEPS + 1;
+  const count = Number.isFinite(steps) ? Math.max(1, Math.round(steps)) : PATH_MIN_STEPS + Math.floor(rand() * span);
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.hypot(dx, dy) || 1;
+  const bow = Math.min(distance * PATH_BOW, PATH_BOW_MAX_PX) * (rand() * 2 - 1);
+  const cx = from.x + dx / 2 - (dy / distance) * bow;
+  const cy = from.y + dy / 2 + (dx / distance) * bow;
+
+  const points = [];
+  for (let i = 1; i <= count; i++) {
+    const t = i / count;
+    const u = 1 - t;
+    points.push({
+      x: Math.round(u * u * from.x + 2 * u * t * cx + t * t * to.x),
+      y: Math.round(u * u * from.y + 2 * u * t * cy + t * t * to.y),
+    });
+  }
+  return points;
+}
+
+/**
+ * Moves the pointer to a target over a path, spending a fixed budget of time.
+ *
+ * The budget is the gap the caller was already going to wait. Each step takes
+ * one slice of it and pays for its own dispatch out of that slice, so a path
+ * costs the same wall time a single jump plus the gap used to cost. A tab with
+ * no known pointer position gets the single move it always got.
+ */
+async function movePointerTo(tabId, x, y, { modifiers = 0, buttons = 0, onMove, gapMs = 0 } = {}) {
+  const from = lastPointer(tabId);
+  const far = from && Math.hypot(x - from.x, y - from.y) >= PATH_MIN_DISTANCE;
+  const path = far ? pointerPath(from, { x, y }) : [{ x, y }];
+
+  for (let i = 0; i < path.length; i++) {
+    const point = path[i];
+    const before = Date.now();
+    if (onMove) onMove(point.x, point.y);
+    await sendInput(tabId, { type: 'mouseMoved', x: point.x, y: point.y, modifiers, buttons });
+    // The slices telescope to exactly gapMs however the points divide it.
+    const slice = Math.round((gapMs * (i + 1)) / path.length) - Math.round((gapMs * i) / path.length);
+    const wait = slice - (Date.now() - before);
+    if (wait > 1) await sleep(wait, tabId);
+  }
+}
+
 /**
  * Moves the pointer, waits, then presses. The gap lets hover-triggered UI
  * (menus, tooltips, lazily mounted overlays) render before the press lands,
  * which is the difference between clicking a menu item and clicking the page
  * behind it.
+ *
+ * The move is a path rather than a jump (D4), dispatched inside that same gap.
  */
 export async function mouseClick(tabId, x, y, options = {}) {
   const {
@@ -783,9 +883,7 @@ export async function mouseClick(tabId, x, y, options = {}) {
 
   // The pointer travels to the target first, then presses, so an observer sees
   // the same order of events the page does.
-  if (onMove) onMove(x, y);
-  await sendInput(tabId, { type: 'mouseMoved', x, y, modifiers, buttons: 0 });
-  if (hoverDelay > 0) await sleep(hoverDelay, tabId);
+  await movePointerTo(tabId, x, y, { modifiers, onMove, gapMs: Math.max(0, hoverDelay) });
 
   for (let i = 1; i <= clickCount; i++) {
     if (onPress) onPress(x, y);
@@ -812,11 +910,12 @@ export async function mouseClick(tabId, x, y, options = {}) {
   }
 }
 
+const HOVER_SETTLE_MS = 120;
+
 export async function mouseHover(tabId, x, y, modifiers = 0, onMove) {
-  if (onMove) onMove(x, y);
-  await sendInput(tabId, { type: 'mouseMoved', x, y, modifiers, buttons: 0 });
-  // Give hover-triggered UI a moment to appear before the caller reads the page.
-  await sleep(120, tabId);
+  // The path rides inside the settle time, which hover-triggered UI needs to
+  // appear before the caller reads the page.
+  await movePointerTo(tabId, x, y, { modifiers, onMove, gapMs: HOVER_SETTLE_MS });
 }
 
 /**
@@ -858,8 +957,8 @@ export async function insertText(tabId, text) {
  * Kept as the name callers reach for, implemented by typeKeysReal, whose
  * events carry the virtual key code an autocomplete listener needs (R5).
  */
-export async function typeKeys(tabId, text, delay = 12) {
-  return typeKeysReal(tabId, text, delay);
+export async function typeKeys(tabId, text, cadence) {
+  return typeKeysReal(tabId, text, cadence);
 }
 
 /**
@@ -1170,20 +1269,72 @@ export async function pressPrintable(tabId, ch, modifiers = 0) {
   await send(tabId, 'Input.dispatchKeyEvent', { ...base, type: 'keyUp' });
 }
 
+// ---------------------------------------------------------------------------
+// Typing cadence (D3)
+// ---------------------------------------------------------------------------
+//
+// Measured on the local probe, per-key typing settled into a 62 to 64 ms band
+// and stayed there (D-bot-detection.md section 6). The magnitude is human, the
+// variance is not: a keystroke-dynamics classifier reads a near-constant
+// interval as machine-generated whatever its value. These draw each interval
+// from a distribution around the same mean instead.
+
+/** Mean interval between keystrokes, in milliseconds. */
+export const TYPE_CADENCE_MS = 60;
+/** Each interval lands within this fraction either side of the mean. */
+export const TYPE_CADENCE_JITTER = 0.4;
+const TYPE_CADENCE_MAX = 1000;
+/** How often a space is followed by the longer pause a person takes between words. */
+const WORD_PAUSE_CHANCE = 0.15;
+const WORD_PAUSE_MIN = 1.5;
+const WORD_PAUSE_MAX = 3;
+
 /**
- * Types character by character with complete key events (R5).
+ * The interval to wait after each character of `text`.
+ *
+ * The value is the interval the page sees between keystrokes, not a delay added
+ * on top of dispatch, so `typeKeysReal` subtracts the time the three key events
+ * took. A mean of 60 ms therefore reproduces the measured cadence rather than
+ * doubling it, which is what keeps 500 characters inside the old duration.
+ *
+ * Pure and seedable, so the distribution can be asserted without a browser.
+ */
+export function typingDelays(text, cadence = TYPE_CADENCE_MS, rand = Math.random) {
+  const mean = Number.isFinite(Number(cadence)) ? Math.min(TYPE_CADENCE_MAX, Math.max(0, Number(cadence))) : TYPE_CADENCE_MS;
+  const chars = Array.isArray(text) ? text : [...String(text)];
+  return chars.map((ch, index) => {
+    if (mean === 0) return 0;
+    let delay = mean * (1 + (rand() * 2 - 1) * TYPE_CADENCE_JITTER);
+    // The pause between words, taken after the space rather than before the
+    // next letter, which is where a typist's hands actually stop.
+    if (ch === ' ' && index < chars.length - 1 && rand() < WORD_PAUSE_CHANCE) {
+      delay += mean * (WORD_PAUSE_MIN + rand() * (WORD_PAUSE_MAX - WORD_PAUSE_MIN));
+    }
+    return Math.round(delay);
+  });
+}
+
+/**
+ * Types character by character with complete key events (R5), at a cadence
+ * drawn per keystroke rather than a fixed interval (D3).
  *
  * Replaces the payload `typeKeys` sent. Kept as a separate export so the old
  * function stays available while both are in the tree.
  */
-export async function typeKeysReal(tabId, text, delay = 12) {
-  for (const ch of String(text)) {
-    if (ch === '\n') {
+export async function typeKeysReal(tabId, text, cadence = TYPE_CADENCE_MS) {
+  const chars = [...String(text)];
+  const delays = typingDelays(chars, cadence);
+  for (let i = 0; i < chars.length; i++) {
+    const startedAt = Date.now();
+    if (chars[i] === '\n') {
       await pressKey(tabId, 'enter');
     } else {
-      await pressPrintable(tabId, ch);
+      await pressPrintable(tabId, chars[i]);
     }
-    if (delay) await sleep(delay, tabId);
+    // Three dispatches per character already cost tens of milliseconds, and the
+    // drawn value is the whole interval, so only the remainder is waited out.
+    const remaining = delays[i] - (Date.now() - startedAt);
+    if (remaining > 0) await sleep(remaining, tabId);
   }
 }
 
