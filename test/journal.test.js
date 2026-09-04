@@ -282,3 +282,79 @@ test('a note with nothing in it still records something readable', () => {
   assert.equal(entry.callId, undefined);
   assert.equal(typeof entry.at, 'string');
 });
+
+// ---------------------------------------------------------------------------
+// W5: the write column
+// ---------------------------------------------------------------------------
+
+const writeCall = (write) => ({
+  request: { tool: 'computer', callId: 'call_9_abc', args: { tabId: 3, action: 'left_click', ref: 'ref_4' } },
+  response: { result: { ok: true, effects: 'applied', write }, tab: { id: 3, url: 'https://example.com/x' } },
+  startedAt: Date.parse('2026-09-04T10:00:00Z'),
+  finishedAt: Date.parse('2026-09-04T10:00:03Z'),
+});
+
+const SENT = {
+  control: 'Send',
+  origin: 'https://example.com',
+  before: 'write_1_ab12',
+  after: ['composer emptied', '2xx from the site'],
+  confirmedBy: 'token',
+  value: 'the deck is attached',
+};
+
+test('an irreversible action carries its own write row', () => {
+  const entry = journal.makeEntry(writeCall(SENT));
+  assert.equal(entry.callId, 'call_9_abc');
+  assert.equal(entry.write.control, 'Send');
+  assert.equal(entry.write.origin, 'https://example.com');
+  assert.equal(entry.write.before, 'write_1_ab12', 'the screenshot taken before the click');
+  assert.deepEqual(entry.write.after, ['composer emptied', '2xx from the site']);
+  assert.equal(entry.write.confirmedBy, 'token');
+  assert.equal(entry.write.value, 'the deck is attached');
+});
+
+test('a call that wrote nothing has no write row', () => {
+  const entry = journal.makeEntry({
+    request: { tool: 'read_page', args: { tabId: 3 } },
+    response: { result: { ok: true, nodes: 12 } },
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+  });
+  assert.equal(entry.write, undefined);
+});
+
+test('a sensitive field keeps its value out of the journal whatever the switch says', () => {
+  const entry = journal.makeEntry(writeCall({ ...SENT, sensitive: true }));
+  assert.equal(entry.write.value, '[value redacted]');
+  assert.equal(JSON.stringify(entry).includes('the deck is attached'), false);
+});
+
+test('redaction mode keeps the write and drops the value', () => {
+  process.env.CHROME_MCP_JOURNAL_REDACT = '1';
+  try {
+    const entry = journal.makeEntry(writeCall(SENT));
+    assert.equal(entry.redacted, true);
+    assert.equal(entry.args, undefined);
+    assert.equal(entry.write.control, 'Send', 'that a write happened is not the part being redacted');
+    assert.deepEqual(entry.write.after, ['composer emptied', '2xx from the site']);
+    assert.equal(entry.write.value, '[value redacted]');
+    assert.equal(JSON.stringify(entry).includes('the deck is attached'), false);
+  } finally {
+    delete process.env.CHROME_MCP_JOURNAL_REDACT;
+  }
+});
+
+test('the write column renders as its own field on the Markdown line', () => {
+  const entry = journal.makeEntry(writeCall(SENT));
+  const line = journal.formatMarkdown(entry);
+  assert.match(line, /WRITE "Send" on https:\/\/example\.com/);
+  assert.match(line, /before=write_1_ab12/);
+  assert.match(line, /after=composer emptied\+2xx from the site/);
+  assert.match(line, /confirmed=token/);
+});
+
+test('a write with no evidence after it says so rather than leaving the column empty', () => {
+  const entry = journal.makeEntry(writeCall({ control: 'Delete', origin: 'https://example.com', before: null, after: [] }));
+  assert.match(journal.formatMarkdown(entry), /before=none after=none/);
+});
