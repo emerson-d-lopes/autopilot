@@ -15,7 +15,9 @@
 //   /sensitive.html   password input, cc-number input, normal input
 //   /unload.html      beforeunload handler that arms after any input
 //   /scroll.html      overflow:hidden body with an inner overflow:auto container
-//   /composer.html    LinkedIn-shaped composer: contenteditable + Send button + thread
+//   /composer.html    LinkedIn-shaped composer: contenteditable + Send button + thread,
+//                     a close/reopen issue pair, and a press that opens a modal
+//   /newissue.html    GitHub-shaped new issue: title field, markdown toolbar, Create
 //
 // Exports start(port) returning the http.Server, and runs as a CLI when
 // invoked directly: node server.js 8765
@@ -114,6 +116,14 @@ body{font-family:sans-serif;margin:20px}
 </form>
 <div id="toast" role="status"></div>
 <ul id="thread"></ul>
+<section id="issue">
+  <h2>Issue</h2>
+  <button id="issuetoggle" type="button">Close issue</button>
+</section>
+<section id="danger">
+  <h2>Draft</h2>
+  <button id="deldraft" type="button">Delete draft</button>
+</section>
 <script>
 const box = document.getElementById('box');
 const send = document.getElementById('send');
@@ -157,6 +167,35 @@ draft.addEventListener('click', () => {
     form.appendChild(undo);
   }
 });
+// The close/reopen pair. Clicking the control swaps it for the one that
+// reverses it, which is the shape a GitHub issue has.
+const issuetoggle = document.getElementById('issuetoggle');
+issuetoggle.addEventListener('click', () => {
+  issuetoggle.textContent = issuetoggle.textContent === 'Close issue' ? 'Reopen issue' : 'Close issue';
+});
+// A press that opens a step rather than completing one. It appends a modal and
+// puts focus on Cancel, and nothing about it says a write left the page: no
+// status region speaks, no request goes out, the composer keeps its text.
+const deldraft = document.getElementById('deldraft');
+deldraft.addEventListener('click', () => {
+  if (document.getElementById('modal')) return;
+  const modal = document.createElement('div');
+  modal.id = 'modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-label', 'Delete this draft?');
+  modal.style.cssText = 'border:2px solid #333;padding:12px;margin:8px 0;max-width:400px';
+  const title = document.createElement('p');
+  title.textContent = 'Delete this draft?';
+  const cancel = document.createElement('button');
+  cancel.id = 'modalcancel';
+  cancel.type = 'button';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => modal.remove());
+  modal.appendChild(title);
+  modal.appendChild(cancel);
+  document.getElementById('danger').appendChild(modal);
+  cancel.focus();
+});
 send.addEventListener('click', (e) => {
   e.preventDefault();
   form.dispatchEvent(new Event('submit'));
@@ -168,6 +207,42 @@ box.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' || e.shiftKey) return;
   e.preventDefault();
   form.dispatchEvent(new Event('submit'));
+});
+</script>
+</body></html>`;
+
+// The shape the 0.1.35 rehearsal met on GitHub's new-issue page: one title
+// field, a markdown toolbar of buttons around the body, and a Create button.
+// "issue title field" used to answer with twenty toolbar buttons.
+const MARKDOWN_TOOLBAR = [
+  'Heading', 'Bold', 'Italic', 'Quote', 'Code', 'Link', 'Numbered list',
+  'Unordered list', 'Task list', 'Mention', 'Reference', 'Saved replies',
+  'Add heading text', 'Add bold text', 'Add italic text', 'Insert a quote',
+  'Insert code', 'Add a link', 'Attach files', 'Slash commands',
+];
+
+const NEWISSUE_BODY = `<!doctype html><html><head><meta charset="utf-8"><title>New issue</title>
+<style>
+body{font-family:sans-serif;margin:20px;max-width:760px}
+#toolbar button{margin:2px}
+#title{width:100%;padding:6px}
+#body{width:100%;height:160px;padding:6px}
+</style></head><body>
+<h1>New issue</h1>
+<form id="newissue" aria-label="New issue" onsubmit="return false">
+  <label for="title">Add a title</label>
+  <input type="text" id="title" name="title" placeholder="Title">
+  <div id="toolbar" role="toolbar" aria-label="Markdown formatting">
+  ${MARKDOWN_TOOLBAR.map((t) => `<button type="button">${t}</button>`).join('\n  ')}
+  </div>
+  <label for="body">Add a description</label>
+  <textarea id="body" name="body" placeholder="Type your description here..."></textarea>
+  <button id="create" type="submit">Create</button>
+</form>
+<div id="out" role="status"></div>
+<script>
+document.getElementById('newissue').addEventListener('submit', () => {
+  document.getElementById('out').textContent = 'Issue created';
 });
 </script>
 </body></html>`;
@@ -208,6 +283,7 @@ function handler(req, res) {
     if (path === '/unload.html') return send(res, 200, UNLOAD_BODY);
     if (path === '/scroll.html') return send(res, 200, SCROLL_BODY);
     if (path === '/composer.html') return send(res, 200, COMPOSER_BODY);
+    if (path === '/newissue.html') return send(res, 200, NEWISSUE_BODY);
     return serveStatic(req, res);
   }
 

@@ -158,6 +158,31 @@ test('/composer.html carries a status region, a draft control and a call to /api
   });
 });
 
+test('/composer.html carries a close/reopen pair and a press that opens a modal', async () => {
+  await withServer(async (base) => {
+    const res = await fetch(base + '/composer.html');
+    const body = await res.text();
+    assert.match(body, /id="issuetoggle"[^>]*>Close issue/, 'the reversible close, for the undo hint');
+    assert.match(body, /'Reopen issue'/, 'the control it swaps to');
+    assert.match(body, /id="deldraft"[^>]*>Delete draft/, 'the press that opens a step rather than completing one');
+    assert.match(body, /role', 'dialog'/, 'what it opens');
+  });
+});
+
+test('/newissue.html has a title field, a markdown toolbar and a Create button', async () => {
+  await withServer(async (base) => {
+    const res = await fetch(base + '/newissue.html');
+    assert.equal(res.status, 200);
+    const body = await res.text();
+    assert.match(body, /<form id="newissue" aria-label="New issue"/, 'the form name every control inherits');
+    assert.match(body, /<label for="title">Add a title<\/label>/);
+    assert.match(body, /<input type="text" id="title"/);
+    assert.match(body, /id="create" type="submit">Create</);
+    const buttons = body.match(/<button type="button">/g) || [];
+    assert.ok(buttons.length >= 20, 'the toolbar is 20 buttons, got ' + buttons.length);
+  });
+});
+
 test('unknown routes return 404', async () => {
   await withServer(async (base) => {
     const res = await fetch(base + '/nope-not-a-route');
