@@ -1384,6 +1384,13 @@
       // Whether there was a value to watch at all. A type dispatched with no
       // text control focused cannot be judged by whether a value moved.
       valueTracked: state.valueBefore !== null,
+      // Whether whatever holds focus now could take typed text at all. A type
+      // aimed at a button or at nothing has no value to compare, so this is the
+      // only thing that separates it from a type that worked.
+      focusedEditable: Boolean(
+        document.activeElement &&
+          (isEditableHost(document.activeElement) || isTextControl(document.activeElement))
+      ),
       valueSensitive: Boolean(state.focus.sensitive || after.focus.sensitive),
       scroll: { before: state.scroll, after: after.scroll, delta: scrollDelta },
       scrolled,

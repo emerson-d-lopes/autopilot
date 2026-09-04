@@ -152,6 +152,20 @@ test('a watch armed on a named ref tracks that element rather than whatever has 
   assert.equal(report.focusChanged, false, 'nothing was focused, and that is not the evidence here');
 });
 
+test('the watch says whether anything that can hold text has focus', async () => {
+  const { call, window } = loadPage('<!doctype html><body><input id="a"><button id="b">Go</button></body>');
+
+  window.document.getElementById('b').focus();
+  await call({ type: 'VERIFY_ARM' });
+  let report = await call({ type: 'VERIFY_REPORT', window: 20 });
+  assert.equal(report.focusedEditable, false, 'a button cannot take typed text');
+
+  window.document.getElementById('a').focus();
+  await call({ type: 'VERIFY_ARM' });
+  report = await call({ type: 'VERIFY_REPORT', window: 20 });
+  assert.equal(report.focusedEditable, true);
+});
+
 test('reporting without arming says so rather than inventing a result', async () => {
   const { call } = loadPage('<!doctype html><body></body>');
   const report = await call({ type: 'VERIFY_REPORT', window: 10 });

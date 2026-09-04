@@ -537,6 +537,24 @@ async function computerTool(ctx, input) {
       const field = (report && report.focusedAfter) || null;
       // A type that reached a text control and left its value untouched is the
       // failure perKey used to report as {ok: true, typed: N}.
+      // Nothing that can hold text was focused, and the page did not react
+      // either. Measured on a GitHub repository page: "t" opens the file finder
+      // and leaves focus on a button, so the text that followed went nowhere
+      // and the call still reported ok.
+      if (text.length && report && report.ok && !report.valueTracked && report.focusedEditable === false && !report.changed) {
+        throw new ToolError(
+          'no_effect',
+          'Typed ' + text.length + ' characters with ' +
+            (field ? JSON.stringify(field) : 'nothing that accepts text') + ' focused, and nothing changed.',
+          {
+            cause: 'no text field or editable element had focus when the text was sent',
+            hint: 'Click the field by ref first, or set it with form_input.',
+            effects: 'none',
+            evidence: outcome.evidence,
+          }
+        );
+      }
+
       if (text.length && report && report.ok && report.valueTracked && !report.valueChanged) {
         throw new ToolError(
           'no_effect',
