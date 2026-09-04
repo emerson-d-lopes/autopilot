@@ -717,6 +717,7 @@ async function computerTool(ctx, input) {
           before: beforeShot,
           after: submit ? submit.fired : [],
           confirmedBy: confirmation && confirmation.required ? confirmation.approvedBy : undefined,
+          undo: result.undo,
           value: armedSubmit && armedSubmit.text ? armedSubmit.text : undefined,
           sensitive: armedSubmit ? Boolean(armedSubmit.sensitive) : undefined,
         };
@@ -884,6 +885,7 @@ async function computerTool(ctx, input) {
             before: beforeShot,
             after: submit.fired,
             confirmedBy: confirmation && confirmation.required ? confirmation.approvedBy : undefined,
+            undo: result.undo,
             value: armedSubmit && armedSubmit.text ? armedSubmit.text : undefined,
             sensitive: armedSubmit ? Boolean(armedSubmit.sensitive) : undefined,
           };
