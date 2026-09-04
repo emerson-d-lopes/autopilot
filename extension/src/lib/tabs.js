@@ -6,7 +6,7 @@
 
 import * as cdp from './cdp.js';
 
-const GROUP_TITLE = 'chrome-mcp';
+const GROUP_TITLE = 'Autopilot';
 const STORAGE_KEY = 'tabGroups';
 const SESSION_TABLE_KEY = 'sessionTable';
 

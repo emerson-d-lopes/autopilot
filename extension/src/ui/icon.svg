@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
-  <!-- Lantern: a rounded dark tile, a ring for the glass, a bright point for the flame. -->
+  <!-- Autopilot: a rounded dark tile, a ring, a bar across the top, a bright point at the centre. -->
   <rect x="4" y="4" width="120" height="120" rx="28" fill="#161616"/>
   <circle cx="64" cy="66" r="30" fill="none" stroke="#a0a0a0" stroke-width="7"/>
   <path d="M50 30 h28" stroke="#a0a0a0" stroke-width="7" stroke-linecap="round"/>

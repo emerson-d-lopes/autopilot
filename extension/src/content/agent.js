@@ -5,8 +5,8 @@
 // than a chrome.scripting.executeScript round trip.
 
 (() => {
-  if (globalThis.__chromeMcpAgentInstalled) return;
-  globalThis.__chromeMcpAgentInstalled = true;
+  if (globalThis.__autopilotAgentInstalled) return;
+  globalThis.__autopilotAgentInstalled = true;
 
   // ---------------------------------------------------------------------------
   // Ref registry
@@ -1982,7 +1982,7 @@
   // browsing session) and held in this module-level variable, which is the
   // one place any other code in this file, or the indicator overlay sharing
   // this shadow root, looks the host up by id.
-  const CURSOR_HOST_ID = '__cmcp_' + Math.random().toString(36).slice(2, 10) + '__';
+  const CURSOR_HOST_ID = '__ap_' + Math.random().toString(36).slice(2, 10) + '__';
   let cursorRoot = null;
   let cursorShadow = null;
   let cursorEl = null;
@@ -2377,7 +2377,7 @@
   // The classifiers, reachable from the isolated world so tests and any future
   // module read the same list rather than keeping a second copy. Nothing here
   // is visible to the page: content scripts run in their own world.
-  globalThis.__chromeMcpAgent = {
+  globalThis.__autopilotAgent = {
     IRREVERSIBLE_WORDS,
     SENSITIVE_AUTOCOMPLETE,
     SUBMIT_WORDS,

@@ -5,14 +5,14 @@
 // tab that is part of the session but not the one currently being acted on,
 // and a floating Stop button. It shares the closed shadow root the cursor
 // overlay (agent.js) draws into, addressed through the module-level
-// `globalThis.__chromeMcpAgent.overlayShadow` accessor (D2), so the same
+// `globalThis.__autopilotAgent.overlayShadow` accessor (D2), so the same
 // `HIDE_FOR_TOOL_USE` / `SHOW_AFTER_TOOL_USE` pair that keeps the cursor out
 // of a screenshot keeps this out too. See IMPROVEMENTS.md F4 and D2, and
 // evidence/X-official-internals.md part 1 section 13.
 
 (() => {
-  if (globalThis.__chromeMcpIndicatorInstalled) return;
-  globalThis.__chromeMcpIndicatorInstalled = true;
+  if (globalThis.__autopilotIndicatorInstalled) return;
+  globalThis.__autopilotIndicatorInstalled = true;
 
   const CSS =
     // The border sits just inside the viewport edge so it reads as a frame
@@ -57,7 +57,7 @@
   let currentState = 'none';
 
   function agentApi() {
-    return globalThis.__chromeMcpAgent || null;
+    return globalThis.__autopilotAgent || null;
   }
 
   /** Builds the indicator's own elements into the shared overlay shadow root, once. */
@@ -121,8 +121,8 @@
     pillEl.hidden = !staticPill;
     if (staticPill) {
       pillTextEl.textContent = stopped
-        ? 'Lantern stopped acting on this tab.'
-        : 'Lantern is driving this tab.';
+        ? 'Autopilot stopped acting on this tab.'
+        : 'Autopilot is driving this tab.';
       pillBtnEl.hidden = !stopped;
     }
   }
@@ -144,5 +144,5 @@
   // Reachable from tests, and from any other module in this isolated world
   // that needs to read or drive the indicator without going through
   // messaging.
-  globalThis.__chromeMcpIndicator = { setState, getState: () => currentState };
+  globalThis.__autopilotIndicator = { setState, getState: () => currentState };
 })();
