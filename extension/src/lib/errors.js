@@ -168,6 +168,16 @@ export const CODES = {
     retryable: false,
     effects: 'none',
   },
+  // Added by the indicator track (F4): the user pressed the Stop button on the
+  // acting-indicator overlay or the popup. The session stays stopped until
+  // Resume is pressed, so every call in between fails fast with this code
+  // rather than running and being aborted partway through.
+  stopped: {
+    message: 'The user stopped this session.',
+    hint: 'Wait for the user to press Resume on the tab indicator or the popup, then retry.',
+    retryable: false,
+    effects: 'unknown',
+  },
   // Added by the debugger and lifecycle track: a browser_batch that fails its
   // pre-flight check, before any item has run.
   batch_invalid: {

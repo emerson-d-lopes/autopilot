@@ -194,3 +194,100 @@ test('two tabs from one click are both reported, and a closed one is forgotten',
   tabs.forgetAdopted(83);
   assert.deepEqual(tabs.adopted(11), []);
 });
+
+// ---------------------------------------------------------------------------
+// F4. Stop/Resume and the acting-indicator broadcast
+// ---------------------------------------------------------------------------
+
+/** A session with two tabs in the same group, for the indicator broadcast. */
+function scriptIndicatorSession({ clientId = 'sessionStop', groupId = 50 } = {}) {
+  const groupTabs = [
+    { id: 201, groupId, windowId: 9 },
+    { id: 202, groupId, windowId: 9 },
+  ];
+  const sent = [];
+  stub.storage = {
+    local: {
+      async get() {
+        return { tabGroups: { [clientId]: groupId } };
+      },
+      async set() {},
+    },
+  };
+  stub.tabGroups = {
+    TAB_GROUP_ID_NONE: -1,
+    async get() {
+      return { id: groupId };
+    },
+    async update() {},
+  };
+  stub.tabs = {
+    ...stub.tabs,
+    async query({ groupId: gid }) {
+      return gid === groupId ? groupTabs : [];
+    },
+    async sendMessage(tabId, message) {
+      sent.push({ tabId, state: message.state });
+      return {};
+    },
+  };
+  return { clientId, groupTabs, sent };
+}
+
+test('beginActive shows pulsing on the acting tab and static on the rest of the session', async () => {
+  const { clientId, sent } = scriptIndicatorSession();
+  assert.equal(tabs.isSessionActive(clientId), false);
+
+  await tabs.beginActive(clientId, 201);
+
+  assert.equal(tabs.isSessionActive(clientId), true);
+  const byTab = Object.fromEntries(sent.map((s) => [s.tabId, s.state]));
+  assert.equal(byTab[201], 'pulsing');
+  assert.equal(byTab[202], 'static');
+});
+
+test('endActive clears the active tab and hides the indicator everywhere', async () => {
+  const { clientId, sent } = scriptIndicatorSession();
+  await tabs.beginActive(clientId, 201);
+  sent.length = 0;
+
+  await tabs.endActive(clientId);
+
+  assert.equal(tabs.isSessionActive(clientId), false);
+  const byTab = Object.fromEntries(sent.map((s) => [s.tabId, s.state]));
+  assert.equal(byTab[201], 'none');
+  assert.equal(byTab[202], 'none');
+});
+
+test('stopSession marks the session stopped and leaves a stopped pill on the acted-on tab', async () => {
+  const { clientId, sent } = scriptIndicatorSession({ clientId: 'sessionStop2', groupId: 51 });
+  await tabs.beginActive(clientId, 201);
+  sent.length = 0;
+
+  assert.equal(tabs.isStopped(clientId), false);
+  await tabs.stopSession(clientId);
+  assert.equal(tabs.isStopped(clientId), true);
+
+  const byTab = Object.fromEntries(sent.map((s) => [s.tabId, s.state]));
+  assert.equal(byTab[201], 'stopped', 'the tab a call was acting on shows the stopped pill');
+  assert.equal(byTab[202], 'none', 'a session tab that was never active shows nothing');
+});
+
+test('resumeSession clears the stopped state and hides the pill', async () => {
+  const { clientId, sent } = scriptIndicatorSession({ clientId: 'sessionStop3', groupId: 52 });
+  await tabs.beginActive(clientId, 201);
+  await tabs.stopSession(clientId);
+  sent.length = 0;
+
+  await tabs.resumeSession(clientId);
+
+  assert.equal(tabs.isStopped(clientId), false);
+  const byTab = Object.fromEntries(sent.map((s) => [s.tabId, s.state]));
+  assert.equal(byTab[201], 'none');
+  assert.equal(byTab[202], 'none');
+});
+
+test('a session that was never started is not stopped and has no active tab', () => {
+  assert.equal(tabs.isStopped('never-seen'), false);
+  assert.equal(tabs.isSessionActive('never-seen'), false);
+});

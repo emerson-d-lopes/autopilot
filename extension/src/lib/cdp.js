@@ -1087,15 +1087,53 @@ export async function enableDomains(tabId, domains) {
 /**
  * Sets the files on an `<input type=file>`.
  *
- * The element is located by a marker attribute rather than a ref, because the
- * ref map lives in the content script's isolated world and CDP addresses nodes
- * from its own DOM tree.
+ * The ref map lives in the content script's isolated world and CDP addresses
+ * nodes from its own DOM tree, so the two sides need a way to agree on which
+ * element is meant. The previous approach wrote a marker attribute onto the
+ * element and read it back with `DOM.querySelector`, which left a
+ * page-observable attribute sitting in the DOM for as long as the round trip
+ * took (D2). This resolves the node instead through `DOM.querySelectorAll` on
+ * the stable structural selector `input[type="file"]`, disambiguating by
+ * geometry when a page has more than one, so nothing is ever written to the
+ * page's own DOM.
  */
-export async function setFileInputFiles(tabId, selector, files) {
+export async function setFileInputFiles(tabId, geometry, files) {
   const { root } = await send(tabId, 'DOM.getDocument', { depth: 0 });
-  const { nodeId } = await send(tabId, 'DOM.querySelector', { nodeId: root.nodeId, selector });
-  if (!nodeId) throw new CdpError('could not locate the file input in the DOM tree');
-  await send(tabId, 'DOM.setFileInputFiles', { files, nodeId });
+  const { nodeIds } = await send(tabId, 'DOM.querySelectorAll', {
+    nodeId: root.nodeId,
+    selector: 'input[type="file"]',
+  });
+  if (!nodeIds || !nodeIds.length) throw new CdpError('could not locate a file input in the DOM tree');
+  if (nodeIds.length === 1) {
+    await send(tabId, 'DOM.setFileInputFiles', { files, nodeId: nodeIds[0] });
+    return;
+  }
+
+  // Several file inputs on the page: pick the one whose box model center sits
+  // closest to the element the ref resolved to.
+  let best = null;
+  let bestDist = Infinity;
+  for (const nodeId of nodeIds) {
+    let box;
+    try {
+      box = await send(tabId, 'DOM.getBoxModel', { nodeId });
+    } catch {
+      continue;
+    }
+    const quad = box && box.model && box.model.content;
+    if (!quad || quad.length < 8) continue;
+    const cx = (quad[0] + quad[4]) / 2;
+    const cy = (quad[1] + quad[5]) / 2;
+    const dist = Math.hypot(cx - geometry.centerX, cy - geometry.centerY);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = nodeId;
+    }
+  }
+  if (best === null || bestDist > 8) {
+    throw new CdpError('several file inputs are on the page and none matched the resolved element closely enough');
+  }
+  await send(tabId, 'DOM.setFileInputFiles', { files, nodeId: best });
 }
 
 /**

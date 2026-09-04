@@ -60,6 +60,22 @@ function renderSessions(sessions) {
     grow.className = 'grow muted';
     grow.textContent = s.tabs + ' tab' + (s.tabs === 1 ? '' : 's') + (s.title ? ' · ' + s.title : '');
     li.append(mark, grow);
+
+    // F4: Stop while a call is running for this session, Resume once the
+    // user has stopped one. Neither reveals the tab, so both stop the click
+    // from also triggering the row's own reveal-session handler.
+    if (s.active || s.stopped) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-ghost';
+      btn.textContent = s.stopped ? 'Resume' : 'Stop';
+      btn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        ask(s.stopped ? 'resume' : 'stop', { clientId: s.clientId }).then(refresh);
+      });
+      li.appendChild(btn);
+    }
+
     // The user chooses when to look: this is the one place a tab is raised.
     li.addEventListener('click', () => ask('reveal_session', { clientId: s.clientId }).then(() => window.close()));
     list.appendChild(li);
