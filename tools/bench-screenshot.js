@@ -174,13 +174,13 @@ async function main() {
     console.log('or pass --any-browser to measure whatever is connected.');
     return;
   }
-  process.env.CHROME_MCP_BROWSER_ID = bridge.id;
+  process.env.AUTOPILOT_BROWSER_ID = bridge.id;
 
   const version = await extensionVersion(bridge.socket);
   const fixture = await startFixture(0);
   const base = 'http://127.0.0.1:' + fixture.address().port;
 
-  console.log('chrome-mcp screenshot bench');
+  console.log('Autopilot screenshot bench');
   console.log('browser: ' + describeBrowser(bridge) + (dev ? ' (development)' : ' (not the development browser)'));
   console.log('extension version: ' + (version || 'unknown'));
   console.log('fixture: ' + base);

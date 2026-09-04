@@ -283,13 +283,13 @@ const MEASUREMENTS = [
 async function main() {
   const bridge = await anyBridge();
   if (!bridge) {
-    console.log('chrome-mcp bench');
+    console.log('Autopilot bench');
     console.log('');
     console.log('no browser bridge is connected (run: npm run browser, or open Chrome with the extension loaded)');
     console.log('the bench drives a real browser through mcp-server.js, so it has nothing to measure without one');
     return;
   }
-  process.env.CHROME_MCP_BROWSER_ID = bridge.id;
+  process.env.AUTOPILOT_BROWSER_ID = bridge.id;
 
   const fixture = await startFixture(0);
   const base = 'http://127.0.0.1:' + fixture.address().port;

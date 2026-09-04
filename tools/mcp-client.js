@@ -30,8 +30,8 @@ const SERVER = join(ROOT, 'host', 'mcp-server.js');
  * Spawns an MCP server and completes the initialize handshake.
  *
  * @param {object} [options]
- * @param {string} [options.browser] value for CHROME_MCP_BROWSER, the startup default
- * @param {string} [options.clientId] value for CHROME_MCP_CLIENT_ID, so a restart resumes a session
+ * @param {string} [options.browser] value for AUTOPILOT_BROWSER, the startup default
+ * @param {string} [options.clientId] value for AUTOPILOT_CLIENT_ID, so a restart resumes a session
  * @param {object} [options.env] extra environment for the server process
  * @param {string[]} [options.args] extra argv for the server process
  * @param {number} [options.timeout] per-request timeout in ms, default 180000
@@ -50,8 +50,8 @@ export async function createClient(options = {}) {
     if (!id) throw new Error('no development browser recorded in .browsers/dev-browser-id (run: npm run browser)');
     browser = id;
   }
-  if (browser) env.CHROME_MCP_BROWSER = browser;
-  if (options.clientId) env.CHROME_MCP_CLIENT_ID = options.clientId;
+  if (browser) env.AUTOPILOT_BROWSER = browser;
+  if (options.clientId) env.AUTOPILOT_CLIENT_ID = options.clientId;
 
   const child = spawn(process.execPath, [SERVER, ...(options.args || [])], {
     env,
