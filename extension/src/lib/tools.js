@@ -1257,7 +1257,16 @@ export const handlers = {
       // command the debugger waits on the way it waits on Page.navigate, and
       // pairing it with the same load wait navigate-to-URL already uses closes
       // that race.
-      await perms.checkPermission({ tool: 'navigate', url: await activeUrl(tabId), toolUseId: ctx.toolUseId, clientId: ctx.clientId });
+      // noteTransition is off so the origin this call moves to is recorded
+      // after the tab lands, by the check below, which is the one whose warning
+      // reaches this call's result.
+      await perms.checkPermission({
+        tool: 'navigate',
+        url: await activeUrl(tabId),
+        toolUseId: ctx.toolUseId,
+        clientId: ctx.clientId,
+        noteTransition: false,
+      });
       await ensureAttached(tabId);
 
       const history = await cdp.send(tabId, 'Page.getNavigationHistory');
@@ -1275,7 +1284,18 @@ export const handlers = {
     } else {
       let url = String(input.url);
       if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url;
-      await perms.checkPermission({ tool: 'navigate', url, toolUseId: ctx.toolUseId, clientId: ctx.clientId });
+      // The blocklist, the mode and, in ask mode, the grant for the origin this
+      // is about to move to, all judged before the move. The transition is
+      // deliberately not recorded here: the warning belongs to this call, and
+      // recording the target origin now would leave the check after the landing
+      // with nothing to compare against.
+      await perms.checkPermission({
+        tool: 'navigate',
+        url,
+        toolUseId: ctx.toolUseId,
+        clientId: ctx.clientId,
+        noteTransition: false,
+      });
       await ensureAttached(tabId);
 
       // A page with unsaved input can hold the navigation with a beforeunload

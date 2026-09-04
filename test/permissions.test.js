@@ -318,6 +318,50 @@ test('a move to a new origin needs its own grant in ask mode', async () => {
   });
 });
 
+test('a pre-move check can judge an origin without recording it', async () => {
+  await withPolicy({ mode: perms.MODES.ALLOW }, async () => {
+    perms.forgetActedOrigin('t5');
+    await perms.checkPermission({ tool: 'computer', url: 'http://127.0.0.1:8765/fixture', clientId: 't5' });
+
+    // What navigate does before the move: the target is checked, and the
+    // session is still on the origin it was on.
+    const ahead = await perms.checkPermission({
+      tool: 'navigate',
+      url: 'https://example.com/',
+      clientId: 't5',
+      noteTransition: false,
+    });
+    assert.equal(ahead.allowed, true);
+    assert.equal(perms.lastActedOrigin('t5'), 'http://127.0.0.1:8765');
+
+    // What navigate does after it lands: the warning belongs to this call.
+    const landed = await perms.checkDomainTransition({ clientId: 't5', url: 'https://example.com/', tool: 'navigate' });
+    assert.equal(landed.changed, true);
+    assert.match(landed.warning, /example\.com/);
+    assert.match(landed.warning, /127\.0\.0\.1:8765/);
+    assert.equal(perms.lastActedOrigin('t5'), 'https://example.com', 'and now it is recorded');
+    perms.forgetActedOrigin('t5');
+  });
+});
+
+test('a pre-move check still refuses an ungranted origin in ask mode', async () => {
+  await withPolicy({ mode: perms.MODES.ASK }, async () => {
+    perms.forgetActedOrigin('t6');
+    await perms.grant('https://a.example', 'always');
+    await perms.checkPermission({ tool: 'computer', url: 'https://a.example/', clientId: 't6' });
+    await assert.rejects(
+      () => perms.checkPermission({
+        tool: 'navigate',
+        url: 'https://c.example/',
+        clientId: 't6',
+        noteTransition: false,
+      }),
+      /grant/
+    );
+    perms.forgetActedOrigin('t6');
+  });
+});
+
 test('a read is never blocked by a transition', async () => {
   await withPolicy({ mode: perms.MODES.ASK }, async () => {
     perms.forgetActedOrigin('t4');

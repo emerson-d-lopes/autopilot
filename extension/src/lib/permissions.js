@@ -460,9 +460,19 @@ export async function askInBrowser({ control, origin, timeoutMs = ASK_IN_BROWSER
  * Read-only tools bypass grant checks but not the blocklist, since reading a
  * banking page still exfiltrates it into the transcript.
  */
-export async function checkPermission({ tool, url, toolUseId, clientId = 'default' }) {
+/**
+ * Decides whether a tool may run against a URL.
+ *
+ * `noteTransition: false` runs the transition check without recording the
+ * origin. navigate needs that: it checks the URL it is about to move to, and
+ * recording it there meant the move was already the session's last acted origin
+ * by the time the tab landed, so the warning belonged to the next call rather
+ * than to the navigate that caused it.
+ */
+export async function checkPermission({ tool, url, toolUseId, clientId = 'default', noteTransition = true }) {
   const policy = await loadPolicy();
   const hostname = hostnameOf(url);
+  const transitionCheck = () => checkDomainTransition({ clientId, url, tool, note: noteTransition });
 
   if (!hostname) {
     // about:blank and new tabs carry no origin and nothing worth protecting.
@@ -502,7 +512,7 @@ export async function checkPermission({ tool, url, toolUseId, clientId = 'defaul
         }
       );
     }
-    const transitionPlanned = await checkDomainTransition({ clientId, url, tool });
+    const transitionPlanned = await transitionCheck();
     return { allowed: true, reason: 'plan mode', transition: transitionPlanned };
   }
 
@@ -510,11 +520,11 @@ export async function checkPermission({ tool, url, toolUseId, clientId = 'defaul
     return {
       allowed: true,
       reason: 'read-only',
-      transition: await checkDomainTransition({ clientId, url, tool }),
+      transition: await transitionCheck(),
     };
   }
   if (isLocalhost(hostname)) {
-    return { allowed: true, reason: 'localhost', transition: await checkDomainTransition({ clientId, url, tool }) };
+    return { allowed: true, reason: 'localhost', transition: await transitionCheck() };
   }
   // Confirm mode is allow mode until an irreversible control is pressed, which
   // is decided at the click itself, where the control's name is known.
@@ -522,7 +532,7 @@ export async function checkPermission({ tool, url, toolUseId, clientId = 'defaul
     return {
       allowed: true,
       reason: policy.mode === MODES.CONFIRM ? 'confirm mode' : 'allow mode',
-      transition: await checkDomainTransition({ clientId, url, tool }),
+      transition: await transitionCheck(),
     };
   }
 
@@ -544,7 +554,7 @@ export async function checkPermission({ tool, url, toolUseId, clientId = 'defaul
     delete next[origin];
     await savePolicy({ grants: next });
   }
-  return { allowed: true, reason: 'granted', transition: await checkDomainTransition({ clientId, url, tool }) };
+  return { allowed: true, reason: 'granted', transition: await transitionCheck() };
 }
 
 export async function grant(origin, duration = 'always', toolUseId = null) {
