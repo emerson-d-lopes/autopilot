@@ -595,3 +595,41 @@ test('PAGE_STATE reports the window outer size alongside the viewport', async ()
   assert.equal(state.outerWidth, 816);
   assert.equal(state.outerHeight, 688);
 });
+
+// ---------------------------------------------------------------------------
+// P7: the caret lands at the end after FORM_INPUT
+// ---------------------------------------------------------------------------
+
+test('FORM_INPUT places the caret at the end of a text field', async () => {
+  const { call, window } = loadPage('<!doctype html><body><input type="text" id="name" value="old"></body>');
+  const input = window.document.getElementById('name');
+  // Simulate the caret sitting wherever the previous value left it, so the
+  // test can tell setSelectionRange actually ran rather than the caret just
+  // happening to already be at the end.
+  input.focus();
+  input.setSelectionRange(0, 0);
+
+  const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);
+  const result = await call({ type: 'FORM_INPUT', ref: nodes[0].ref, value: 'a much longer replacement' });
+
+  assert.equal(result.ok, true);
+  assert.equal(input.selectionStart, input.value.length);
+  assert.equal(input.selectionEnd, input.value.length);
+});
+
+test('FORM_INPUT places the caret at the end of a textarea', async () => {
+  const { call, window } = loadPage('<!doctype html><body><textarea id="notes"></textarea></body>');
+  const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);
+  await call({ type: 'FORM_INPUT', ref: nodes[0].ref, value: 'line one\nline two' });
+
+  const textarea = window.document.getElementById('notes');
+  assert.equal(textarea.selectionStart, textarea.value.length);
+});
+
+test('FORM_INPUT does not move the caret for a type with no text selection model', async () => {
+  const { call, window } = loadPage('<!doctype html><body><input type="number" id="qty" value="1"></body>');
+  const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);
+  const result = await call({ type: 'FORM_INPUT', ref: nodes[0].ref, value: 5 });
+  assert.equal(result.ok, true);
+  assert.equal(window.document.getElementById('qty').value, '5');
+});

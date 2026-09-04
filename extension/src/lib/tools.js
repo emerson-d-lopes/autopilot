@@ -84,9 +84,13 @@ async function ensureAttached(tabId) {
  * from the pointer. Every call is fire and forget: drawing must never be able
  * to fail an action.
  */
-/** Grabs a gif frame when a recording is open. Never allowed to fail an action. */
-async function recordFrame(tabId) {
-  if (gif.isRecording(tabId)) await gif.captureFrame(tabId).catch(() => {});
+/**
+ * Grabs a gif frame when a recording is open. Never allowed to fail an action.
+ * `meta` carries the action name and any point/path (P1), so the frame gets
+ * the right per-action delay, action label, and click or drag marker.
+ */
+async function recordFrame(tabId, meta) {
+  if (gif.isRecording(tabId)) await gif.captureFrame(tabId, meta).catch(() => {});
 }
 
 function cursorHooks(tabId) {
@@ -472,7 +476,7 @@ async function computerTool(ctx, input) {
         () => cdp.mouseClick(tabId, point.x, point.y, { ...spec, modifiers, ...cursorHooks(tabId) }),
         { point }
       );
-      await recordFrame(tabId);
+      await recordFrame(tabId, { action, point: { x: point.x, y: point.y } });
       const irreversible = Boolean(point.element && point.element.irreversible);
       const result = {
         ok: true,
@@ -511,6 +515,7 @@ async function computerTool(ctx, input) {
         () => cdp.mouseDragDwell(tabId, [from.x, from.y], [to.x, to.y], modifiers, cursorHooks(tabId)),
         { point: to }
       );
+      await recordFrame(tabId, { action, from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y } });
       return {
         ok: true,
         from,
@@ -547,7 +552,7 @@ async function computerTool(ctx, input) {
         if (input.perKey) await cdp.typeKeysReal(tabId, text, input.cadence);
         else await cdp.insertText(tabId, text);
       });
-      await recordFrame(tabId);
+      await recordFrame(tabId, { action: 'type' });
 
       const report = outcome.report;
       const field = (report && report.focusedAfter) || null;
@@ -589,7 +594,7 @@ async function computerTool(ctx, input) {
         // "?" reach a page the same way a named key does.
         cdp.pressKeySequenceLoose(tabId, input.text, input.repeat || 1)
       );
-      await recordFrame(tabId);
+      await recordFrame(tabId, { action: 'key' });
       return {
         ok: true,
         keys: input.text,
@@ -635,7 +640,7 @@ async function computerTool(ctx, input) {
           warnings.push('the wheel event moved nothing, so the nearest scrollable ancestor was scrolled directly');
         }
       }
-      await recordFrame(tabId);
+      await recordFrame(tabId, { action: 'scroll', point });
 
       const finalAfter = fallback && fallback.after ? { page: fallback.after.page, container: fallback.after.container } : after;
       const total = offsetDelta(before, finalAfter);
@@ -771,9 +776,26 @@ export const handlers = {
     await tabsLib.assertTabInSession(ctx.clientId, tabId);
 
     if (input.url === 'back' || input.url === 'forward') {
+      // history.back()/forward() through Runtime.evaluate returns before the
+      // navigation has even started, so the tool reported success while the
+      // old page was still on screen. Page.navigateToHistoryEntry is a CDP
+      // command the debugger waits on the way it waits on Page.navigate, and
+      // pairing it with the same load wait navigate-to-URL already uses closes
+      // that race.
       await perms.checkPermission({ tool: 'navigate', url: await activeUrl(tabId), toolUseId: ctx.toolUseId });
       await ensureAttached(tabId);
-      await cdp.evaluate(tabId, 'history.' + (input.url === 'back' ? 'back' : 'forward') + '()');
+
+      const history = await cdp.send(tabId, 'Page.getNavigationHistory');
+      const targetIndex = history.currentIndex + (input.url === 'back' ? -1 : 1);
+      const entry = history.entries[targetIndex];
+      if (!entry) {
+        throw new ToolError(
+          'nav_failed',
+          'Cannot find a ' + (input.url === 'back' ? 'previous' : 'next') + ' page in history for tab ' + tabId + '.',
+          { effects: 'none', retryable: false }
+        );
+      }
+      await cdp.send(tabId, 'Page.navigateToHistoryEntry', { entryId: entry.id });
       await tabsLib.waitForLoad(tabId, 15000);
     } else {
       let url = String(input.url);
@@ -811,7 +833,7 @@ export const handlers = {
     }
 
     shot.clearScalingContext(tabId);
-    await recordFrame(tabId);
+    await recordFrame(tabId, { action: 'navigate' });
     const tab = await chrome.tabs.get(tabId);
     return { tabId, url: tab.url, title: tab.title, status: tab.status };
   },
@@ -1065,8 +1087,8 @@ export const handlers = {
     await ensureAttached(tabId);
 
     if (action === 'start') {
-      const started = gif.start(tabId);
-      await gif.captureFrame(tabId);
+      const started = gif.start(tabId, input.options);
+      await gif.captureFrame(tabId, { action: 'screenshot' });
       return started;
     }
     if (action === 'frame') {

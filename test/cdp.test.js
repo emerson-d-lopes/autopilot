@@ -895,3 +895,96 @@ test('only the last move on a path waits for an acknowledgement', async () => {
   cdp.clearThrottleFlag(77);
   await cdp.detachAll();
 });
+
+// ---------------------------------------------------------------------------
+// P10: force on pressed mouse events, and the page-zoom chord refusal
+// ---------------------------------------------------------------------------
+
+/** Like scriptDebugger, but also records the params of every sendCommand call. */
+function scriptDebuggerWithParams() {
+  const calls = [];
+  globalThis.chrome.debugger = {
+    attach(_target, _version, done) {
+      chrome.runtime.lastError = null;
+      done();
+    },
+    detach(_target, done) {
+      chrome.runtime.lastError = null;
+      done();
+    },
+    sendCommand(_target, method, params, done) {
+      calls.push({ method, params });
+      chrome.runtime.lastError = null;
+      done({ ok: true });
+      chrome.runtime.lastError = null;
+    },
+    onEvent: { addListener() {}, removeListener() {} },
+    onDetach: { addListener() {} },
+  };
+  return calls;
+}
+
+test('a left click sends force on mousePressed but not on mouseReleased', async () => {
+  const calls = scriptDebuggerWithParams();
+  await cdp.attach(40);
+  await cdp.mouseClick(40, 10, 20, { hoverDelay: 0 });
+
+  const pressed = calls.find((c) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mousePressed');
+  const released = calls.find((c) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mouseReleased');
+  assert.equal(pressed.params.force, 0.5);
+  assert.equal(released.params.force, undefined, 'a release carries no pressure');
+  await cdp.detachAll();
+});
+
+test('a drag sends force on the press and on every move while the button is held', async () => {
+  const calls = scriptDebuggerWithParams();
+  await cdp.attach(41);
+  await cdp.mouseDragDwell(41, [0, 0], [30, 0], 0, {}, { steps: 2, stepDelay: 0, pressDwell: 0, releaseDwell: 0 });
+
+  const pressed = calls.find((c) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mousePressed');
+  const moves = calls.filter((c) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mouseMoved' && c.params.buttons === 1);
+  assert.equal(pressed.params.force, 0.5);
+  assert.ok(moves.length > 0, 'the drag produced at least one held-button move');
+  assert.ok(moves.every((m) => m.params.force === 0.5), 'every held-button move carries force');
+  await cdp.detachAll();
+});
+
+test('the initial hover-in move of a click carries no force (the button is not down yet)', async () => {
+  const calls = scriptDebuggerWithParams();
+  await cdp.attach(42);
+  await cdp.mouseClick(42, 5, 5, { hoverDelay: 0 });
+  const hoverMove = calls.find((c) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mouseMoved');
+  assert.equal(hoverMove.params.force, undefined);
+  await cdp.detachAll();
+});
+
+test('pressKey refuses ctrl+0, a page-zoom-reset chord', async () => {
+  scriptDebuggerWithParams();
+  await cdp.attach(43);
+  await assert.rejects(() => cdp.pressKey(43, 'ctrl+0'), /zoom/i);
+  await cdp.detachAll();
+});
+
+test('pressKeyLoose refuses ctrl+= and ctrl+-, which do not route through the named-key table', async () => {
+  scriptDebuggerWithParams();
+  await cdp.attach(44);
+  await assert.rejects(() => cdp.pressKeyLoose(44, 'ctrl+='), /zoom/i);
+  await assert.rejects(() => cdp.pressKeyLoose(44, 'ctrl+-'), /zoom/i);
+  await cdp.detachAll();
+});
+
+test('cmd+0 is refused the same way ctrl+0 is (mac chord)', async () => {
+  scriptDebuggerWithParams();
+  await cdp.attach(45);
+  await assert.rejects(() => cdp.pressKeyLoose(45, 'cmd+0'), /zoom/i);
+  await cdp.detachAll();
+});
+
+test('a plain 0, and ctrl held with an unrelated key, are not refused', async () => {
+  const calls = scriptDebuggerWithParams();
+  await cdp.attach(46);
+  await cdp.pressKey(46, '0');
+  await cdp.pressKey(46, 'ctrl+a');
+  assert.ok(calls.some((c) => c.method === 'Input.dispatchKeyEvent'), 'ordinary keys still dispatch');
+  await cdp.detachAll();
+});

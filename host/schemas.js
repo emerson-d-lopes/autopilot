@@ -126,7 +126,9 @@ export const TOOLS = [
       'Returns up to 20 ranked matches with refs. Cheaper than reading the whole tree when you know what you want. ' +
       'Searches interactive nodes first and widens to every node on its own when the query names a table cell, a ' +
       'heading or other static content, or when nothing interactive matched. The result says which scope was used ' +
-      'and how much of the page it covered. If nothing matches, fall back to read_page.',
+      'and how much of the page it covered. When the local match is weak, or semantic is set, this also asks the ' +
+      'connected model to pick refs out of the tree; those matches carry source: "model". If nothing matches, ' +
+      'fall back to read_page.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -135,6 +137,10 @@ export const TOOLS = [
         include_all: {
           type: 'boolean',
           description: 'Search all elements rather than only interactive ones. Use for text and headings.',
+        },
+        semantic: {
+          type: 'boolean',
+          description: 'Force a model call over the tree even when a local match scored well.',
         },
         browser: browserProp,
       },
@@ -404,6 +410,20 @@ export const TOOLS = [
           description: 'start_recording, stop_recording, export and clear are accepted as the same four actions.',
         },
         filename: { type: 'string', description: 'For stop: name of the gif file. Default recording-<timestamp>.gif.' },
+        options: {
+          type: 'object',
+          description:
+            'For start: overlay controls for the recording, all default true. quality is accepted for ' +
+            'compatibility and has no effect on this encoder.',
+          properties: {
+            showClickIndicators: { type: 'boolean', description: 'Ring at each click.' },
+            showDragPaths: { type: 'boolean', description: 'Line and end markers for each drag.' },
+            showActionLabels: { type: 'boolean', description: 'Small pill naming the action on each frame.' },
+            showProgressBar: { type: 'boolean', description: 'Thin bar along the bottom showing recording progress.' },
+            showWatermark: { type: 'boolean', description: 'Small text mark in the corner of each frame.' },
+            quality: { type: 'number' },
+          },
+        },
         tabId: tabIdProp,
         browser: browserProp,
       },

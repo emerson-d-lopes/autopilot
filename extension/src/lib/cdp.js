@@ -59,6 +59,32 @@ for (let d = 0; d <= 9; d++) {
   KEYS[String(d)] = { vk: 48 + d, code: 'Digit' + d, key: String(d), text: String(d) };
 }
 
+/**
+ * `ctrl`/`cmd` plus one of these is a browser page-zoom chord, not a page
+ * shortcut. Dispatching it silently rescales the whole tab, which drifts every
+ * coordinate computed from an earlier screenshot the same way a `zoom` crop
+ * does, so it is refused rather than sent (P10).
+ */
+const ZOOM_CHORD_KEYS = new Set(['+', '-', '=', '0']);
+
+/** True when a key combo is a ctrl/cmd page-zoom chord (P10). */
+function isZoomChord(combo) {
+  const parts = String(combo).toLowerCase().split('+').map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return false;
+  const keyName = parts[parts.length - 1];
+  const mods = parts.slice(0, -1);
+  const hasZoomMod = mods.some((m) => m === 'ctrl' || m === 'control' || m === 'cmd' || m === 'meta' || m === 'command');
+  return hasZoomMod && ZOOM_CHORD_KEYS.has(keyName);
+}
+
+function assertNotZoomChord(combo) {
+  if (isZoomChord(combo)) {
+    throw new CdpError(
+      'ctrl/cmd+' + String(combo).split('+').pop() + ' is a browser zoom chord and is refused. Use the zoom action instead.'
+    );
+  }
+}
+
 export class CdpError extends Error {}
 
 /** A command that did not answer within its timeout, before the wake and retry. */
@@ -860,6 +886,9 @@ async function movePointerTo(tabId, x, y, { modifiers = 0, buttons = 0, onMove, 
     const point = path[i];
     const before = Date.now();
     const params = { type: 'mouseMoved', x: point.x, y: point.y, modifiers, buttons };
+    // A move with a button held reports the same pressure a press on that
+    // button does (P10). A hover-in move has no button down and carries none.
+    if (buttons) params.force = 0.5;
     if (onMove) onMove(point.x, point.y);
     if (i === path.length - 1) {
       await sendInput(tabId, params);
@@ -907,6 +936,9 @@ export async function mouseClick(tabId, x, y, options = {}) {
       buttons: BUTTON_MASK[button] || 1,
       clickCount: i,
       modifiers,
+      // A plausible pressure value for handlers that read PointerEvent.force
+      // and otherwise see 0, the value a mouse rather than a touch reports.
+      force: 0.5,
     });
     await send(tabId, 'Input.dispatchMouseEvent', {
       type: 'mouseReleased',
@@ -979,6 +1011,7 @@ export async function typeKeys(tabId, text, cadence) {
  * ctrl+a from inserting the letter a.
  */
 export async function pressKey(tabId, combo) {
+  assertNotZoomChord(combo);
   const parts = String(combo).toLowerCase().split('+').map((p) => p.trim()).filter(Boolean);
   const keyName = parts.pop();
   const modifiers = modifiersToMask(parts.join('+'));
@@ -1401,6 +1434,7 @@ export async function typeKeysReal(tabId, text, cadence = TYPE_CADENCE_MS) {
  */
 export async function pressKeyLoose(tabId, combo) {
   const raw = String(combo);
+  assertNotZoomChord(raw);
   // Checked before splitting, so "+" itself is a key rather than an empty
   // combination.
   if ([...raw].length === 1 && !/[a-z0-9]/i.test(raw)) return pressPrintable(tabId, raw);
@@ -1451,6 +1485,7 @@ export async function mouseDragDwell(tabId, from, to, modifiers = 0, hooks = {},
     buttons: 1,
     clickCount: 1,
     modifiers,
+    force: 0.5,
   });
   await sleep(pressDwell, tabId);
 
@@ -1465,6 +1500,9 @@ export async function mouseDragDwell(tabId, from, to, modifiers = 0, hooks = {},
       button: 'left',
       buttons: 1,
       modifiers,
+      // The button is held for the whole drag, so this move reports the same
+      // pressure a mousePressed on the same button does.
+      force: 0.5,
     });
     await sleep(stepDelay, tabId);
   }
