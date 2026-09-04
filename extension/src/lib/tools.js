@@ -5,7 +5,7 @@ import * as shot from './screenshot.js';
 import * as perms from './permissions.js';
 import * as tabsLib from './tabs.js';
 import * as recorder from './recorder.js';
-import { scoreCandidates, shouldWiden, NARROW_SCOPE_RATIO, FIND_TREE_CHAR_BUDGET } from './find.js';
+import { scoreCandidates, shouldWiden, roleGapNote, NARROW_SCOPE_RATIO, FIND_TREE_CHAR_BUDGET } from './find.js';
 import * as gif from './gif.js';
 import * as shortcuts from './shortcuts.js';
 import { ToolError, withCode } from './errors.js';
@@ -1551,6 +1551,11 @@ export const handlers = {
       warnings.push('the tree was truncated at ' + tree.shownNodes + ' of ' + tree.nodes + ' nodes, so the match may be outside it');
     }
 
+    // The query named a role and nothing on the page has it, so the list below
+    // is a different kind of thing from the one asked for.
+    const roleGap = roleGapNote(input.query, matches);
+    if (roleGap) warnings.push(roleGap);
+
     return {
       query: input.query,
       matches,
@@ -1559,7 +1564,7 @@ export const handlers = {
       widened: Boolean(widenedBecause) || undefined,
       truncated: tree.truncated || false,
       effects: 'none',
-      evidence: { scope, searched: tree.nodes, widenedBecause: widenedBecause || undefined },
+      evidence: { scope, searched: tree.nodes, widenedBecause: widenedBecause || undefined, roleGap: roleGap || undefined },
       warnings,
     };
   },

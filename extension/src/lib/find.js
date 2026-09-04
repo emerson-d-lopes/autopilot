@@ -427,6 +427,41 @@ export function scoreCandidates(treeText, query, limit = 20) {
   }));
 }
 
+/** "textbox" to "textboxes", "button" to "buttons". */
+function plural(role, n) {
+  if (n === 1) return role;
+  return /(?:s|x|ch|sh)$/.test(role) ? role + 'es' : role + 's';
+}
+
+/**
+ * One line saying the query named a role that nothing on the page carried.
+ *
+ * Without it a query for "issue title field" answered with twenty buttons
+ * reads as twenty title fields, and the model acts on the first one. Returns
+ * null when the query named no role, when a match carries it, or when there
+ * was nothing to show, since the result already says so on its own.
+ */
+export function roleGapNote(query, matches) {
+  if (!matches || !matches.length) return null;
+  const tokens = tokenize(query);
+  const { strongRoles, strongWords } = roleHintsFor(tokens);
+  if (!strongRoles.size) return null;
+  if (matches.some((m) => strongRoles.has(m.role))) return null;
+
+  // The role the query asked for, named by the first strong word in it.
+  const asked = tokens.find((t) => strongWords.includes(t)) || strongWords[0];
+  const hint = ROLE_HINTS.find((h) => h.words.includes(asked));
+  const wanted = hint ? hint.roles[0] : asked;
+
+  const counts = new Map();
+  for (const m of matches) counts.set(m.role, (counts.get(m.role) || 0) + 1);
+  const shown = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([role, n]) => n + ' ' + plural(role, n));
+  return 'no ' + wanted + ' matched, ' + shown.join(' and ') + ' shown instead';
+}
+
 /**
  * Whether a search over the interactive filter should be repeated over the
  * whole tree (P5).

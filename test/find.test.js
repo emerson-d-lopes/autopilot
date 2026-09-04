@@ -14,6 +14,7 @@ import {
   parseModelFindResponse,
   validateModelMatches,
   quotedLabels,
+  roleGapNote,
   FIND_TREE_CHAR_BUDGET,
 } from '../extension/src/lib/find.js';
 
@@ -492,4 +493,40 @@ test('the nearest form name reaches the controls inside it', () => {
   ].join('\n');
   const matches = scoreCandidates(outside, 'create the new issue button', 20);
   assert.equal(matches[0].ref, 'ref_2', 'the button in the issue form outranks its twin');
+});
+
+// ---------------------------------------------------------------------------
+// The line that says the query named a role nothing on the page has
+// ---------------------------------------------------------------------------
+
+test('a query naming a role no candidate has is reported as such', () => {
+  const buttonsOnly = [
+    'button "Edit title" [ref_1]',
+    'button "Copy title" [ref_2]',
+    'button "Add a title" [ref_3]',
+  ].join('\n');
+  const matches = scoreCandidates(buttonsOnly, 'issue title field', 20);
+
+  assert.equal(matches.length, 3, 'the ranking still answers with what it has');
+  assert.equal(roleGapNote('issue title field', matches), 'no textbox matched, 3 buttons shown instead');
+});
+
+test('no line when the query named the role a match carries', () => {
+  const matches = scoreCandidates(NEW_ISSUE, 'issue title field', 20);
+  assert.equal(roleGapNote('issue title field', matches), null);
+});
+
+test('no line when the query named no role at all', () => {
+  const matches = scoreCandidates(NEW_ISSUE, 'markdown', 20);
+  assert.equal(roleGapNote('markdown', matches), null);
+});
+
+test('no line when nothing matched, since the empty result already says so', () => {
+  assert.equal(roleGapNote('issue title field', []), null);
+});
+
+test('the line counts each role it is showing instead', () => {
+  const mixed = ['link "Sign in" [ref_1] href=/in', 'link "Join" [ref_2] href=/join', 'button "Menu" [ref_3]'].join('\n');
+  const matches = scoreCandidates(mixed, 'sign in checkbox', 20);
+  assert.equal(roleGapNote('sign in checkbox', matches), 'no checkbox matched, 1 link shown instead');
 });

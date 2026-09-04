@@ -1335,3 +1335,26 @@ test('a resize never activates a tab or focuses a window', async () => {
     'no window was focused'
   );
 });
+
+// ---------------------------------------------------------------------------
+// The find result says when the query named a role the page does not have
+// ---------------------------------------------------------------------------
+
+test('find warns that no candidate carries the role the query named', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(`<!doctype html><body>
+    <button>Edit title</button><button>Copy title</button><button>Add a title</button>
+  </body>`);
+  wireSubmit(page, { behaviour: 'nothing' });
+  await ownTabGroup();
+
+  const result = await tools.execute('find', { tabId: 1, query: 'issue title field' }, { clientId: 'default' });
+
+  assert.equal(result.effects, 'none');
+  assert.ok(result.matches.length, 'the ranking still answers with what it has');
+  assert.ok(
+    result.warnings.some((w) => /^no textbox matched, \d+ buttons? shown instead$/.test(w)),
+    'warnings: ' + result.warnings.join(' | ')
+  );
+  assert.match(result.evidence.roleGap, /no textbox matched/);
+});
