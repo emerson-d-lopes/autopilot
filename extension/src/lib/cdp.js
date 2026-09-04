@@ -979,7 +979,10 @@ async function bytesToBase64(blob) {
 const RAF_TIMEOUT_MS = 1000;
 
 /** How many screencasts a capture will open before it accepts what it has. */
-const SETTLE_ATTEMPTS = 6;
+const SETTLE_ATTEMPTS = 8;
+
+/** Per-attempt ceiling, so one screencast lost to a re-attach is cheap. */
+const ATTEMPT_TIMEOUT_MS = 1200;
 
 /** Pause between two reads of the surface, so a paint in progress can finish. */
 const SETTLE_PAUSE_MS = 60;
@@ -1013,18 +1016,34 @@ async function settledScreencastFrame(tabId, { format, quality, maxWidth, maxHei
 
   const deadline = Date.now() + timeout;
   let previous = null;
+  let lastError = null;
   for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt++) {
+    // A screencast is stopped without waiting for the answer, so a stop from an
+    // earlier read can land after the next start. Stopping and waiting first
+    // means every start below begins from a known state.
+    await send(tabId, 'Page.stopScreencast', {}, { retry: false }).catch(() => {});
+
     const left = deadline - Date.now();
-    // The first attempt is the one allowed to fail loudly: a tab that produces
-    // no frame at all is the caller's problem, not a settling question.
-    if (left <= 0) return previous;
-    const frame = await screencastFrame(tabId, {
-      format,
-      quality,
-      maxWidth,
-      maxHeight,
-      timeout: attempt === 0 ? timeout : Math.min(left, timeout),
-    });
+    if (left <= 0) break;
+    let frame;
+    try {
+      frame = await screencastFrame(tabId, {
+        format,
+        quality,
+        maxWidth,
+        maxHeight,
+        timeout: Math.min(left, ATTEMPT_TIMEOUT_MS),
+      });
+    } catch (err) {
+      // A screencast started on an attachment the recovery ladder then replaced
+      // is simply gone, and no frame will ever arrive on it. Measured with
+      // test/fixtures/interferer loaded, which makes every call re-attach: the
+      // first screenshot after /spa then /index.html spent the whole timeout
+      // waiting for a frame from a dead screencast, every run. Short attempts
+      // make that cost one attempt rather than the whole budget.
+      lastError = err;
+      continue;
+    }
     if (previous !== null && frame === previous) return frame;
     previous = frame;
     // A redraw that has started but not finished reads as a half-painted
@@ -1032,7 +1051,16 @@ async function settledScreencastFrame(tabId, { format, quality, maxWidth, maxHei
     // pause gives the paint somewhere to finish before the next read.
     await sleep(SETTLE_PAUSE_MS, tabId);
   }
-  return previous;
+  if (previous !== null) return previous;
+  // A barren window is transient: measured with the interferer loaded, the call
+  // after a failure captured the same tab in about 250 ms every time. Raising it
+  // as timeout rather than a bare CdpError puts it under the read retry policy,
+  // which is what turns it back into a screenshot.
+  throw new ToolError('timeout', 'The hidden tab produced no frame within ' + timeout + 'ms.', {
+    cause: 'the compositor had nothing drawn for this tab and did not redraw while the capture waited',
+    hint: 'Take the screenshot again. If it repeats, reload the tab with navigate.',
+    effects: 'none',
+  });
 }
 
 
