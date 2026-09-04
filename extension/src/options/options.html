@@ -23,6 +23,13 @@
         font-family: var(--al-font-family-mono);
         font-size: var(--al-font-size-xs);
       }
+      .warn {
+        margin: var(--al-space-2) 0 0 var(--al-space-6);
+        color: var(--al-color-text-muted);
+        font-size: var(--al-font-size-xs);
+        border-left: 2px solid var(--al-color-border);
+        padding-left: var(--al-space-3);
+      }
       .grants li .meta {
         color: var(--al-color-text-faint);
         font-size: var(--al-font-size-xs);
@@ -67,8 +74,9 @@
       </label>
       <label class="choice">
         <input type="checkbox" id="confirmNotifications" />
-        <span>Ask in the browser<span class="desc">In confirm mode, show a Chrome notification with Allow and Deny and act on the answer. No tab is activated and no window is focused. Without it, confirmation goes through the client.</span></span>
+        <span>Ask in the browser<span class="desc">Off by default. In confirm mode, show a Chrome notification with Allow and Deny and act on the answer. No tab is activated and no window is focused. Without it, confirmation goes through the client.</span></span>
       </label>
+      <p class="warn">A confirmation toast appears at the bottom right of the screen over whatever is there, so a click meant for the window underneath can land on Allow and approve an irreversible write. Clicks in the first 1.5 seconds are ignored, an Allow that follows another click within half a second is ignored, and Allow counts once per prompt, which narrows the risk without removing it. Leave this off unless someone is at the machine to answer.</p>
     </div>
 
     <div class="section">

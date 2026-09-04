@@ -380,12 +380,74 @@ function notificationsAvailable() {
   return Boolean(globalThis.chrome && chrome.notifications && chrome.notifications.create);
 }
 
-if (notificationsAvailable() && chrome.notifications.onButtonClicked) {
-  chrome.notifications.onButtonClicked.addListener((id, index) => {
-    const pending = pendingNotifications.get(id);
-    if (!pending) return;
-    pending.settle(index === 0 ? 'allow' : 'deny');
-  });
+// A toast with an Allow button sits at the bottom right of the screen over
+// whatever is there, so a click meant for the window underneath lands on it.
+// While check 8 of the 0.1.34 pass ran, onButtonClicked fired with index 0 and
+// nobody had answered the prompt: at 2.6 s, 4.4 s, 8.4 s and 23.6 s in
+// different runs, and once as fourteen activations between 13.6 s and 18.1 s.
+// Each of those would have approved an irreversible write.
+//
+// Three rules narrow what counts as an answer. A click in the first 1500 ms is
+// too soon to be a decision about a toast the user has not read. An Allow that
+// follows another click within 500 ms is part of a burst, not an answer. And
+// Allow is accepted once for a notification, so the rest of a burst is dead
+// even if the first click of it got through.
+
+/** A click before this much of the notification's life has passed is ignored. */
+export const ASK_SETTLE_MS = 1500;
+
+/** An Allow needs this long with no other click in front of it. */
+export const ASK_CLICK_GAP_MS = 500;
+
+/** Applies the three rules to one click. Returns the answer, or null to ignore it. */
+export function judgeNotificationClick(pending, index, now) {
+  const previousClick = pending.lastClickAt;
+  pending.lastClickAt = now;
+  if (now - pending.shownAt < pending.settleMs) {
+    pending.ignored += 1;
+    return null;
+  }
+  if (index !== 0) return 'deny';
+  if (previousClick !== null && now - previousClick < pending.clickGapMs) {
+    pending.ignored += 1;
+    return null;
+  }
+  if (pending.allowed) {
+    pending.ignored += 1;
+    return null;
+  }
+  pending.allowed = true;
+  return 'allow';
+}
+
+/**
+ * Wires the notification listeners, once per notifications API object.
+ *
+ * Called at module load and again before each ask, since the API is missing in
+ * a worker that starts before the permission is granted, and a test replaces
+ * the object after this module was imported.
+ */
+let listenersOn = null;
+function installNotificationListeners() {
+  if (!notificationsAvailable()) return;
+  if (listenersOn === chrome.notifications) return;
+  listenersOn = chrome.notifications;
+  if (chrome.notifications.onButtonClicked) {
+    chrome.notifications.onButtonClicked.addListener((id, index) => {
+      const pending = pendingNotifications.get(id);
+      if (!pending) return;
+      const answer = judgeNotificationClick(pending, index, Date.now());
+      if (answer) pending.settle(answer);
+    });
+  }
+  if (chrome.notifications.onClicked) {
+    // A click on the toast body is not an answer, and it is recorded so an
+    // Allow right behind it reads as the second click of a burst.
+    chrome.notifications.onClicked.addListener((id) => {
+      const pending = pendingNotifications.get(id);
+      if (pending) pending.lastClickAt = Date.now();
+    });
+  }
   if (chrome.notifications.onClosed) {
     chrome.notifications.onClosed.addListener((id) => {
       const pending = pendingNotifications.get(id);
@@ -393,6 +455,8 @@ if (notificationsAvailable() && chrome.notifications.onButtonClicked) {
     });
   }
 }
+
+installNotificationListeners();
 
 /**
  * How long an unanswered notification is waited for.
@@ -412,9 +476,16 @@ export const ASK_IN_BROWSER_TIMEOUT_MS = 60000;
  * caller falls back to the client-side token flow rather than failing, and
  * `timeout` when nobody answered inside the deadline.
  */
-export async function askInBrowser({ control, origin, timeoutMs = ASK_IN_BROWSER_TIMEOUT_MS } = {}) {
+export async function askInBrowser({
+  control,
+  origin,
+  timeoutMs = ASK_IN_BROWSER_TIMEOUT_MS,
+  settleMs = ASK_SETTLE_MS,
+  clickGapMs = ASK_CLICK_GAP_MS,
+} = {}) {
   const policy = await loadPolicy();
   if (!policy.confirmNotifications || !notificationsAvailable()) return 'unavailable';
+  installNotificationListeners();
 
   const id = 'chrome-mcp-confirm-' + Math.random().toString(36).slice(2, 10);
   return new Promise((resolve) => {
@@ -432,7 +503,15 @@ export async function askInBrowser({ control, origin, timeoutMs = ASK_IN_BROWSER
       resolve(answer);
     };
     const timer = setTimeout(() => settle('timeout'), timeoutMs);
-    pendingNotifications.set(id, { settle });
+    pendingNotifications.set(id, {
+      settle,
+      shownAt: Date.now(),
+      lastClickAt: null,
+      allowed: false,
+      ignored: 0,
+      settleMs,
+      clickGapMs,
+    });
 
     try {
       chrome.notifications.create(

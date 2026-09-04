@@ -452,3 +452,157 @@ test('an unanswered confirmation comes back naming the browser, not the renderer
   });
   delete globalThis.chrome.notifications;
 });
+
+// ---------------------------------------------------------------------------
+// A stray click on the toast is not an answer
+// ---------------------------------------------------------------------------
+//
+// From the 0.1.34 pass, check 8: onButtonClicked fired with index 0 while
+// nobody was answering the prompt, at 2.6 s, 4.4 s, 8.4 s and 23.6 s in
+// different runs, and once as fourteen activations between 13.6 s and 18.1 s.
+// The toast sits at the bottom right over whatever is on screen, so a click
+// meant for the window underneath lands on Allow.
+
+/** A notifications API whose buttons can be pressed from the test. */
+function clickableNotifications() {
+  const created = [];
+  const cleared = [];
+  const buttonListeners = [];
+  const bodyListeners = [];
+  globalThis.chrome.runtime.getURL = (path) => 'chrome-extension://test/' + path;
+  globalThis.chrome.notifications = {
+    create(id, options, done) {
+      created.push({ id, options });
+      chrome.runtime.lastError = null;
+      if (done) done(id);
+    },
+    clear(id) {
+      cleared.push(id);
+    },
+    onButtonClicked: { addListener: (fn) => buttonListeners.push(fn) },
+    onClicked: { addListener: (fn) => bodyListeners.push(fn) },
+    onClosed: { addListener() {} },
+  };
+  return {
+    created,
+    cleared,
+    press: (index) => buttonListeners.forEach((fn) => fn(created[created.length - 1].id, index)),
+    body: () => bodyListeners.forEach((fn) => fn(created[created.length - 1].id)),
+  };
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('the settle window and the burst gap are the values the fix names', () => {
+  assert.equal(perms.ASK_SETTLE_MS, 1500);
+  assert.equal(perms.ASK_CLICK_GAP_MS, 500);
+});
+
+test('an Allow inside the settle window is ignored and the ask keeps waiting', async () => {
+  const notifications = clickableNotifications();
+  await withPolicy({ mode: perms.MODES.CONFIRM, confirmNotifications: true }, async () => {
+    const pending = perms.askInBrowser({
+      control: 'Send',
+      origin: 'https://example.com',
+      timeoutMs: 200,
+      settleMs: 80,
+      clickGapMs: 20,
+    });
+    await wait(5);
+    notifications.press(0);
+    notifications.press(0);
+    assert.equal(await pending, 'timeout', 'the clicks landed before the toast could have been read');
+  });
+  delete globalThis.chrome.notifications;
+});
+
+test('an Allow right behind another click is a burst, not an answer', async () => {
+  const notifications = clickableNotifications();
+  await withPolicy({ mode: perms.MODES.CONFIRM, confirmNotifications: true }, async () => {
+    const pending = perms.askInBrowser({
+      control: 'Send',
+      origin: 'https://example.com',
+      timeoutMs: 250,
+      settleMs: 60,
+      clickGapMs: 200,
+    });
+    // The shape check 8 recorded: fourteen activations in a row, the first of
+    // them inside the settle window. Each later one lands inside the gap the
+    // one before it opened, so none is read as an answer.
+    await wait(10);
+    for (let i = 0; i < 14; i += 1) notifications.press(0);
+    await wait(30);
+    notifications.press(0);
+    assert.equal(await pending, 'timeout', 'a run of clicks is one stray click, not fourteen answers');
+  });
+  delete globalThis.chrome.notifications;
+});
+
+test('a click on the toast body makes the Allow behind it read as a burst', async () => {
+  const notifications = clickableNotifications();
+  await withPolicy({ mode: perms.MODES.CONFIRM, confirmNotifications: true }, async () => {
+    const pending = perms.askInBrowser({
+      control: 'Send',
+      origin: 'https://example.com',
+      timeoutMs: 200,
+      settleMs: 30,
+      clickGapMs: 120,
+    });
+    await wait(45);
+    notifications.body();
+    notifications.press(0);
+    assert.equal(await pending, 'timeout');
+  });
+  delete globalThis.chrome.notifications;
+});
+
+test('a deliberate Allow, spaced and after the settle window, is taken', async () => {
+  const notifications = clickableNotifications();
+  await withPolicy({ mode: perms.MODES.CONFIRM, confirmNotifications: true }, async () => {
+    const pending = perms.askInBrowser({
+      control: 'Send',
+      origin: 'https://example.com',
+      timeoutMs: 400,
+      settleMs: 30,
+      clickGapMs: 20,
+    });
+    await wait(60);
+    notifications.press(0);
+    assert.equal(await pending, 'allow');
+    assert.deepEqual(notifications.cleared, [notifications.created[0].id], 'and the toast is closed behind it');
+  });
+  delete globalThis.chrome.notifications;
+});
+
+test('Deny is taken after the settle window without waiting out the gap', async () => {
+  const notifications = clickableNotifications();
+  await withPolicy({ mode: perms.MODES.CONFIRM, confirmNotifications: true }, async () => {
+    const pending = perms.askInBrowser({
+      control: 'Send',
+      origin: 'https://example.com',
+      timeoutMs: 400,
+      settleMs: 30,
+      clickGapMs: 5000,
+    });
+    await wait(45);
+    notifications.press(1);
+    assert.equal(await pending, 'deny', 'refusing is the safe direction, so it is never held back');
+  });
+  delete globalThis.chrome.notifications;
+});
+
+test('Allow counts once per prompt, so the rest of a burst cannot re-approve', () => {
+  const pending = { shownAt: 0, lastClickAt: null, allowed: false, ignored: 0, settleMs: 1500, clickGapMs: 500 };
+  assert.equal(perms.judgeNotificationClick(pending, 0, 2000), 'allow');
+  assert.equal(perms.judgeNotificationClick(pending, 0, 4000), null, 'a second Allow on the same prompt is dead');
+  assert.equal(perms.judgeNotificationClick(pending, 0, 9000), null);
+  assert.equal(pending.ignored, 2);
+});
+
+test('asking in the browser is off in the shipped policy', async () => {
+  resetStorage();
+  perms.invalidatePolicyCache();
+  const policy = await perms.loadPolicy();
+  assert.equal(policy.confirmNotifications, false, 'a toast over the screen is not on unless it is turned on');
+  perms.invalidatePolicyCache();
+});
