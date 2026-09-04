@@ -8,7 +8,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { JOURNAL_DIR, formatWrite } from '../host/journal.js';
+import { JOURNAL_DIR, LEGACY_JOURNAL_DIR, formatWrite } from '../host/journal.js';
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -19,14 +19,18 @@ const tail = flag('--tail') ? Number(flag('--tail')) : null;
 const date = flag('--date') || new Date().toISOString().slice(0, 10);
 const json = args.includes('--json');
 
-if (!existsSync(JOURNAL_DIR)) {
+// The journal moved from chrome-mcp-logs to autopilot-logs with the rename, so
+// the old directory is still read and anything found there is still printed.
+const dirs = [...new Set([JOURNAL_DIR, LEGACY_JOURNAL_DIR])].filter((dir) => existsSync(dir));
+
+if (!dirs.length) {
   console.log('No journal yet at ' + JOURNAL_DIR + '. It is written as tools run.');
   process.exit(0);
 }
 
 /** The write rows in a day's JSONL, for the writes column (W5). */
-function writesFor(browser) {
-  const file = join(JOURNAL_DIR, browser, date + '.jsonl');
+function writesFor(dir, browser) {
+  const file = join(dir, browser, date + '.jsonl');
   if (!existsSync(file)) return [];
   return readFileSync(file, 'utf8')
     .split('\n')
@@ -42,30 +46,32 @@ function writesFor(browser) {
 }
 
 let printed = 0;
-for (const browser of readdirSync(JOURNAL_DIR)) {
-  const file = join(JOURNAL_DIR, browser, date + (json ? '.jsonl' : '.md'));
-  if (!existsSync(file)) continue;
-  let lines = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim());
-  if (tail) lines = lines.slice(-tail);
-  console.log('# ' + browser + '  (' + file + ')');
-  console.log(lines.join('\n'));
+for (const dir of dirs) {
+  for (const browser of readdirSync(dir)) {
+    const file = join(dir, browser, date + (json ? '.jsonl' : '.md'));
+    if (!existsSync(file)) continue;
+    let lines = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim());
+    if (tail) lines = lines.slice(-tail);
+    console.log('# ' + browser + '  (' + file + ')');
+    console.log(lines.join('\n'));
 
-  // Writes are the entries worth finding without reading the whole timeline, so
-  // they get a column of their own under it.
-  if (!json) {
-    const writes = writesFor(browser);
-    if (writes.length) {
-      console.log();
-      console.log('## Writes');
-      for (const entry of writes) {
-        console.log(
-          '- ' + entry.at.slice(11, 19) + '  ' + entry.tool.padEnd(9) + '  ' + formatWrite(entry.write) +
-            (entry.callId ? '  id=' + entry.callId : '')
-        );
+    // Writes are the entries worth finding without reading the whole timeline, so
+    // they get a column of their own under it.
+    if (!json) {
+      const writes = writesFor(dir, browser);
+      if (writes.length) {
+        console.log();
+        console.log('## Writes');
+        for (const entry of writes) {
+          console.log(
+            '- ' + entry.at.slice(11, 19) + '  ' + entry.tool.padEnd(9) + '  ' + formatWrite(entry.write) +
+              (entry.callId ? '  id=' + entry.callId : '')
+          );
+        }
       }
     }
+    console.log();
+    printed++;
   }
-  console.log();
-  printed++;
 }
-if (!printed) console.log('No entries for ' + date + ' under ' + JOURNAL_DIR + '.');
+if (!printed) console.log('No entries for ' + date + ' under ' + dirs.join(' or ') + '.');

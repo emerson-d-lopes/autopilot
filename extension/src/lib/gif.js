@@ -199,7 +199,7 @@ export function drawProgressBar(ctx, frameIndex, totalFrames, canvasWidth, canva
  * carry a dark stroke behind them, so the mark has contrast against whatever
  * the page put underneath it.
  */
-export function drawWatermark(ctx, canvasWidth, canvasHeight, text = 'chrome-mcp') {
+export function drawWatermark(ctx, canvasWidth, canvasHeight, text = 'Autopilot') {
   const x = canvasWidth - 6;
   const y = canvasHeight - 8;
   ctx.save();

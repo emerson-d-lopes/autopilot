@@ -61,5 +61,5 @@ export function loadPage(html, options = {}) {
       listener(message, {}, resolve);
     });
 
-  return { window, call, dom, agent: window.__chromeMcpAgent };
+  return { window, call, dom, agent: window.__autopilotAgent };
 }

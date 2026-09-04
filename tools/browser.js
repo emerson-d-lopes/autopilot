@@ -92,7 +92,7 @@ const args = [
 // The DevTools port is always on for this profile. It is a throwaway automation
 // browser, and the test suite needs it to seed extension storage, which only the
 // extension itself can write.
-args.unshift('--remote-debugging-port=' + (process.env.CHROME_MCP_DEVTOOLS_PORT || '9333'));
+args.unshift('--remote-debugging-port=' + (process.env.AUTOPILOT_DEVTOOLS_PORT || '9333'));
 // Chrome's own log, for the times the browser exits with nothing driving it.
 args.unshift('--enable-logging', '--v=0', '--log-file=' + join(ROOT, '.browsers', 'chrome.log'));
 

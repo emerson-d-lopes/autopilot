@@ -176,7 +176,7 @@ test('the watermark is drawn bottom right', () => {
   drawWatermark(ctx, 480, 270);
   const text = calls.find((c) => c[0] === 'fillText');
   assert.ok(text);
-  assert.equal(text[1], 'chrome-mcp');
+  assert.equal(text[1], 'Autopilot');
   assert.ok(text[2] < 480, 'x sits inside the canvas');
   assert.ok(text[3] < 270, 'y sits inside the canvas');
 });
@@ -187,7 +187,7 @@ test('the watermark strokes the glyphs so it reads on a light page', () => {
   const stroke = calls.find((c) => c[0] === 'strokeText');
   const fill = calls.find((c) => c[0] === 'fillText');
   assert.ok(stroke, 'the mark carries a stroke behind the fill');
-  assert.equal(stroke[1], 'chrome-mcp');
+  assert.equal(stroke[1], 'Autopilot');
   assert.deepEqual([stroke[2], stroke[3]], [fill[2], fill[3]], 'stroke and fill sit at the same point');
   const strokeIndex = calls.indexOf(stroke);
   const fillIndex = calls.indexOf(fill);

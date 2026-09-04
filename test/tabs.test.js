@@ -63,11 +63,11 @@ test('setGroupStatus marks the group title and colour, and only when the state c
   assert.equal(await tabs.setGroupStatus('c9', 'working'), true);
   assert.equal(await tabs.setGroupStatus('c9', 'working'), true);
   assert.equal(updates.length, 1, 'a repeated state is not re-applied');
-  assert.deepEqual(updates[0], [42, { title: '\u23F3 chrome-mcp', color: 'blue' }]);
+  assert.deepEqual(updates[0], [42, { title: '\u23F3 Autopilot', color: 'blue' }]);
   await tabs.setGroupStatus('c9', 'done');
-  assert.deepEqual(updates[1][1], { title: '\u2705 chrome-mcp', color: 'green' });
+  assert.deepEqual(updates[1][1], { title: '\u2705 Autopilot', color: 'green' });
   await tabs.setGroupStatus('c9', 'error');
-  assert.deepEqual(updates[2][1], { title: '\u274C chrome-mcp', color: 'red' });
+  assert.deepEqual(updates[2][1], { title: '\u274C Autopilot', color: 'red' });
   assert.equal(await tabs.setGroupStatus('nobody', 'done'), false, 'no group, nothing to mark');
 });
 
@@ -336,7 +336,7 @@ function scriptBrowser({ openTabs = [11, 12], groupId = 77 } = {}) {
     TAB_GROUP_ID_NONE: -1,
     async get(id) {
       if (![...grouped.values()].includes(id)) throw new Error('no group ' + id);
-      return { id, title: 'chrome-mcp' };
+      return { id, title: 'Autopilot' };
     },
     async update() {},
   };

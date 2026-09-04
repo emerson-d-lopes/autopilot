@@ -8,8 +8,8 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 
-const REGISTRY_DIR = mkdtempSync(join(tmpdir(), 'chrome-mcp-registry-'));
-process.env.CHROME_MCP_REGISTRY_DIR = REGISTRY_DIR;
+const REGISTRY_DIR = mkdtempSync(join(tmpdir(), 'autopilot-registry-'));
+process.env.AUTOPILOT_REGISTRY_DIR = REGISTRY_DIR;
 
 const {
   selectBrowser,

@@ -166,7 +166,7 @@ async function loadClient() {
       return {
         source: 'tools/mcp-client.js',
         async open() {
-          live = await mod.createClient({ browser: process.env.CHROME_MCP_BROWSER_ID });
+          live = await mod.createClient({ browser: process.env.AUTOPILOT_BROWSER_ID });
         },
         call: (tool, args) => live.call(tool, args),
         close: () => {
@@ -325,7 +325,7 @@ async function main() {
     console.log('this probe reads what a real page saw, so it has nothing to measure without one');
     return;
   }
-  process.env.CHROME_MCP_BROWSER_ID = bridge.id;
+  process.env.AUTOPILOT_BROWSER_ID = bridge.id;
 
   const cadenceArg = argValue('cadence');
   const cadence = cadenceArg === undefined ? undefined : Number(cadenceArg);

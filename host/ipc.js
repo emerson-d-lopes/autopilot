@@ -9,8 +9,9 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
+import { envVar } from './env.js';
 
-const NAME = 'chrome-mcp';
+const NAME = 'autopilot';
 
 /**
  * Pipe for one browser.
@@ -21,7 +22,8 @@ const NAME = 'chrome-mcp';
  */
 export function socketPathFor(browserId) {
   // Lets a test run a private bridge without colliding with the user's live one.
-  if (process.env.CHROME_MCP_SOCKET) return process.env.CHROME_MCP_SOCKET;
+  const override = envVar('SOCKET');
+  if (override) return override;
   const suffix = String(browserId || 'default').replace(/[^\w-]/g, '').slice(0, 32);
   if (process.platform === 'win32') {
     const user = (process.env.USERNAME || 'user').replace(/[^\w-]/g, '');

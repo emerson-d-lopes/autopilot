@@ -305,7 +305,7 @@ export const MATCHERS = [
   [/no observable change|nothing changed within/i, 'no_effect'],
   [/needs confirmation|confirmation token|confirm(ation)? required/i, 'confirmation_required'],
   [/browsers are connected, so this session needs to pick one|several browsers match/i, 'profile_ambiguous'],
-  [/No connected browser matches|chrome-mcp bridge is not running|no browser$/i, 'browser_unknown'],
+  [/No connected browser matches|Autopilot bridge is not running|no browser$/i, 'browser_unknown'],
   [/Connection to the browser bridge closed|Failed to reach the browser|extension is not attached to the bridge|Chrome extension is not connected/i, 'host_lost'],
   [/did not respond within|timed out|timeout/i, 'timeout'],
   [/exceeds maximum allowed tokens|exceeds the .*limit|output was truncated/i, 'output_truncated'],

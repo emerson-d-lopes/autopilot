@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Lantern",
-  "version": "0.1.39",
+  "name": "Autopilot",
+  "version": "0.2.0",
   "description": "Drives this browser for a local MCP server, in the background, in its own tab group.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -42,7 +42,7 @@
     }
   ],
   "action": {
-    "default_title": "Lantern",
+    "default_title": "Autopilot",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png"
@@ -60,5 +60,5 @@
     "128": "icons/icon-128.png"
   },
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqVYKh6ICluvElpDcZrBBzAW0lhEw9pm5d6QRezah18Kqnuastn+4cCPV9z3bF0/tzcbvNxsFq73FulZsGtWE0ymHkDviffkzqb7Mk7um/TBe7Keo8ngoOkpvC/4xFzJFEiMNJJ+1asXeYo+IC28IOIdH7k3IclY5i757/+Kk/MZY6DeeKvO5013NLYrUXcXRJSMIWXyyxOdjms11ZJFvn1/ZWw9fHCIXGZjCjcbk7FHnp/6V3LrXBN9kjC6qL1edL1BKqrWx7p6U2RQCGGOAceeE+89vHIHDYlSTLtiSvqaBLKCgHlhSB+gm7xwgSrJFz+iCcyk44kJfqjHFNBe+vQIDAQAB",
-  "short_name": "Lantern"
+  "short_name": "Autopilot"
 }

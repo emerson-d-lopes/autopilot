@@ -24,7 +24,7 @@ stub.tabGroups = {
   TAB_GROUP_ID_NONE: -1,
   async get(id) {
     if (id !== 7) throw new Error('no group ' + id);
-    return { id: 7, title: 'chrome-mcp' };
+    return { id: 7, title: 'Autopilot' };
   },
   async update() {},
 };

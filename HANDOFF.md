@@ -4,7 +4,7 @@ Copy everything below the line into a fresh agent session.
 
 ---
 
-You are picking up `C:\Users\edfl\workspace\chrome-mcp`, an MCP server that drives a real Chrome through a Manifest V3 extension and the Chrome DevTools Protocol. It was built to match Claude Code's own browser integration, Claude in Chrome. Read `README.md`, `STATUS.md`, `SPEC.md` and `COMPARISON.md` first. `STATUS.md` has the tool-by-tool parity table, the test coverage map, the bugs found and fixed, what was verified on the user's own Chrome on 2026-09-03, and the browser behaviours that shape the implementation.
+You are picking up `C:\Users\edfl\workspace\autopilot`, an MCP server that drives a real Chrome through a Manifest V3 extension and the Chrome DevTools Protocol. It was built to match Claude Code's own browser integration, Claude in Chrome. Read `README.md`, `STATUS.md`, `SPEC.md` and `COMPARISON.md` first. `STATUS.md` has the tool-by-tool parity table, the test coverage map, the bugs found and fixed, what was verified on the user's own Chrome on 2026-09-03, and the browser behaviours that shape the implementation.
 
 26 tools, 29 test files. Everything is staged in git, nothing is committed. Do not commit or push without being asked.
 
@@ -34,13 +34,13 @@ A hand-driven audit on real sites (Wikipedia, GitHub, the-internet.herokuapp.com
 
 ## Branding and pages
 
-The extension is named Lantern (the package and the MCP server stay `chrome-mcp`). Icon: `extension/src/ui/icon.svg`, rendered by `npm run icons` with the development browser up. Pages: `src/popup` (state, sessions, recent calls, reveal a session, close empty tabs) and `src/options` (policy, hosts, shortcuts, grants). Styles come from the user's Ash Lumen design system, copied from `C:Usersedflworkspaceash-lumendist` into `extension/src/ui`, plus `lantern.css` for layout and the two animations (a breathing status dot while working, a short rise on list rows). Keep it minimal: no colour except the semantic tokens.
+The extension, the npm package `autopilot-chrome` and the MCP server `autopilot` are all named Autopilot. Icon: `extension/src/ui/icon.svg`, rendered by `npm run icons` with the development browser up. Pages: `src/popup` (state, sessions, recent calls, reveal a session, close empty tabs) and `src/options` (policy, hosts, shortcuts, grants). Styles come from the user's Ash Lumen design system, copied from `C:Usersedflworkspaceash-lumendist` into `extension/src/ui`, plus `autopilot.css` for layout and the two animations (a breathing status dot while working, a short rise on list rows). Keep it minimal: no colour except the semantic tokens.
 
 ## Working rules the user set
 
 - Test against reality. Every bug in `STATUS.md` was found by running something. When you claim something works, say what you ran. When something is untested, say so.
 - Do not run the full suite as a gate during development. It takes about five minutes with a browser up and the user considers it a blocker. Run the file you are touching, and verify behaviour by driving a browser directly. `npm run test:fast` skips the recovery tests.
-- **Bump `version` in `extension/manifest.json` with every change under `extension/`.** The user asked for this. `npm run doctor` prints the running version, so it is how a reload is proven. Current: 0.1.28.
+- **Bump `version` in `extension/manifest.json` with every change under `extension/`.** The user asked for this. `npm run doctor` prints the running version, so it is how a reload is proven. Current: 0.2.0.
 - The user's Chrome runs whatever extension build was last reloaded there. After editing extension code, either ask the user to reload it at `chrome://extensions` (then confirm with `npm run doctor`, which prints the extension version) or verify in the development browser.
 - The agent works in the background. Tabs open unselected in the user's current window, and nothing activates a tab or focuses a window, ever. Hidden tabs are woken through CDP (`cdp.wake`) and captured by `captureHidden` in `cdp.js`, which reads the renderer where the build allows it and falls back to a screencast frame. Both are deliberate differences from Claude in Chrome, at the user's request.
 - The user's Chrome does not yet have the `wait_for_page` fix (it was made after the second reload). Ask for a reload before relying on click-then-wait-then-read batches there.

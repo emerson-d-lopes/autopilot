@@ -14,7 +14,9 @@ import { JOURNAL_DIR, retentionDays, redactionOn, journalSize } from '../host/jo
 import { retryTable, CODE_NAMES } from '../host/errors.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const HOST_NAME = 'com.chromemcp.host';
+const HOST_NAME = 'com.autopilot.host';
+/** The id registrations used before the project was renamed. */
+const LEGACY_HOST_NAME = 'com.chromemcp.host';
 
 const results = [];
 function check(label, ok, detail) {
@@ -22,7 +24,7 @@ function check(label, ok, detail) {
   console.log((ok ? '  ok   ' : '  FAIL ') + label + (detail ? '\n         ' + detail : ''));
 }
 
-console.log('chrome-mcp doctor\n');
+console.log('Autopilot doctor\n');
 
 // 1. Extension identity: fixed by the public key in the committed manifest.
 const manifestPath = join(ROOT, 'extension', 'manifest.json');
@@ -85,6 +87,20 @@ if (process.platform === 'win32') {
     }
   }
   if (!any) check('any browser registered', false, 'run: npm run install-host');
+
+  // A profile that still carries the pre-rename id spawns the old wrapper for
+  // an extension that no longer asks for it. npm run install-host clears it.
+  for (const [name, key] of keys) {
+    try {
+      execFileSync('reg', ['query', key.replace(HOST_NAME, LEGACY_HOST_NAME), '/ve'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      console.log('  note   ' + name + ' still carries the old com.chromemcp.host entry. Run: npm run install-host');
+    } catch {
+      /* the old id is gone for this browser, which is what should be true */
+    }
+  }
 } else {
   const home = os.homedir();
   const dirs =
@@ -196,7 +212,7 @@ for (const row of retryTable()) {
 console.log('  ' + CODE_NAMES.length + ' error codes in the catalogue: ' + CODE_NAMES.join(', '));
 
 // The journal is written by the native host, which Chrome spawns, so
-// CHROME_MCP_JOURNAL_REDACT and CHROME_MCP_JOURNAL_DAYS have to be in the
+// AUTOPILOT_JOURNAL_REDACT and AUTOPILOT_JOURNAL_DAYS have to be in the
 // browser's environment. Reading them here printed this shell's answer as if it
 // were the host's, which was wrong whenever the two differed. Both are printed,
 // each labelled with the process it came from.
@@ -215,8 +231,8 @@ if (!hostJournals.length) {
   );
 }
 console.log(
-  '  this shell: retention ' + retentionDays() + ' days (CHROME_MCP_JOURNAL_DAYS), ' +
-    'redaction ' + (redactionOn() ? 'on' : 'off') + ' (CHROME_MCP_JOURNAL_REDACT). ' +
+  '  this shell: retention ' + retentionDays() + ' days (AUTOPILOT_JOURNAL_DAYS), ' +
+    'redaction ' + (redactionOn() ? 'on' : 'off') + ' (AUTOPILOT_JOURNAL_REDACT). ' +
     'The host writes the journal, so its line above is the one that counts.'
 );
 
@@ -225,7 +241,7 @@ console.log('');
 if (!failed.length) {
   console.log('Action journal: ' + JOURNAL_DIR + '  (npm run log)');
   console.log('All checks passed. Add the server with:');
-  console.log('  claude mcp add chrome-mcp -- node "' + join(ROOT, 'host', 'mcp-server.js') + '"');
+  console.log('  claude mcp add autopilot -- node "' + join(ROOT, 'host', 'mcp-server.js') + '"');
 } else {
   console.log(failed.length + ' check(s) failed. Fix the first one listed above.');
   process.exitCode = 1;

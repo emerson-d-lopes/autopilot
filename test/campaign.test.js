@@ -21,7 +21,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const bridge = await anyBridge();
 const bridgeUp = Boolean(bridge);
-if (bridge) process.env.CHROME_MCP_BROWSER_ID = bridge.id;
+if (bridge) process.env.AUTOPILOT_BROWSER_ID = bridge.id;
 const options = bridgeUp ? {} : { skip: 'no browser connected (run: npm run browser)' };
 
 // --- MCP client, same shape as test/live.test.js ------------------------------

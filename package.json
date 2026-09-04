@@ -1,6 +1,6 @@
 {
-  "name": "chrome-mcp",
-  "version": "0.1.0",
+  "name": "autopilot-chrome",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "MCP server driving Chrome through a Manifest V3 extension and the DevTools Protocol",
@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "bin": {
-    "chrome-mcp": "./host/mcp-server.js"
+    "autopilot-chrome": "./host/mcp-server.js"
   },
   "scripts": {
     "keygen": "node tools/gen-key.js",

@@ -15,10 +15,10 @@ import { ToolError, isToolError } from './lib/errors.js';
 
 const { detachAll } = cdp;
 
-const HOST_NAME = 'com.chromemcp.host';
+const HOST_NAME = 'com.autopilot.host';
 const BROWSER_ID_KEY = 'browserId';
 const BROWSER_LABEL_KEY = 'browserLabel';
-const KEEPALIVE_ALARM = 'chrome-mcp-keepalive';
+const KEEPALIVE_ALARM = 'autopilot-keepalive';
 const OFFSCREEN_PATH = 'offscreen.html';
 
 // A tab that cannot be attached is replaced rather than lost. The tab
@@ -149,7 +149,7 @@ function connect() {
     const err = chrome.runtime.lastError;
     port = null;
     generation++;
-    console.log('[chrome-mcp] native port disconnected', err ? err.message : '');
+    console.log('[autopilot] native port disconnected', err ? err.message : '');
     scheduleReconnect();
   });
 
@@ -259,7 +259,7 @@ function respond(message, bornAt, tool) {
     } catch {
       /* the replacement port is not up yet either */
     }
-    console.log('[chrome-mcp] dropped a stale tool_response for', tool);
+    console.log('[autopilot] dropped a stale tool_response for', tool);
     return false;
   }
   post(message);

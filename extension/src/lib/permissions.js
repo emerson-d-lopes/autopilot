@@ -487,7 +487,7 @@ export async function askInBrowser({
   if (!policy.confirmNotifications || !notificationsAvailable()) return 'unavailable';
   installNotificationListeners();
 
-  const id = 'chrome-mcp-confirm-' + Math.random().toString(36).slice(2, 10);
+  const id = 'autopilot-confirm-' + Math.random().toString(36).slice(2, 10);
   return new Promise((resolve) => {
     let done = false;
     const settle = (answer) => {

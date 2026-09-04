@@ -6,7 +6,7 @@
 // a bare "node" in the wrapper resolves in a terminal and fails under Chrome.
 // The absolute interpreter path is baked in at install time instead.
 
-import { writeFileSync, mkdirSync, existsSync, readFileSync, chmodSync, realpathSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, chmodSync, realpathSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,9 @@ import { extensionIdFromDer } from './gen-key.js';
 import os from 'node:os';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const HOST_NAME = 'com.chromemcp.host';
+const HOST_NAME = 'com.autopilot.host';
+/** The id used before the project was renamed. Registrations under it are removed. */
+const LEGACY_HOST_NAME = 'com.chromemcp.host';
 const UNINSTALL = process.argv.includes('--uninstall');
 
 /**
@@ -38,10 +40,10 @@ function browserTargets() {
   if (process.platform === 'win32') {
     const local = process.env.LOCALAPPDATA || join(home, 'AppData', 'Local');
     return [
-      { name: 'Chrome', dir: join(local, 'Google', 'Chrome', 'User Data'), reg: 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\' + HOST_NAME },
-      { name: 'Edge', dir: join(local, 'Microsoft', 'Edge', 'User Data'), reg: 'HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\' + HOST_NAME },
-      { name: 'Brave', dir: join(local, 'BraveSoftware', 'Brave-Browser', 'User Data'), reg: 'HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\' + HOST_NAME },
-      { name: 'Vivaldi', dir: join(local, 'Vivaldi', 'User Data'), reg: 'HKCU\\Software\\Vivaldi\\NativeMessagingHosts\\' + HOST_NAME },
+      { name: 'Chrome', dir: join(local, 'Google', 'Chrome', 'User Data'), regRoot: 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\' },
+      { name: 'Edge', dir: join(local, 'Microsoft', 'Edge', 'User Data'), regRoot: 'HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\' },
+      { name: 'Brave', dir: join(local, 'BraveSoftware', 'Brave-Browser', 'User Data'), regRoot: 'HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\' },
+      { name: 'Vivaldi', dir: join(local, 'Vivaldi', 'User Data'), regRoot: 'HKCU\\Software\\Vivaldi\\NativeMessagingHosts\\' },
     ];
   }
   if (process.platform === 'darwin') {
@@ -112,7 +114,7 @@ function writeWrapper() {
 function hostManifest(wrapperPath, extId) {
   return {
     name: HOST_NAME,
-    description: 'chrome-mcp bridge',
+    description: 'Autopilot bridge',
     path: wrapperPath,
     type: 'stdio',
     allowed_origins: ['chrome-extension://' + extId + '/'],
@@ -132,15 +134,56 @@ function regDelete(key) {
   }
 }
 
+/**
+ * Removes the registrations made under the pre-rename host id.
+ *
+ * A browser that still carries com.chromemcp.host would keep spawning the old
+ * wrapper for an extension that no longer asks for it, so the entry is cleared
+ * whether installing or uninstalling.
+ *
+ * @returns {string[]} what was removed, for the install output
+ */
+function removeLegacyRegistrations() {
+  const removed = [];
+  for (const target of browserTargets()) {
+    if (process.platform === 'win32') {
+      if (regDelete(target.regRoot + LEGACY_HOST_NAME)) removed.push(target.name + ' registry entry');
+    } else if (target.manifestDir) {
+      const file = join(target.manifestDir, LEGACY_HOST_NAME + '.json');
+      if (existsSync(file)) {
+        try {
+          rmSync(file);
+          removed.push(file);
+        } catch {
+          /* left in place, and the new id is registered regardless */
+        }
+      }
+    }
+  }
+  const stale = join(ROOT, 'host', LEGACY_HOST_NAME + '.json');
+  if (existsSync(stale)) {
+    try {
+      rmSync(stale);
+      removed.push(stale);
+    } catch {
+      /* left in place */
+    }
+  }
+  return removed;
+}
+
 function main() {
   const extId = extensionId();
   const manifestPath = join(ROOT, 'host', HOST_NAME + '.json');
 
+  const legacy = removeLegacyRegistrations();
+
   if (UNINSTALL) {
-    let removed = 0;
+    let removed = legacy.length;
+    for (const entry of legacy) console.log('removed the old com.chromemcp.host registration: ' + entry);
     for (const target of browserTargets()) {
       if (process.platform === 'win32') {
-        if (regDelete(target.reg)) {
+        if (regDelete(target.regRoot + HOST_NAME)) {
           console.log('removed ' + target.name + ' registry entry');
           removed++;
         }
@@ -167,12 +210,19 @@ function main() {
   console.log('host manifest: ' + manifestPath);
   console.log('');
 
+  if (legacy.length) {
+    console.log('The project was renamed from chrome-mcp to Autopilot, so the old');
+    console.log('com.chromemcp.host registration was removed:');
+    for (const entry of legacy) console.log('  ' + entry);
+    console.log('');
+  }
+
   let installed = 0;
   for (const target of browserTargets()) {
     if (!existsSync(target.dir)) continue;
     try {
       if (process.platform === 'win32') {
-        regAdd(target.reg, manifestPath);
+        regAdd(target.regRoot + HOST_NAME, manifestPath);
       } else {
         mkdirSync(target.manifestDir, { recursive: true });
         writeFileSync(join(target.manifestDir, HOST_NAME + '.json'), JSON.stringify(manifest, null, 2) + '\n');
@@ -194,7 +244,7 @@ function main() {
   console.log('  1. Load ' + join(ROOT, 'extension') + ' at chrome://extensions with Developer mode on.');
   console.log('  2. Restart Chrome so it reads the host registration.');
   console.log('  3. Add the MCP server:');
-  console.log('     claude mcp add chrome-mcp -- node "' + join(ROOT, 'host', 'mcp-server.js') + '"');
+  console.log('     claude mcp add autopilot -- node "' + join(ROOT, 'host', 'mcp-server.js') + '"');
 }
 
 main();

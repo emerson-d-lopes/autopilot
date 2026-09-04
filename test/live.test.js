@@ -25,7 +25,7 @@ const FIXTURE = readFileSync(join(ROOT, 'test', 'fixtures', 'page.html'), 'utf8'
 // happen to be running rather than on the code.
 const bridge = await anyBridge();
 const bridgeUp = Boolean(bridge);
-if (bridge) process.env.CHROME_MCP_BROWSER_ID = bridge.id;
+if (bridge) process.env.AUTOPILOT_BROWSER_ID = bridge.id;
 const options = bridgeUp ? {} : { skip: 'no browser connected (run: npm run browser)' };
 
 // --- MCP client --------------------------------------------------------------
@@ -105,8 +105,8 @@ function refFor(text, pattern) {
 // --- suite -------------------------------------------------------------------
 
 // Upload fixtures are generated so the suite carries no binary files around.
-const uploadDir = mkdtempSync(join(tmpdir(), 'chrome-mcp-uploads-'));
-writeFileSync(join(uploadDir, 'note.txt'), 'hello from chrome-mcp');
+const uploadDir = mkdtempSync(join(tmpdir(), 'autopilot-uploads-'));
+writeFileSync(join(uploadDir, 'note.txt'), 'hello from Autopilot');
 writeFileSync(join(uploadDir, 'second.txt'), 'second file');
 
 test('live browser automation', options, async (t) => {
@@ -634,7 +634,7 @@ test('live browser automation', options, async (t) => {
 
     // It must not reach the model either, as a tree node or in a screenshot.
     const all = await callTool(mcp, 'read_page', { tabId, filter: 'all', max_chars: 80000 });
-    assert.equal(/chrome_mcp_cursor|__cmcp_/.test(all.text), false, 'absent from the tree');
+    assert.equal(/autopilot_cursor|__ap_/.test(all.text), false, 'absent from the tree');
 
     // A capture hides the cursor and must put it back afterwards.
     await callTool(mcp, 'computer', { tabId, action: 'screenshot' });
@@ -744,7 +744,7 @@ test('live browser automation', options, async (t) => {
     // window Chrome quit and took the bridge with it.
     const solo = spawn(process.execPath, [join(ROOT, 'host', 'mcp-server.js')], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, CHROME_MCP_CLIENT_ID: 'solo-window-' + Date.now() },
+      env: { ...process.env, AUTOPILOT_CLIENT_ID: 'solo-window-' + Date.now() },
     });
     const soloMcp = mcpClient(solo);
     await soloMcp.request('initialize', {

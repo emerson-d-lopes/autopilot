@@ -1,5 +1,7 @@
 # Plan: make chrome-mcp better and more reliable than Claude in Chrome, with profiles and real writes
 
+The project was named chrome-mcp and its extension was named Lantern when this plan was written. It is now Autopilot. The references below keep the old name because they describe the build that was measured.
+
 Written 2026-09-03 from [REPORT.md](REPORT.md) and [IMPROVEMENTS.md](IMPROVEMENTS.md). Item codes (R1, S1, F1, D1, P1) refer to IMPROVEMENTS.md, which carries the evidence, the file and function for each change, and the effort estimate. Items introduced by this plan carry new codes (C for the call contract, M for multi-profile, W for write actions).
 
 Three requirements shape it.

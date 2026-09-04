@@ -11,8 +11,8 @@ import { ResponseQueue, MAX_ENTRIES, TTL_MS } from '../host/response-queue.js';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 function testPath(name) {
-  if (process.platform === 'win32') return '\\\\.\\pipe\\chrome-mcp-test-' + name + '-' + process.pid;
-  return path.join(os.tmpdir(), 'chrome-mcp-test-' + name + '-' + process.pid + '.sock');
+  if (process.platform === 'win32') return '\\\\.\\pipe\\autopilot-test-' + name + '-' + process.pid;
+  return path.join(os.tmpdir(), 'autopilot-test-' + name + '-' + process.pid + '.sock');
 }
 
 test('round trips a message between host and client', async () => {
@@ -194,8 +194,8 @@ async function startHost(name, extraEnv = {}) {
   const child = spawn(process.execPath, [join(ROOT, 'host', 'native-host.js')], {
     env: {
       ...process.env,
-      CHROME_MCP_SOCKET: socket,
-      CHROME_MCP_LOG_DIR: path.join(os.tmpdir(), 'chrome-mcp-ipc-test-journal'),
+      AUTOPILOT_SOCKET: socket,
+      AUTOPILOT_LOG_DIR: path.join(os.tmpdir(), 'autopilot-ipc-test-journal'),
       ...extraEnv,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -326,15 +326,15 @@ test('the correlation id travels to the extension unchanged', async (t) => {
 // ---------------------------------------------------------------------------
 //
 // The journal is written by the host, which Chrome spawns, so
-// CHROME_MCP_JOURNAL_REDACT has to be in the browser's environment. A tool
+// AUTOPILOT_JOURNAL_REDACT has to be in the browser's environment. A tool
 // reading it in its own process printed the wrong answer whenever the two
 // differed, so the state travels with browser_status.
 
 test('browser_status carries the journal settings of the process that writes it', async (t) => {
-  assert.notEqual(process.env.CHROME_MCP_JOURNAL_REDACT, '1', 'this shell is not redacting');
+  assert.notEqual(process.env.AUTOPILOT_JOURNAL_REDACT, '1', 'this shell is not redacting');
   const host = await startHost('journalstate', {
-    CHROME_MCP_JOURNAL_REDACT: '1',
-    CHROME_MCP_JOURNAL_DAYS: '3',
+    AUTOPILOT_JOURNAL_REDACT: '1',
+    AUTOPILOT_JOURNAL_DAYS: '3',
   });
   t.after(host.stop);
 

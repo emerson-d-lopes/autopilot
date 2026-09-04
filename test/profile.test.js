@@ -124,7 +124,7 @@ test('walkToBrowser survives a cycle in a stale process table', () => {
 // A real Local State file, written to disk, so the JSON path and the shape of
 // info_cache are both exercised rather than mocked away.
 function withLocalState(body, run) {
-  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-profile-'));
+  const dir = mkdtempSync(join(tmpdir(), 'autopilot-profile-'));
   try {
     writeFileSync(join(dir, 'Local State'), JSON.stringify(body));
     return run(dir);
@@ -163,7 +163,7 @@ test('readLocalState reports nulls for a profile that was never signed in', () =
 });
 
 test('readLocalState gives a reason rather than throwing on a missing file', () => {
-  const state = readLocalState(join(tmpdir(), 'chrome-mcp-does-not-exist-' + Date.now()), 'Default', {
+  const state = readLocalState(join(tmpdir(), 'autopilot-does-not-exist-' + Date.now()), 'Default', {
     platform: process.platform,
   });
   assert.equal(state.name, null);
@@ -178,7 +178,7 @@ test('readLocalState gives a reason for an unknown profile directory', () => {
 });
 
 test('readLocalState gives a reason for malformed json', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-profile-'));
+  const dir = mkdtempSync(join(tmpdir(), 'autopilot-profile-'));
   try {
     writeFileSync(join(dir, 'Local State'), '{not json');
     const state = readLocalState(dir, 'Default', { platform: process.platform });

@@ -1,5 +1,7 @@
 # Claude in Chrome and chrome-mcp measured side by side
 
+The project was named chrome-mcp and its extension was named Lantern when this campaign ran. It is now Autopilot. The references below keep the old name because they describe the build that was measured.
+
 Test campaign run 2026-09-03. Evidence files are in [`evidence/`](evidence/) and every claim below cites one by name and section.
 
 ## 1. Summary
