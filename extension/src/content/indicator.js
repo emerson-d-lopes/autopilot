@@ -34,6 +34,11 @@
     'background:#1f2126;color:#f2ede7;font:500 12px/1.3 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;' +
     'padding:6px 12px;border-radius:999px;box-shadow:0 2px 10px rgba(0,0,0,.35);' +
     'pointer-events:none;}' +
+    // `display:flex` above is an author rule, and it beats the user agent's
+    // `[hidden]{display:none}`, so setting `.hidden = true` on the pill left an
+    // empty dark capsule sitting at the bottom of every tab being driven. The
+    // three elements that are toggled through `hidden` say so themselves.
+    '.ind-pill[hidden],.ind-pill-btn[hidden],.ind-stop-wrap[hidden]{display:none;}' +
     '.ind-pill-btn{pointer-events:auto;cursor:pointer;border:none;border-radius:999px;' +
     'background:#d97757;color:#1f2126;font:600 12px/1 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;' +
     'padding:5px 10px;}' +

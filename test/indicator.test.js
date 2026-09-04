@@ -88,6 +88,22 @@ test('pulsing draws the border on and shows the Stop button', () => {
   assert.equal(ind(shadow, '.ind-pill').hidden, true);
 });
 
+// The `hidden` property is only half the answer. The pill's own rule sets
+// `display:flex`, an author declaration that beats the user agent's
+// `[hidden]{display:none}`, so a pill marked hidden still painted: a driven tab
+// carried an empty dark capsule at the bottom of the viewport, visible in a
+// screenshot taken through the DevTools port. Every element the indicator
+// toggles through `hidden` has to say so in its own stylesheet.
+test('the stylesheet makes hidden actually hide the toggled elements', () => {
+  const { dispatch, shadow } = loadPage();
+  dispatch({ type: 'INDICATOR_STATE', state: 'pulsing' });
+  const css = [...shadow.querySelectorAll('style')].map((s) => s.textContent).join('');
+  for (const selector of ['.ind-pill[hidden]', '.ind-pill-btn[hidden]', '.ind-stop-wrap[hidden]']) {
+    assert.ok(css.includes(selector), selector + ' needs a display:none rule of its own');
+  }
+  assert.match(css, /\[hidden\][^{]*\{display:none;?\}/);
+});
+
 test('static shows the driving pill with no button, and no border or Stop', () => {
   const { dispatch, shadow } = loadPage();
   dispatch({ type: 'INDICATOR_STATE', state: 'static' });
