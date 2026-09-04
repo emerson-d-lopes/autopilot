@@ -429,7 +429,10 @@ async function armConsoleReads(actions) {
 export async function runBatch(actions, ctx) {
   const invalid = await validateBatch(actions, ctx);
   if (invalid) throw invalid;
-  await armConsoleReads(actions);
+  // F4 before D1: a stopped session arms nothing. Arming attaches the debugger
+  // and turns Runtime on, which is an action the user asked to stop. runSteps
+  // reports the refusal on the first step, so the result keeps its batch shape.
+  if (!tabsLib.isStopped(ctx.clientId)) await armConsoleReads(actions);
 
   const results = [];
   let lastCreatedTab = null;
