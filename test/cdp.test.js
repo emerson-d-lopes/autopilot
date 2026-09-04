@@ -1422,9 +1422,13 @@ test('a page that cannot take the hide is still captured', async () => {
   }
 });
 
-test('both capture paths hide through hideForCapture', () => {
+test('every capture path hides through hideForCapture', () => {
   const source = readFileSync(new URL('../extension/src/lib/tools.js', import.meta.url), 'utf8');
   const hides = source.split('\n').filter((line) => line.includes('HIDE_FOR_TOOL_USE'));
   assert.equal(hides.length, 1, 'the hide is sent from one place: ' + hides.join(' | '));
-  assert.equal((source.match(/hideForCapture\(tabId, '/g) || []).length, 2, 'screenshot and zoom both use it');
+  assert.equal(
+    (source.match(/hideForCapture\(tabId, '/g) || []).length,
+    3,
+    'screenshot, zoom and the before-write capture all use it'
+  );
 });

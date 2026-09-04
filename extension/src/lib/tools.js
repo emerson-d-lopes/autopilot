@@ -423,15 +423,26 @@ let writeShotSeq = 0;
  * Goes through the same capture path a screenshot does, so a hidden tab is
  * served by a screencast frame and nothing is activated. A capture that fails
  * costs the id, never the action.
+ *
+ * The acting indicator is hidden first, through the same hideForCapture the
+ * screenshot and zoom paths use. Open bug 3 from the 0.1.34 pass: this image is
+ * what a confirmation_required tells the caller to show the user before
+ * approving an irreversible action, and it carried the orange border and the
+ * red Stop capsule, which are browser chrome the page does not have.
  */
 async function captureBeforeWrite(tabId) {
   try {
-    const image = await shot.capture(tabId, { maxTokens: 800 });
-    writeShotSeq += 1;
-    const id = 'write_' + writeShotSeq + '_' + Math.random().toString(36).slice(2, 6);
-    writeShots.set(id, { tabId, at: Date.now(), image });
-    while (writeShots.size > 10) writeShots.delete(writeShots.keys().next().value);
-    return id;
+    await hideForCapture(tabId, 'screenshot');
+    try {
+      const image = await shot.capture(tabId, { maxTokens: 800 });
+      writeShotSeq += 1;
+      const id = 'write_' + writeShotSeq + '_' + Math.random().toString(36).slice(2, 6);
+      writeShots.set(id, { tabId, at: Date.now(), image });
+      while (writeShots.size > 10) writeShots.delete(writeShots.keys().next().value);
+      return id;
+    } finally {
+      pageCall(tabId, { type: 'SHOW_AFTER_TOOL_USE' }).catch(() => {});
+    }
   } catch {
     return null;
   }

@@ -1358,3 +1358,81 @@ test('find warns that no candidate carries the role the query named', async () =
   );
   assert.match(result.evidence.roleGap, /no textbox matched/);
 });
+
+// ---------------------------------------------------------------------------
+// Open bug 3 from the 0.1.34 pass: the before-write capture
+// ---------------------------------------------------------------------------
+//
+// The image a confirmation_required tells the caller to show the user carried
+// the orange border and the red Stop capsule, which the ordinary screenshot
+// path and the gif frames both hide.
+
+test('the capture a confirmation points at is taken with the acting indicator hidden', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const perms = await import('../extension/src/lib/permissions.js');
+  const page = loadPage(THREAD);
+  const wired = wireSubmit(page);
+  wired.editor.textContent = 'ship it';
+  await ownTabGroup();
+  perms.invalidatePolicyCache();
+  await perms.savePolicy({ mode: perms.MODES.CONFIRM, confirmNotifications: false });
+
+  const ref = await refOf(page, 'Send');
+
+  const seen = [];
+  const inner = globalThis.chrome.tabs.sendMessage;
+  globalThis.chrome.tabs.sendMessage = (id, message) => {
+    seen.push(message && message.type);
+    return inner(id, message);
+  };
+  try {
+    await assert.rejects(
+      () => tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' }),
+      (err) => {
+        assert.equal(err.code, 'confirmation_required');
+        return true;
+      }
+    );
+  } finally {
+    globalThis.chrome.tabs.sendMessage = inner;
+  }
+
+  const hide = seen.indexOf('HIDE_FOR_TOOL_USE');
+  const show = seen.indexOf('SHOW_AFTER_TOOL_USE');
+  assert.ok(hide >= 0, 'the capture hid the indicator first: ' + seen.join(', '));
+  assert.ok(show > hide, 'and put it back after: ' + seen.join(', '));
+  assert.equal(wired.thread.textContent, '', 'nothing was clicked');
+
+  await perms.savePolicy({ mode: perms.MODES.ALLOW });
+  perms.invalidatePolicyCache();
+});
+
+test('a click that needs no confirmation sends no hide of its own', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const perms = await import('../extension/src/lib/permissions.js');
+  const page = loadPage('<!doctype html><body><button id="b">Open</button><div id="thread"></div></body>');
+  const wired = wireSubmit(page, { behaviour: 'nothing' });
+  wired.aim(page.window.document.getElementById('b'));
+  await ownTabGroup();
+  perms.invalidatePolicyCache();
+  perms.forgetActedOrigin('default');
+
+  const ref = await refOf(page, 'Open');
+
+  const seen = [];
+  const inner = globalThis.chrome.tabs.sendMessage;
+  globalThis.chrome.tabs.sendMessage = (id, message) => {
+    seen.push(message && message.type);
+    return inner(id, message);
+  };
+  try {
+    await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+  } finally {
+    globalThis.chrome.tabs.sendMessage = inner;
+  }
+
+  assert.ok(
+    !seen.includes('HIDE_FOR_TOOL_USE'),
+    'the hide belongs to a capture, and no capture was taken: ' + seen.join(', ')
+  );
+});
