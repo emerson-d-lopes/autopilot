@@ -757,7 +757,7 @@ Recorded, not run. These need a signed-in profile, and this pass never drove `bz
 | 14c. Third-pass 1, 2, 3, 5, 6, 8 | Pass |
 | 15. campaign.test.js, bench, bench:screenshot | Pass |
 
-Twelve of the thirteen fixes hold, two of them after a fix landed during this pass. The session restore does not hold.
+Twelve of the thirteen fixes hold, two of them after a fix landed during this pass.
 
 Commits made during the pass, on `plan/integration2`:
 
