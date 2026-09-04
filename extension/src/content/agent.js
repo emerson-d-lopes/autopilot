@@ -660,18 +660,110 @@
     return { x, y };
   }
 
+  /** The element the browser reports at a point, inside the element's own root. */
+  function hitAt(el, x, y) {
+    const doc = el.ownerDocument || document;
+    // Hit test inside the element's own root. document.elementFromPoint
+    // retargets a shadow descendant to its host, which would report every
+    // element inside a shadow root as covered by its own host.
+    const root = el.getRootNode();
+    const from = root.elementFromPoint ? root : doc;
+    if (!from || typeof from.elementFromPoint !== 'function') return undefined;
+    return from.elementFromPoint(x, y);
+  }
+
+  /** True when what the browser found at the point is the same click target. */
+  function sameTarget(el, box, hit) {
+    if (!hit) return false;
+    if (hit === el || hit === box) return true;
+    // A descendant or an ancestor at the same point is the same target as far
+    // as the click is concerned, and so is the label standing in for a hidden
+    // control.
+    if (el.contains(hit) || hit.contains(el)) return true;
+    if (box !== el && (box.contains(hit) || hit.contains(box))) return true;
+    // So is a shadow host whose tree the element lives in.
+    for (let host = el.getRootNode().host; host; host = host.getRootNode && host.getRootNode().host) {
+      if (hit === host || hit.contains(host)) return true;
+    }
+    if (hit.shadowRoot && hit.shadowRoot.contains(el)) return true;
+    return false;
+  }
+
+  /**
+   * The point on an element a click should be aimed at.
+   *
+   * The centre of a bounding box is not on the element when the element is
+   * inline and its text wraps: a two-line link in a narrow menu has a box whose
+   * middle falls past the end of the shorter line, and the click landed on
+   * whatever sat there. Every line box is a rect of its own, so the rects are
+   * walked in order, each is clipped to the viewport, and the first whose centre
+   * the browser reports as this element is the one used. Where hit testing is
+   * unavailable the first rect inside the viewport is used, which is still a
+   * line box rather than the gap between two of them.
+   */
+  function clickPointFor(el) {
+    const box = hitBoxFor(el);
+    const rect = box.getBoundingClientRect();
+    const fallback = {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      source: 'box',
+      rects: 1,
+    };
+
+    let rects = [];
+    try {
+      rects = typeof box.getClientRects === 'function' ? Array.from(box.getClientRects()) : [];
+    } catch {
+      rects = [];
+    }
+    if (rects.length < 2) return fallback;
+
+    const doc = el.ownerDocument || document;
+    const vw = doc.documentElement.clientWidth || 0;
+    const vh = doc.documentElement.clientHeight || 0;
+    let first = null;
+
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (!(r.width > 0 && r.height > 0)) continue;
+      if (r.bottom <= 0 || r.right <= 0 || (vw && r.left >= vw) || (vh && r.top >= vh)) continue;
+      // The centre of the part of the line box that is on screen, so a rect
+      // running off the edge still gives a point that can receive input.
+      const left = Math.max(r.left, 0);
+      const top = Math.max(r.top, 0);
+      const right = vw ? Math.min(r.right, vw) : r.right;
+      const bottom = vh ? Math.min(r.bottom, vh) : r.bottom;
+      const point = { x: (left + right) / 2, y: (top + bottom) / 2, source: 'rect', rect: i, rects: rects.length };
+      if (!first) first = point;
+      try {
+        const hit = hitAt(el, point.x, point.y);
+        if (hit === undefined) return { ...point, verified: false };
+        if (sameTarget(el, box, hit)) return { ...point, verified: true };
+      } catch {
+        return { ...point, verified: false };
+      }
+    }
+
+    return first || fallback;
+  }
+
   function geometryOf(el) {
     const rect = hitBoxFor(el).getBoundingClientRect();
     const off = offsetFor(el);
     const left = rect.left + off.x;
     const top = rect.top + off.y;
+    const point = clickPointFor(el);
     return {
       x: Math.round(left),
       y: Math.round(top),
       width: Math.round(rect.width),
       height: Math.round(rect.height),
-      centerX: Math.round(left + rect.width / 2),
-      centerY: Math.round(top + rect.height / 2),
+      centerX: Math.round(point.x + off.x),
+      centerY: Math.round(point.y + off.y),
+      // Which line box the click point came from, when the element has more
+      // than one and the box centre would have missed it.
+      pointSource: point.source === 'rect' ? 'clientRect' : undefined,
       inViewport: inViewport({
         left,
         top,
@@ -1211,12 +1303,13 @@
   }
 
   /**
-   * Names whatever sits on top of an element's centre point.
+   * Names whatever sits on top of the point a click would land on.
    *
    * A click is dispatched at a coordinate, so if a banner or modal covers the
    * target the browser delivers the click to the banner. Reporting success in
    * that case is worse than failing: the caller believes it pressed one thing
-   * and pressed another.
+   * and pressed another. The point is the one clickPointFor chose, so the check
+   * and the click judge the same pixel.
    */
   function describeOccluder(el) {
     try {
@@ -1224,29 +1317,14 @@
       const rect = box.getBoundingClientRect();
       if (rect.width <= 0 && rect.height <= 0) return null;
       const doc = el.ownerDocument || document;
-      const x = rect.left + rect.width / 2;
-      const y = rect.top + rect.height / 2;
+      const point = clickPointFor(el);
+      const x = point.x;
+      const y = point.y;
       if (x < 0 || y < 0 || x > (doc.documentElement.clientWidth || 0) || y > (doc.documentElement.clientHeight || 0)) {
         return null;
       }
-      // Hit test inside the element's own root. document.elementFromPoint
-      // retargets a shadow descendant to its host, which would report every
-      // element inside a shadow root as covered by its own host.
-      const root = el.getRootNode();
-      const hit = (root.elementFromPoint ? root : doc).elementFromPoint(x, y);
-      if (!hit || hit === el || hit === box) return null;
-
-      // A descendant or an ancestor at the same point is the same target as far
-      // as the click is concerned, and so is the label standing in for a hidden
-      // control.
-      if (el.contains(hit) || hit.contains(el)) return null;
-      if (box !== el && (box.contains(hit) || hit.contains(box))) return null;
-
-      // So is a shadow host whose tree the element lives in.
-      for (let host = el.getRootNode().host; host; host = host.getRootNode && host.getRootNode().host) {
-        if (hit === host || hit.contains(host)) return null;
-      }
-      if (hit.shadowRoot && hit.shadowRoot.contains(el)) return null;
+      const hit = hitAt(el, x, y);
+      if (!hit || sameTarget(el, box, hit)) return null;
       const role = roleOf(hit);
       const name = accessibleName(hit, role, true);
       return (name ? role + ' "' + name + '"' : role + ' <' + hit.tagName.toLowerCase() + '>');
@@ -2250,6 +2328,8 @@
     findUndoControl,
     composerFor,
     scrollableAncestor,
+    clickPointFor,
+    geometryOf,
     // D2: the per-session overlay host id, and the shared shadow root the
     // indicator overlay (indicator.js, a separate content script sharing this
     // isolated world) draws its own elements into.
