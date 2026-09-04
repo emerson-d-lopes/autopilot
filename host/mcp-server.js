@@ -779,6 +779,7 @@ function formatResult(toolName, result, args = {}) {
       textBlock(
         'screenshot ' + result.image.width + 'x' + result.image.height +
           ' (~' + result.image.estimatedTokens + ' tokens) id: ' + imageId +
+          (result.image.note ? '\n' + result.image.note : '') +
           (result.pageState ? '\nurl: ' + result.pageState.url + '\nscroll: ' + result.pageState.scrollY : '') +
           saved
       )

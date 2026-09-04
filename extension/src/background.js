@@ -7,6 +7,7 @@ import * as shortcuts from './lib/shortcuts.js';
 import * as tabsLib from './lib/tabs.js';
 import * as recorder from './lib/recorder.js';
 import * as cdp from './lib/cdp.js';
+import * as shot from './lib/screenshot.js';
 import { PermissionDenied } from './lib/permissions.js';
 import * as sessions from './lib/sessions.js';
 import { ToolError, isToolError } from './lib/errors.js';
@@ -383,6 +384,18 @@ export async function runBatch(actions, ctx) {
 
   const results = [];
   let lastCreatedTab = null;
+  // R4. Coordinates inside a batch were written against the screenshot the
+  // caller had before it ran, so a capture mid-batch holds its new frame until
+  // the batch is over rather than remapping them against an unseen image.
+  shot.beginBatch();
+  try {
+    return await runSteps(actions, ctx, results, lastCreatedTab);
+  } finally {
+    shot.endBatch();
+  }
+}
+
+async function runSteps(actions, ctx, results, lastCreatedTab) {
   for (let i = 0; i < actions.length; i++) {
     const { lineNo, command } = actions[i];
     const { name, input } = normalizeCall(actions[i].name, actions[i].input);

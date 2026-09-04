@@ -15,7 +15,22 @@ export const MAX_TARGET_PX = 1568;
 // screenshot costs about the same whatever shape the window is.
 export const DEFAULT_MAX_TOKENS = 1600;
 
-/** @type {Map<number, {cssToImage: number, imageWidth: number, imageHeight: number, cssWidth: number, cssHeight: number, capturedAt: number}>} */
+// S1. JPEG at 75 is what the model actually reads: a PNG of a text-heavy page is
+// several times the bytes for no visible difference, and every byte crosses a
+// 384KB-chunked native messaging pipe and lands in the transcript.
+export const DEFAULT_FORMAT = 'jpeg';
+export const DEFAULT_QUALITY = 0.75;
+
+/** Hard ceiling on the base64 payload, in characters. About 1MB of bytes. */
+export const MAX_BASE64_CHARS = 1398100;
+export const QUALITY_STEP = 0.05;
+export const MIN_QUALITY = 0.1;
+
+/** Bounds on the documented `scale` argument (S3). */
+export const MIN_SCALE = 0.1;
+export const MAX_SCALE = 1;
+
+/** @type {Map<number, object>} */
 const scalingContext = new Map();
 
 export function estimateTokens(width, height) {
@@ -45,10 +60,204 @@ export function targetDimensions(width, height, { maxTokens } = {}) {
   };
 }
 
-async function decode(base64) {
-  const response = await fetch('data:image/png;base64,' + base64);
+export function clampScale(scale) {
+  if (typeof scale !== 'number' || !Number.isFinite(scale)) return 1;
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
+}
+
+/**
+ * Normalizes a quality argument. The schema documents 0 to 1, which is what the
+ * canvas encoder wants, and a caller writing 75 instead of 0.75 gets what it
+ * meant rather than a silent clamp to the floor.
+ */
+export function normalizeQuality(quality, fallback = DEFAULT_QUALITY) {
+  if (typeof quality !== 'number' || !Number.isFinite(quality)) return fallback;
+  const value = quality > 1 ? quality / 100 : quality;
+  return Math.min(1, Math.max(MIN_QUALITY, value));
+}
+
+export function normalizeFormat(format) {
+  return format === 'png' ? 'png' : 'jpeg';
+}
+
+// ---------------------------------------------------------------------------
+// S2. Plan the capture before taking it
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything about a capture that can be decided before pixels exist: the box
+ * to capture in CSS pixels, the size to end up at, and whether Chrome can render
+ * straight to that size through a clip.
+ *
+ * `dpr` only decides which path is taken. The canvas path recomputes the target
+ * from the bitmap it actually got, and the clip path verifies the returned
+ * dimensions against the header, so an inaccurate estimate costs a fallback
+ * rather than a wrong image.
+ */
+export function planCapture({
+  cssWidth,
+  cssHeight,
+  dpr = 1,
+  region,
+  scrollX = 0,
+  scrollY = 0,
+  maxTokens = DEFAULT_MAX_TOKENS,
+  scale = 1,
+} = {}) {
+  const width = Math.max(1, Math.round(cssWidth));
+  const height = Math.max(1, Math.round(cssHeight));
+
+  let box;
+  if (region) {
+    const [x0, y0, x1, y1] = region;
+    box = {
+      x: Math.min(x0, x1),
+      y: Math.min(y0, y1),
+      width: Math.abs(x1 - x0),
+      height: Math.abs(y1 - y0),
+    };
+    if (box.width < 1 || box.height < 1) {
+      throw new Error('zoom region must have non-zero width and height');
+    }
+  } else {
+    box = { x: 0, y: 0, width, height };
+  }
+
+  const ratio = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  const sourceWidth = Math.max(1, Math.round(box.width * ratio));
+  const sourceHeight = Math.max(1, Math.round(box.height * ratio));
+
+  // The frame a capture with no `scale` would have produced. Reported with every
+  // scaled capture so the caller knows what the full-resolution frame is.
+  const frame = targetDimensions(sourceWidth, sourceHeight, { maxTokens });
+
+  const userScale = clampScale(scale);
+  const target = {
+    width: Math.max(1, Math.round(frame.width * userScale)),
+    height: Math.max(1, Math.round(frame.height * userScale)),
+  };
+
+  // Page.captureScreenshot clips in page coordinates, so a region read off a
+  // screenshot, which is viewport relative, needs the scroll offset added.
+  const clip = {
+    x: box.x + scrollX,
+    y: box.y + scrollY,
+    width: box.width,
+    height: box.height,
+    scale: target.width / box.width,
+  };
+
+  return {
+    box,
+    clip,
+    target,
+    frame: { width: frame.width, height: frame.height },
+    sourceWidth,
+    sourceHeight,
+    userScale,
+    dpr: ratio,
+    // Asking Chrome to render straight to a smaller size skips a full-size
+    // capture and an OffscreenCanvas round trip. Above 1 it would upscale a CSS
+    // pixel render, which is worse than downscaling the device pixel one.
+    useClipPath: clip.scale < 1,
+    region: Boolean(region),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Image header decoding, so a capture can be trusted without decoding it fully
+// ---------------------------------------------------------------------------
+
+/** Decodes a base64 prefix into bytes. The header is all this needs. */
+function headBytes(base64, maxBytes = 65536) {
+  const wanted = Math.ceil(maxBytes / 3) * 4;
+  const chars = Math.min(base64.length, wanted);
+  const slice = base64.slice(0, chars - (chars % 4));
+  const binary = atob(slice);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+/**
+ * Width and height read from a PNG or JPEG header.
+ *
+ * Returns null when the bytes are neither, or when a JPEG's frame header sits
+ * past the decoded prefix. A null answer means the capture is not verified, and
+ * the caller falls back to the path that produces a known size.
+ */
+export function decodeImageSize(base64) {
+  if (typeof base64 !== 'string' || base64.length < 8) return null;
+  let bytes;
+  try {
+    bytes = headBytes(base64);
+  } catch {
+    return null;
+  }
+
+  if (
+    bytes.length >= 24 &&
+    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+  ) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return { format: 'png', width: view.getUint32(16), height: view.getUint32(20) };
+  }
+
+  if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < bytes.length) {
+      if (bytes[i] !== 0xff) {
+        i++;
+        continue;
+      }
+      const marker = bytes[i + 1];
+      // Padding and standalone markers carry no length field.
+      if (marker === 0xff || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) {
+        i += 2;
+        continue;
+      }
+      const length = (bytes[i + 2] << 8) | bytes[i + 3];
+      const isFrame =
+        (marker >= 0xc0 && marker <= 0xc3) ||
+        (marker >= 0xc5 && marker <= 0xc7) ||
+        (marker >= 0xc9 && marker <= 0xcb) ||
+        (marker >= 0xcd && marker <= 0xcf);
+      if (isFrame) {
+        return {
+          format: 'jpeg',
+          height: (bytes[i + 5] << 8) | bytes[i + 6],
+          width: (bytes[i + 7] << 8) | bytes[i + 8],
+        };
+      }
+      if (length < 2) return null;
+      i += 2 + length;
+    }
+  }
+
+  return null;
+}
+
+function within(a, b, tolerance = 1) {
+  return Math.abs(a - b) <= tolerance;
+}
+
+// ---------------------------------------------------------------------------
+// Encoding and the byte budget
+// ---------------------------------------------------------------------------
+
+async function decodeBitmap(base64, mediaType = 'image/png') {
+  const response = await fetch('data:' + mediaType + ';base64,' + base64);
   const blob = await response.blob();
   return createImageBitmap(blob);
+}
+
+function toBase64(bytes) {
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
 
 async function encode(bitmap, width, height, format, quality) {
@@ -58,93 +267,298 @@ async function encode(bitmap, width, height, format, quality) {
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(bitmap, 0, 0, width, height);
   const blob = await canvas.convertToBlob(
-    format === 'jpeg' ? { type: 'image/jpeg', quality: quality ?? 0.85 } : { type: 'image/png' }
+    format === 'jpeg' ? { type: 'image/jpeg', quality } : { type: 'image/png' }
   );
   const buffer = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-  }
-  return { data: btoa(binary), mediaType: format === 'jpeg' ? 'image/jpeg' : 'image/png' };
+  return toBase64(new Uint8Array(buffer));
 }
 
 /**
- * Captures the viewport and returns a downscaled image plus the scaling context
- * needed to map model-supplied coordinates back to CSS pixels.
+ * S1. Steps quality down until the payload fits the budget.
+ *
+ * `reencode(quality)` returns a fresh base64 payload at that quality. The loop
+ * stops at MIN_QUALITY, and a payload still over budget there is returned with a
+ * warning rather than failing, because a large image the caller can see beats no
+ * image at all.
+ */
+export async function fitToBudget({
+  data,
+  quality = DEFAULT_QUALITY,
+  format = 'jpeg',
+  budget = MAX_BASE64_CHARS,
+  reencode,
+  warnings = [],
+}) {
+  if (data.length <= budget) return { data, quality, steps: 0, warnings };
+
+  if (format !== 'jpeg' || typeof reencode !== 'function') {
+    warnings.push(
+      'the image is ' + data.length + ' base64 characters, over the ' + budget +
+        ' budget, and a ' + format + ' payload cannot be reduced by quality. Ask for format "jpeg" or a smaller scale.'
+    );
+    return { data, quality, steps: 0, warnings };
+  }
+
+  let current = data;
+  let q = quality;
+  let steps = 0;
+  while (current.length > budget && q > MIN_QUALITY + 1e-9) {
+    q = Math.max(MIN_QUALITY, Math.round((q - QUALITY_STEP) * 100) / 100);
+    current = await reencode(q);
+    steps++;
+  }
+  if (current.length > budget) {
+    warnings.push(
+      'the image is still ' + current.length + ' base64 characters at the quality floor of ' + MIN_QUALITY +
+        '. Take a smaller region with zoom, or pass a lower scale.'
+    );
+  }
+  return { data: current, quality: q, steps, warnings };
+}
+
+// ---------------------------------------------------------------------------
+// The capture itself
+// ---------------------------------------------------------------------------
+
+/** Device pixel ratio implied by the layout metrics, which report both units. */
+export function devicePixelRatioFrom(metrics) {
+  const css = metrics && metrics.cssLayoutViewport;
+  const device = metrics && metrics.layoutViewport;
+  if (!css || !device || !css.clientWidth || !device.clientWidth) return 1;
+  const ratio = device.clientWidth / css.clientWidth;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+}
+
+/**
+ * Captures the viewport and returns an image plus the scaling context needed to
+ * map model-supplied coordinates back to CSS pixels.
  */
 export async function capture(tabId, options = {}) {
-  const { maxTokens = DEFAULT_MAX_TOKENS, format = 'png', quality, region } = options;
+  const {
+    maxTokens = DEFAULT_MAX_TOKENS,
+    region,
+    budget = MAX_BASE64_CHARS,
+  } = options;
+  const format = normalizeFormat(options.format ?? DEFAULT_FORMAT);
+  const quality = normalizeQuality(options.quality);
+  const scale = clampScale(options.scale ?? 1);
 
   const metrics = await send(tabId, 'Page.getLayoutMetrics');
   const viewport = metrics.cssLayoutViewport || metrics.layoutViewport;
   const cssWidth = viewport.clientWidth;
   const cssHeight = viewport.clientHeight;
+  const scrollSource = metrics.cssVisualViewport || viewport;
+  const scrollX = Math.round(scrollSource.pageX || 0);
+  const scrollY = Math.round(scrollSource.pageY || 0);
 
-  let clip;
-  if (region) {
-    const [x0, y0, x1, y1] = region;
-    clip = {
-      x: Math.min(x0, x1),
-      y: Math.min(y0, y1),
-      width: Math.abs(x1 - x0),
-      height: Math.abs(y1 - y0),
-      scale: 1,
-    };
-    if (clip.width < 1 || clip.height < 1) {
-      throw new Error('zoom region must have non-zero width and height');
+  const plan = planCapture({
+    cssWidth,
+    cssHeight,
+    dpr: devicePixelRatioFrom(metrics),
+    region,
+    scrollX,
+    scrollY,
+    maxTokens,
+    scale,
+  });
+
+  const warnings = [];
+  const scroll = { x: scrollX, y: scrollY };
+  let data = null;
+  let path = 'canvas';
+  let width = plan.target.width;
+  let height = plan.target.height;
+  let sourceWidth = plan.sourceWidth;
+  let sourceHeight = plan.sourceHeight;
+  /** @type {null | ((q: number) => Promise<string>)} */
+  let reencode = null;
+
+  if (plan.useClipPath) {
+    // Chrome renders straight to the target size, so there is no full-size
+    // capture to decode and no canvas round trip.
+    const raw = await captureScreenshot(tabId, {
+      format,
+      quality: format === 'jpeg' ? Math.round(quality * 100) : undefined,
+      clip: plan.clip,
+      scroll,
+    });
+    const decoded = decodeImageSize(raw);
+    if (decoded && within(decoded.width, plan.target.width) && within(decoded.height, plan.target.height)) {
+      data = raw;
+      path = 'clip';
+      width = decoded.width;
+      height = decoded.height;
+      sourceWidth = decoded.width;
+      sourceHeight = decoded.height;
+      reencode = async (q) => {
+        const bitmap = await decodeBitmap(raw, 'image/' + format);
+        const out = await encode(bitmap, width, height, 'jpeg', q);
+        bitmap.close();
+        return out;
+      };
+    } else {
+      warnings.push(
+        'the clipped capture came back ' +
+          (decoded ? decoded.width + 'x' + decoded.height : 'undecodable') +
+          ' instead of ' + plan.target.width + 'x' + plan.target.height + ', so it was re-rendered through the canvas'
+      );
     }
   }
 
-  const raw = await captureScreenshot(tabId, { format: 'png', clip });
-  const bitmap = await decode(raw);
-
-  const sourceWidth = bitmap.width;
-  const sourceHeight = bitmap.height;
-  const target = targetDimensions(sourceWidth, sourceHeight, { maxTokens });
-
-  const encoded = await encode(bitmap, target.width, target.height, format, quality);
-  bitmap.close();
-
-  if (region) {
-    // A zoom is a crop of the viewport. Record the mapping so coordinates read
-    // off the zoomed image still resolve against the full page.
-    scalingContext.set(tabId, {
-      cssToImage: target.width / clip.width,
-      offsetX: clip.x,
-      offsetY: clip.y,
-      imageWidth: target.width,
-      imageHeight: target.height,
-      cssWidth,
-      cssHeight,
-      cropped: true,
-      capturedAt: Date.now(),
+  if (data === null) {
+    // A lossless source keeps the downscale clean, and the target is recomputed
+    // from what Chrome actually returned rather than from the estimate.
+    const raw = await captureScreenshot(tabId, {
+      format: 'png',
+      clip: plan.region ? { ...plan.clip, scale: 1 } : undefined,
+      scroll,
     });
-  } else {
-    scalingContext.set(tabId, {
-      cssToImage: target.width / cssWidth,
-      offsetX: 0,
-      offsetY: 0,
-      imageWidth: target.width,
-      imageHeight: target.height,
-      cssWidth,
-      cssHeight,
-      cropped: false,
-      capturedAt: Date.now(),
-    });
+    const bitmap = await decodeBitmap(raw, 'image/png');
+    sourceWidth = bitmap.width;
+    sourceHeight = bitmap.height;
+    const frame = targetDimensions(sourceWidth, sourceHeight, { maxTokens });
+    plan.frame = { width: frame.width, height: frame.height };
+    width = Math.max(1, Math.round(frame.width * plan.userScale));
+    height = Math.max(1, Math.round(frame.height * plan.userScale));
+    data = await encode(bitmap, width, height, format, quality);
+    reencode = async (q) => encode(bitmap, width, height, 'jpeg', q);
+    const fitted = await fitToBudget({ data, quality, format, budget, reencode, warnings });
+    bitmap.close();
+    data = fitted.data;
+    return finish(tabId, { plan, data, format, width, height, sourceWidth, sourceHeight, cssWidth, cssHeight, path, warnings, quality: fitted.quality });
   }
 
-  return {
-    ...encoded,
-    width: target.width,
-    height: target.height,
+  const fitted = await fitToBudget({ data, quality, format, budget, reencode, warnings });
+  return finish(tabId, {
+    plan,
+    data: fitted.data,
+    format,
+    width,
+    height,
     sourceWidth,
     sourceHeight,
     cssWidth,
     cssHeight,
-    estimatedTokens: estimateTokens(target.width, target.height),
+    path,
+    warnings,
+    quality: fitted.quality,
+  });
+}
+
+/** "0.5" rather than "0.50", for the result line. */
+export function formatScale(scale) {
+  return String(Math.round(scale * 100) / 100);
+}
+
+/** Records the coordinate context and shapes the result. */
+function finish(tabId, info) {
+  const { plan, data, format, cssWidth, cssHeight } = info;
+  // The header of the payload that is actually returned, so the reported size
+  // and the token estimate describe the image the model sees.
+  const decoded = decodeImageSize(data);
+  const width = decoded ? decoded.width : info.width;
+  const height = decoded ? decoded.height : info.height;
+
+  const context = plan.region
+    ? {
+        // A zoom is a crop of the viewport. The mapping carries the crop offset
+        // so coordinates read off the zoomed image still resolve against the page.
+        cssToImage: width / plan.box.width,
+        offsetX: plan.box.x,
+        offsetY: plan.box.y,
+        imageWidth: width,
+        imageHeight: height,
+        cssWidth,
+        cssHeight,
+        cropped: true,
+        capturedAt: Date.now(),
+      }
+    : {
+        cssToImage: width / cssWidth,
+        offsetX: 0,
+        offsetY: 0,
+        imageWidth: width,
+        imageHeight: height,
+        cssWidth,
+        cssHeight,
+        cropped: false,
+        capturedAt: Date.now(),
+      };
+  recordCapture(tabId, context);
+
+  const scaled = plan.userScale < 1;
+  return {
+    data,
+    mediaType: format === 'jpeg' ? 'image/jpeg' : 'image/png',
+    width,
+    height,
+    sourceWidth: info.sourceWidth,
+    sourceHeight: info.sourceHeight,
+    cssWidth,
+    cssHeight,
+    format,
+    quality: format === 'jpeg' ? info.quality : undefined,
+    path: info.path,
+    scale: plan.userScale,
+    frameWidth: plan.frame.width,
+    frameHeight: plan.frame.height,
+    // S3. A scaled image is smaller than the frame the model would otherwise
+    // have read, so the frame it is reading is stated with the image.
+    note: scaled
+      ? formatScale(plan.userScale) + '-scale view; coordinate frame: ' + width + 'x' + height +
+        '. Coordinates are pixels in this image and are mapped back to the page for you. ' +
+        'Full-resolution frame: ' + plan.frame.width + 'x' + plan.frame.height + '.'
+      : undefined,
+    estimatedTokens: estimateTokens(width, height),
+    warnings: info.warnings,
   };
+}
+
+// ---------------------------------------------------------------------------
+// R4. The coordinate frame is frozen for the length of a batch
+// ---------------------------------------------------------------------------
+//
+// A batch shaped [screenshot, left_click(x, y)] carries coordinates the model
+// wrote against the screenshot it had before the batch ran. Committing the new
+// frame as soon as the capture returns remaps those coordinates against an image
+// the model has never seen. The new frame is held aside until the batch ends.
+
+let batchDepth = 0;
+/** @type {Map<number, object>} */
+const pendingContext = new Map();
+
+export function beginBatch() {
+  batchDepth += 1;
+  return batchDepth;
+}
+
+export function endBatch() {
+  if (batchDepth > 0) batchDepth -= 1;
+  if (batchDepth === 0) commitPending();
+  return batchDepth;
+}
+
+export function isBatching() {
+  return batchDepth > 0;
+}
+
+export function commitPending() {
+  for (const [tabId, context] of pendingContext) scalingContext.set(tabId, context);
+  pendingContext.clear();
+}
+
+export function pendingContextFor(tabId) {
+  return pendingContext.get(tabId) || null;
+}
+
+/**
+ * Stores the frame a capture produced. Inside a batch it is held until the batch
+ * ends, unless the tab has no frame at all, in which case holding it would leave
+ * every later coordinate in the batch unmapped.
+ */
+export function recordCapture(tabId, context) {
+  if (batchDepth > 0 && scalingContext.has(tabId)) pendingContext.set(tabId, context);
+  else scalingContext.set(tabId, context);
 }
 
 /**
@@ -155,10 +569,25 @@ export async function capture(tabId, options = {}) {
 export function imageToCss(tabId, x, y) {
   const ctx = scalingContext.get(tabId);
   if (!ctx) return { x: Math.round(x), y: Math.round(y), mapped: false };
+
+  // A coordinate past the edge of the image cannot have been read off it. When
+  // it fits the CSS viewport it came from the full-resolution frame, so it is
+  // taken as it is instead of being scaled into somewhere off screen.
+  if (
+    !ctx.cropped &&
+    ctx.cssToImage < 1 &&
+    (x > ctx.imageWidth || y > ctx.imageHeight) &&
+    x <= ctx.cssWidth &&
+    y <= ctx.cssHeight
+  ) {
+    return { x: Math.round(x), y: Math.round(y), mapped: true, frame: 'css' };
+  }
+
   return {
     x: Math.round(x / ctx.cssToImage + (ctx.offsetX || 0)),
     y: Math.round(y / ctx.cssToImage + (ctx.offsetY || 0)),
     mapped: true,
+    frame: 'image',
   };
 }
 
@@ -168,6 +597,7 @@ export function getScalingContext(tabId) {
 
 export function clearScalingContext(tabId) {
   scalingContext.delete(tabId);
+  pendingContext.delete(tabId);
 }
 
 // ---------------------------------------------------------------------------

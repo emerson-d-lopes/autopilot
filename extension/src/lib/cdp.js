@@ -975,25 +975,64 @@ async function bytesToBase64(blob) {
   return btoa(binary);
 }
 
-async function captureHidden(tabId, { format, quality, clip }) {
+/**
+ * A hidden tab, captured through one screencast frame.
+ *
+ * `clip` arrives in page coordinates, the way Page.captureScreenshot wants it,
+ * and `scroll` says where the viewport sits in that space so the crop can be
+ * expressed against the frame. A clip that covers the whole viewport is not a
+ * crop at all: the screencast is asked for the target size directly through
+ * maxWidth and maxHeight, which is the hidden-tab equivalent of clip.scale and
+ * skips the canvas entirely.
+ */
+export async function captureHidden(tabId, { format, quality, clip, scroll } = {}) {
   const metrics = await send(tabId, 'Page.getLayoutMetrics');
   const viewport = metrics.cssLayoutViewport || metrics.layoutViewport;
   const width = Math.max(1, Math.round(viewport.clientWidth));
   const height = Math.max(1, Math.round(viewport.clientHeight));
-  const frame = await screencastFrame(tabId, { format, quality, maxWidth: width, maxHeight: height });
-  if (!clip) return frame;
 
-  // A zoom is a crop of the frame. The frame was requested at CSS size, so the
-  // clip, which is in CSS pixels, maps onto it one to one.
+  const offsetX = scroll ? scroll.x || 0 : 0;
+  const offsetY = scroll ? scroll.y || 0 : 0;
+  const crop = clip
+    ? { x: clip.x - offsetX, y: clip.y - offsetY, width: clip.width, height: clip.height, scale: clip.scale || 1 }
+    : null;
+  const wholeViewport =
+    !crop ||
+    (Math.round(crop.x) <= 0 &&
+      Math.round(crop.y) <= 0 &&
+      Math.round(crop.width) >= width &&
+      Math.round(crop.height) >= height);
+
+  if (wholeViewport) {
+    const scale = crop ? crop.scale : 1;
+    const maxWidth = Math.max(1, Math.round(width * scale));
+    const maxHeight = Math.max(1, Math.round(height * scale));
+    return screencastFrame(tabId, { format, quality, maxWidth, maxHeight });
+  }
+
+  const frame = await screencastFrame(tabId, { format, quality, maxWidth: width, maxHeight: height });
+
+  // The frame was requested at CSS size, so the crop, which is in CSS pixels,
+  // maps onto it one to one apart from whatever Chrome rounded.
   const response = await fetch('data:image/' + format + ';base64,' + frame);
   const bitmap = await createImageBitmap(await response.blob());
   const scaleX = bitmap.width / width;
   const scaleY = bitmap.height / height;
-  const w = Math.max(1, Math.round(clip.width * scaleX));
-  const h = Math.max(1, Math.round(clip.height * scaleY));
+  const w = Math.max(1, Math.round(crop.width * crop.scale));
+  const h = Math.max(1, Math.round(crop.height * crop.scale));
   const canvas = new OffscreenCanvas(w, h);
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(bitmap, -Math.round(clip.x * scaleX), -Math.round(clip.y * scaleY));
+  ctx.drawImage(
+    bitmap,
+    Math.round(crop.x * scaleX),
+    Math.round(crop.y * scaleY),
+    Math.round(crop.width * scaleX),
+    Math.round(crop.height * scaleY),
+    0,
+    0,
+    w,
+    h
+  );
   bitmap.close();
   const blob = await canvas.convertToBlob({ type: 'image/' + format, quality: quality !== undefined ? quality / 100 : undefined });
   return bytesToBase64(blob);
@@ -1003,9 +1042,12 @@ async function captureHidden(tabId, { format, quality, clip }) {
  * Captures the page. A tab on screen is read from its surface, which includes
  * everything the browser composites. A hidden or minimized tab is captured
  * through a screencast frame, since its surface never draws.
+ *
+ * `clip` is in page coordinates. `scroll` is the viewport origin in that space,
+ * needed only by the hidden path, which works against the frame.
  */
-export async function captureScreenshot(tabId, { format = 'png', quality, clip } = {}) {
-  if (!(await onScreen(tabId))) return captureHidden(tabId, { format, quality, clip });
+export async function captureScreenshot(tabId, { format = 'png', quality, clip, scroll } = {}) {
+  if (!(await onScreen(tabId))) return captureHidden(tabId, { format, quality, clip, scroll });
   const params = { format, captureBeyondViewport: false, fromSurface: true };
   if (quality !== undefined && format === 'jpeg') params.quality = quality;
   if (clip) params.clip = clip;

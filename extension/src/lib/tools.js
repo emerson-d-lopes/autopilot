@@ -378,14 +378,23 @@ async function computerTool(ctx, input) {
       const paint = await waitForPaint(tabId);
       await pageCall(tabId, { type: 'HIDE_FOR_TOOL_USE' }).catch(() => {});
       try {
-        const image = await shot.capture(tabId, { maxTokens: input.maxTokens });
+        const image = await shot.capture(tabId, {
+          maxTokens: input.maxTokens,
+          format: input.format,
+          quality: input.quality,
+          scale: input.scale,
+        });
+        const warnings = [...(image.warnings || [])];
+        if (paint && !paint.painted) {
+          warnings.push('no paint was observed within ' + shot.PAINT_CEILING_MS + 'ms of the last input, so this image may predate it');
+        }
         return {
           image,
           saveToDisk: Boolean(input.save_to_disk),
           pageState: await pageCall(tabId, { type: 'PAGE_STATE' }),
           effects: 'none',
-          evidence: { paint },
-          warnings: paint && !paint.painted ? ['no paint was observed within ' + shot.PAINT_CEILING_MS + 'ms of the last input, so this image may predate it'] : [],
+          evidence: { paint, capture: { path: image.path, format: image.format, quality: image.quality, scale: image.scale } },
+          warnings,
         };
       } finally {
         pageCall(tabId, { type: 'SHOW_AFTER_TOOL_USE' }).catch(() => {});
@@ -399,8 +408,19 @@ async function computerTool(ctx, input) {
       const paint = await waitForPaint(tabId);
       await pageCall(tabId, { type: 'HIDE_FOR_TOOL_USE' }).catch(() => {});
       try {
-        const image = await shot.capture(tabId, { region: input.region });
-        return { image, saveToDisk: Boolean(input.save_to_disk), effects: 'none', evidence: { paint }, warnings: [] };
+        const image = await shot.capture(tabId, {
+          region: input.region,
+          format: input.format,
+          quality: input.quality,
+          scale: input.scale,
+        });
+        return {
+          image,
+          saveToDisk: Boolean(input.save_to_disk),
+          effects: 'none',
+          evidence: { paint, capture: { path: image.path, format: image.format, quality: image.quality, scale: image.scale } },
+          warnings: [...(image.warnings || [])],
+        };
       } finally {
         pageCall(tabId, { type: 'SHOW_AFTER_TOOL_USE' }).catch(() => {});
       }

@@ -235,6 +235,26 @@ export const TOOLS = [
           description:
             'For screenshot and zoom: also write the image to a file and report the path, so it can be attached to a message. Skip it for images you only need to look at.',
         },
+        format: {
+          type: 'string',
+          enum: ['jpeg', 'png'],
+          description:
+            'Image format for screenshot and zoom. Default "jpeg", which costs a fraction of the bytes at the same readable size. Ask for "png" when you need exact pixels, such as reading a thin border or a colour value.',
+        },
+        quality: {
+          type: 'number',
+          minimum: 0.1,
+          maximum: 1,
+          description:
+            'JPEG quality, 0.1 to 1. Default 0.75. Lowered automatically if the image would exceed the payload budget.',
+        },
+        scale: {
+          type: 'number',
+          minimum: 0.1,
+          maximum: 1,
+          description:
+            'Shrink the returned image by this factor, 0.1 to 1. Default 1. A 0.5-scale screenshot costs a quarter of the vision tokens. Coordinates are still read off the image you get back, and the result line states its coordinate frame.',
+        },
         browser: browserProp,
       },
       required: ['action', 'tabId'],
