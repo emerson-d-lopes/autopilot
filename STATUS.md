@@ -1,12 +1,12 @@
 # chrome-mcp: status, parity and test coverage
 
-State of the build as of 2026-09-04, extension 0.1.34. 26 tools, 30 test files.
+State of the build as of 2026-09-04, extension 0.1.37. 26 tools, 30 test files.
 
 - Source: about 17,600 lines across the extension, host and tools
 - Tests: about 10,500 lines
 - Verified against Chrome for Testing 152 and against the user's own Chrome 152 on Windows 11
 
-On 2026-09-04 the non-browser files pass, 636 tests across 24 files. The build that was driven against a browser is the one described under "Live verification of the first wave-2 bug fixes", which ran 14 checks by hand on 0.1.31. The ten fixes merged after it, on `plan/bugs2`, have not been driven against a browser, and the six browser-driven files were not run.
+On 2026-09-04 the non-browser files pass, 640 tests across 24 files, and `campaign.test.js` passes 12 of 12 against a browser. The build that was driven against a browser is the one described under "Live verification of the second set of bug fixes", which ran 17 checks by hand from 0.1.34 to 0.1.37. Twelve of the thirteen fixes hold and the session restore does not. The five other browser-driven files were not run.
 
 ## Feature parity with Claude Code's browser integration
 
@@ -204,7 +204,8 @@ With more than one browser connected the browser-driven files pick, in order, `C
 - A site probing for CDP automation can detect the session. On 0.1.7, `deviceandbrowserinfo.com/are_you_a_bot` returned `isBot: true` on all three runs with `isAutomatedWithCDP: true` as the only flag set, while every spoofable signal read clean: webdriver, Selenium, Playwright and headless markers `false`, and canvas, WebGL, plugin and user-agent fingerprints identical to the same Chrome driven by hand (`docs/claude-in-chrome-comparison/evidence/D-bot-detection.md` section 4). `browserscan.net/bot-detection` reported Normal on the same build, including its own CDP section, so vendors disagree on the heuristic. 0.1.13 makes console capture opt-in, so `Runtime.enable` is never issued on a tab that does not read the console, which reduces the surface without removing it
 - Completely covering the browser window can stall input until the extension raises it again
 - `wait_for_page` cannot catch an update driven by a bare timer with no DOM or network activity, because it has nothing to wait on. `test/campaign.test.js` uses a retry loop for that case
-- `chrome.runtime.reload()` disables an unpacked extension on Chrome for Testing 152. Sent from the service worker over the DevTools port it takes the extension down and Chrome does not bring it back: the profile records `disable_reasons [16777216]` against the extension id, the worker and offscreen targets are gone, creating a tab does not wake it, and only a browser restart restores the bridge. Three runs, deterministic, and the interferer loaded from the same command line stays enabled. It is not a developer reload path on this Chrome. Pick up an edit by restarting the browser, and exercise the session restore by stopping the worker from `chrome://serviceworker-internals` or by letting it idle out, which is the path `test/tabs.test.js` covers. The first pass ran the same call on 0.1.11 and the bridge came back, so this is worth re-checking after a Chrome for Testing update
+- `chrome.runtime.reload()` disables an unpacked extension on Chrome for Testing 152. Sent from the service worker over the DevTools port it takes the extension down and Chrome does not bring it back: the profile records `disable_reasons [16777216]` against the extension id, the worker and offscreen targets are gone, creating a tab does not wake it, and only a browser restart restores the bridge. Three runs, deterministic, and the interferer loaded from the same command line stays enabled. It is not a developer reload path on this Chrome. Pick up an edit by restarting the browser, and exercise the session restore by stopping the worker from `chrome://serviceworker-internals`, which is the path `test/tabs.test.js` covers. The first pass ran the same call on 0.1.11 and the bridge came back, so this is worth re-checking after a Chrome for Testing update
+- Letting the worker idle out is not a route to a restart while the bridge is attached. The extension holds a native messaging port to the host, and a connected port keeps the worker alive: with a session holding two tabs and nothing else running, the worker target stayed in the DevTools list for 180 s. The Stop button on `chrome://serviceworker-internals` is the route that works. It is a `cr-button` in a shadow root and only a trusted click reaches the WebUI handler, so it has to be pressed with `Input.dispatchMouseEvent` on that page's CDP target
 
 ## Plan phases 0 to 3 integrated, 2026-09-03
 
@@ -518,3 +519,22 @@ Test counts on 2026-09-04, `node --test --test-concurrency=1` per file, no brows
 `node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 43 files under `extension/src`, `host` and `tools`.
 
 The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. The live checks the three fixes ask for: a read queued behind a busy loop of more than 40 s, which must return the `timeout` with the reload hint rather than a late ok; a `quick` script of C ref / T text / K Enter / SS, whose SS line must carry `evidence.paint`; and the session restore driven by stopping the worker from `chrome://serviceworker-internals`, since `chrome.runtime.reload()` is not usable on this Chrome.
+
+## Live verification of the second set of bug fixes, 2026-09-04
+
+The pass is written up in `docs/claude-in-chrome-comparison/evidence/VERIFY-0.1.34.md`, one entry per check with the call and the verbatim result. It ran against the development browser started by `node tools/browser.js --interferer --detach` and drove `host/mcp-server.js` from this tree through `tools/mcp-client.js`. The user's Chrome was never driven.
+
+Seventeen checks: the ten fixes merged from `plan/bugs2`, the three for the bugs the third pass opened, a re-run of seven first-pass checks, four second-pass checks and six third-pass checks, and the test and bench files. Twelve of the thirteen fixes hold, two of them after a fix landed during the pass. The session restore does not.
+
+Two commits landed during the pass:
+
+- `8c39149` The gif watermark is `rgba(255,255,255,0.55)` with nothing behind it. It was legible only while the acting indicator sat under it, so hiding the indicator in the frames, which is one of the ten bugs2 fixes, left the mark white on a white page. Sampling the mark's own box on a recording of the fixture found the page's colours and nothing else, and the same recording with the page background set to `#111` found `144,144,144` there. The glyphs carry a dark stroke now. Extension 0.1.35.
+- `3d27dbe`, amended by `6eb9a03` A screenshot on a tab in a 50 s busy loop reported its 20 s timeout after 40 s. The best-effort `HIDE_FOR_TOOL_USE` before the capture went through `pageCall`, which waits on the CDP queue with the full command deadline, and its failure was swallowed, so the capture then queued `Page.getLayoutMetrics` and waited a second deadline. `hideForCapture` does the queue wait and lets its timeout out, and only the message to the content script stays best effort, so a page with no content script is still captured. Extension 0.1.36 then 0.1.37.
+
+Three bugs are open, with reproductions in the evidence file:
+
+- A session loses its tabs when the service worker restarts. With two tabs in a session and the worker stopped from `chrome://serviceworker-internals`, `read_page` on a live tab returns `tab_gone`, `tabs_context` lists nothing with a null group id and no `missingTabs`, and the DevTools page list shows both tabs still open. The restore rewrites the persisted entry with an empty tab list and a null group with no tool call involved, so the record it was reading is destroyed and no later call can recover it. Both `Target.closeTarget` and the WebUI Stop button produce it.
+- Chrome's idle timeout is not a route to a worker restart. The known limit below says the path left is Chrome stopping an idle worker after 30 s. With a session holding two tabs and nothing else running, the worker target stayed in the DevTools list for 180 s, because the extension holds a native messaging port and a connected port keeps the worker alive.
+- The before-write capture a confirmation points at carries the acting indicator, which the screenshot path and the gif frames both hide.
+
+`node --test --test-concurrency=1` over the 24 non-browser files: 640 of 640, plus `campaign.test.js` at 12 of 12. `node tools/check-errors-copy.js` reports the copy matches.
