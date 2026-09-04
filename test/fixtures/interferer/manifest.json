@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "interferer (test fixture)",
+  "version": "0.0.1",
+  "description": "Injects an iframe to its own chrome-extension:// page into every site, to reproduce the debugger attach refusal.",
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["inject.js"], "run_at": "document_idle", "all_frames": false }],
+  "web_accessible_resources": [{ "resources": ["frame.html"], "matches": ["<all_urls>"] }]
+}
