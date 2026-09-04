@@ -268,6 +268,13 @@ export const TOOLS = [
           description:
             'Shrink the returned image by this factor, 0.1 to 1. Default 1. A 0.5-scale screenshot costs a quarter of the vision tokens. Coordinates are still read off the image you get back, and the result line states its coordinate frame.',
         },
+        confirm: {
+          type: 'string',
+          description:
+            'The confirmation token from a confirmation_required error, sent back to perform the action it refused. ' +
+            'Show the user what is about to happen first. A token works once, within two minutes, and only for the ' +
+            'same tab, origin and control it was issued for.',
+        },
         browser: browserProp,
       },
       required: ['action', 'tabId'],
@@ -466,6 +473,27 @@ export const TOOLS = [
     },
   },
   {
+    name: 'declare_plan',
+    description:
+      'Declare the origins this task will act on, as one approval instead of a prompt per site. ' +
+      'Needed when the extension is in plan mode, where any origin outside the declared list is refused with ' +
+      'origin_blocked. Declaring costs nothing in the other modes, and the result names any origin that was ' +
+      'refused because it is on the extension blocklist.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        origins: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Every site the task will touch, as origins or bare hosts, e.g. ["github.com", "https://linkedin.com"].',
+        },
+        browser: browserProp,
+      },
+      required: ['origins'],
+    },
+  },
+  {
     name: 'list_connected_browsers',
     description:
       'List the browsers currently running the extension, with the id to pass to select_browser. ' +
@@ -611,7 +639,7 @@ const INPUT_SHAPE =
 /** Tools whose result is a read of the page and never changes it. */
 const READ_ONLY = new Set([
   'read_page', 'get_page_text', 'find', 'page_state', 'read_console_messages', 'read_network_requests',
-  'tabs_context', 'wait_for_page', 'shortcuts_list', 'list_connected_browsers',
+  'tabs_context', 'wait_for_page', 'shortcuts_list', 'list_connected_browsers', 'declare_plan',
 ]);
 
 const RESULT_NOTES = {
@@ -628,7 +656,13 @@ const RESULT_NOTES = {
     'serialized value at 50 KB with an output_truncated warning stating the real size.',
   computer:
     'A screenshot is treated as a read. Every other action is an input, so read the effects flag before assuming ' +
-    'the page changed.',
+    'the page changed. A click on a submit-shaped control, and an Enter inside a composer, get a three second ' +
+    'window and report under evidence.submit which of five signals fired: the composer emptied, a new node ' +
+    'carrying the text, a 2xx from the site, a status region, or a navigation. None of them means effects ' +
+    'unknown, and the page has to be re-read before the call is repeated. A control the classifier marks ' +
+    'irreversible carries irreversible true, and in confirm mode it is refused once with a confirmation_required ' +
+    'token to send back as confirm. Where the site can reverse the write, the result names the control that does ' +
+    'it under undo, and a sent message reports undo none.',
   select_browser: 'Ambiguity between connected browsers is reported as the profile_ambiguous code.',
   switch_browser: 'Ambiguity between connected browsers is reported as the profile_ambiguous code.',
 };

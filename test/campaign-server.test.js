@@ -147,6 +147,17 @@ test('/composer.html has a contenteditable box, a Send button and a thread list'
   });
 });
 
+test('/composer.html carries a status region, a draft control and a call to /api/echo', async () => {
+  await withServer(async (base) => {
+    const res = await fetch(base + '/composer.html');
+    const body = await res.text();
+    assert.match(body, /id="toast" role="status"/, 'the toast is what the submit watch reads as a status region');
+    assert.match(body, /id="draft"[^>]*>Save draft/, 'a reversible write, for the undo hint');
+    assert.match(body, /Discard draft/, 'the control that reverses it');
+    assert.match(body, /fetch\('\/api\/echo'/, 'a same-origin 2xx after a send');
+  });
+});
+
 test('unknown routes return 404', async () => {
   await withServer(async (base) => {
     const res = await fetch(base + '/nope-not-a-route');

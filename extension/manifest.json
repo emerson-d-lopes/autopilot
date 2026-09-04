@@ -17,7 +17,8 @@
     "webNavigation",
     "identity",
     "identity.email",
-    "cookies"
+    "cookies",
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>"

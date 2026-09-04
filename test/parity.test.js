@@ -53,7 +53,8 @@ test('required parameters are declared in properties', () => {
 });
 
 test('every page-acting tool takes a tabId', () => {
-  const sessionScoped = ['tabs_context', 'tabs_create', 'browser_batch', 'shortcuts_list', ...SERVER_TOOLS];
+  // declare_plan names origins for the whole session, so it has no tab either.
+  const sessionScoped = ['tabs_context', 'tabs_create', 'browser_batch', 'shortcuts_list', 'declare_plan', ...SERVER_TOOLS];
   for (const tool of TOOLS) {
     if (sessionScoped.includes(tool.name)) continue;
     assert.ok(

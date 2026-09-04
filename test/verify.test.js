@@ -514,3 +514,291 @@ test('typeKeysReal sends a virtual key code and a code for every character', asy
   );
   await cdp.detachAll();
 });
+
+// ---------------------------------------------------------------------------
+// W2, W4, W7: submitting, confirming and undoing
+// ---------------------------------------------------------------------------
+//
+// The composer from W1 with a thread beside it, so a click on Send can be
+// judged the way a real one is: the composer empties, the message turns up in
+// the thread, and a status region says it was sent.
+
+const THREAD = `<!doctype html><body>
+  <ul id="thread"></ul>
+  <div id="toast" role="status"></div>
+  <form id="composer">
+    <div id="editor" contenteditable="true" aria-label="Write a message"></div>
+    <button id="send" type="submit">Send</button>
+  </form>
+</body>`;
+
+/**
+ * Routes the extension's page and CDP calls at one jsdom window, with a Send
+ * button that behaves the way a messaging site's does.
+ *
+ * `behaviour` decides what the click does: 'send' publishes the message,
+ * 'nothing' is the button that swallows the click, which is the case the three
+ * second window exists to catch.
+ */
+function wireSubmit(page, { behaviour = 'send' } = {}) {
+  const { window, call } = page;
+  const editor = window.document.getElementById('editor');
+  const send = window.document.getElementById('send');
+  const thread = window.document.getElementById('thread');
+  const toast = window.document.getElementById('toast');
+
+  if (send && editor) send.addEventListener('click', (event) => {
+    event.preventDefault();
+    if (behaviour === 'nothing') return;
+    const text = editor.textContent;
+    const row = window.document.createElement('li');
+    row.textContent = text;
+    thread.appendChild(row);
+    editor.textContent = '';
+    toast.textContent = 'Message sent';
+  });
+
+  // Whatever is being clicked is what the hit test finds, which is what a page
+  // with nothing covering the button reports.
+  let target = send || window.document.body;
+  window.document.elementFromPoint = () => target;
+
+  globalThis.chrome.tabs.sendMessage = (_id, message) => new Promise((resolve) => call(message).then(resolve));
+
+  globalThis.chrome.debugger = {
+    attach(_t, _v, done) {
+      done();
+    },
+    detach(_t, done) {
+      done();
+    },
+    sendCommand(_t, method, params, done) {
+      if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased') {
+        target.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      }
+      if (
+        method === 'Input.dispatchKeyEvent' &&
+        params.type === 'keyDown' &&
+        (params.key === 'Enter' || params.windowsVirtualKeyCode === 13) &&
+        send
+      ) {
+        send.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      }
+      chrome.runtime.lastError = null;
+      done({});
+    },
+    onEvent: { addListener() {} },
+    onDetach: { addListener() {} },
+  };
+
+  return {
+    editor,
+    send,
+    thread,
+    toast,
+    aim: (el) => {
+      target = el;
+    },
+  };
+}
+
+/** The ref of the first tree line whose text contains `needle`. */
+async function refOf(page, needle) {
+  const tree = (await page.call({ type: 'READ_PAGE', filter: 'interactive' })).text;
+  const line = tree.split('\n').find((l) => l.includes(needle));
+  if (!line) throw new Error('no tree line for ' + needle + ' in:\n' + tree);
+  return /\[(ref_\d+)\]/.exec(line)[1];
+}
+
+async function ownTabGroup() {
+  await globalThis.chrome.storage.local.set({ tabGroups: { default: 7 } });
+}
+
+test('a click on Send reports which submit signals fired', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const perms = await import('../extension/src/lib/permissions.js');
+  const page = loadPage(THREAD);
+  const wired = wireSubmit(page);
+  wired.editor.textContent = 'the deck is attached';
+  await ownTabGroup();
+  perms.invalidatePolicyCache();
+  perms.forgetActedOrigin('default');
+
+  const ref = await refOf(page, 'Send');
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.effects, 'applied');
+  const submit = result.evidence.submit;
+  assert.ok(submit, 'the submit evidence is under evidence.submit');
+  assert.ok(submit.fired.includes('composer emptied'), 'fired: ' + submit.fired.join(', '));
+  assert.ok(submit.fired.includes('a new node carries the text'), 'fired: ' + submit.fired.join(', '));
+  assert.ok(submit.fired.includes('status region'), 'fired: ' + submit.fired.join(', '));
+  assert.equal(submit.status.role, 'status');
+  assert.equal(wired.thread.textContent, 'the deck is attached');
+});
+
+test('a Send that does nothing reports unknown and says to re-read', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const perms = await import('../extension/src/lib/permissions.js');
+  const page = loadPage(THREAD);
+  const wired = wireSubmit(page, { behaviour: 'nothing' });
+  wired.editor.textContent = 'never leaves the box';
+  await ownTabGroup();
+  perms.invalidatePolicyCache();
+
+  const ref = await refOf(page, 'Send');
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+
+  assert.equal(result.effects, 'unknown');
+  assert.deepEqual(result.evidence.submit.fired, []);
+  assert.equal(result.hint, 're-read the page before retrying');
+  assert.ok(
+    result.warnings.some((w) => /no submit evidence within 3000ms/.test(w)),
+    'warnings: ' + result.warnings.join(' | ')
+  );
+  assert.equal(wired.thread.textContent, '');
+});
+
+test('a sent message reports that nothing undoes it', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(THREAD);
+  const wired = wireSubmit(page);
+  wired.editor.textContent = 'on my way';
+  await ownTabGroup();
+
+  const ref = await refOf(page, 'Send');
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+  assert.equal(result.undo, 'none');
+});
+
+test('a saved edit names the control that reverses it', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(`<!doctype html><body>
+    <form id="f"><input id="headline" value="Engineer"><button id="save" type="submit">Save</button></form>
+    <button id="undo">Undo</button>
+  </body>`);
+  const wired = wireSubmit(page, { behaviour: 'nothing' });
+  wired.aim(page.window.document.getElementById('save'));
+  await ownTabGroup();
+
+  const ref = await refOf(page, 'Save');
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+  assert.equal(result.undo, 'Undo', 'the reversible class looks for a control on the page after the write');
+});
+
+test('confirm mode refuses the first press and performs the tokened repeat', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const perms = await import('../extension/src/lib/permissions.js');
+  const page = loadPage(THREAD);
+  const wired = wireSubmit(page);
+  wired.editor.textContent = 'ship it';
+  await ownTabGroup();
+  perms.invalidatePolicyCache();
+  await perms.savePolicy({ mode: perms.MODES.CONFIRM, confirmNotifications: false });
+
+  const ref = await refOf(page, 'Send');
+  let token = null;
+  await assert.rejects(
+    () => tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' }),
+    (err) => {
+      assert.equal(err.code, 'confirmation_required');
+      assert.equal(err.effects, 'none');
+      assert.equal(err.details.control, 'Send');
+      assert.equal(err.details.origin, 'https://example.com');
+      assert.ok('screenshotId' in err.details, 'the details name the screenshot taken before the refusal');
+      assert.match(err.hint, /confirm set to/);
+      token = err.details.token;
+      return true;
+    }
+  );
+  assert.equal(wired.thread.textContent, '', 'nothing was clicked');
+
+  const done = await tools.execute(
+    'computer',
+    { action: 'left_click', tabId: 1, ref, confirm: token },
+    { clientId: 'default' }
+  );
+  assert.equal(done.effects, 'applied');
+  assert.equal(done.write.control, 'Send');
+  assert.equal(done.write.confirmedBy, 'token');
+  assert.equal(done.write.value, 'ship it');
+  assert.equal(wired.thread.textContent, 'ship it');
+
+  await assert.rejects(
+    () => tools.execute('computer', { action: 'left_click', tabId: 1, ref, confirm: token }, { clientId: 'default' }),
+    (err) => {
+      assert.equal(err.code, 'confirmation_required');
+      assert.match(err.message, /not accepted/);
+      return true;
+    }
+  );
+
+  await perms.savePolicy({ mode: perms.MODES.ALLOW });
+  perms.invalidatePolicyCache();
+});
+
+test('the write allow-list clicks an irreversible control with no token', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const perms = await import('../extension/src/lib/permissions.js');
+  const page = loadPage(THREAD);
+  const wired = wireSubmit(page);
+  wired.editor.textContent = 'routine';
+  await ownTabGroup();
+  perms.invalidatePolicyCache();
+  await perms.savePolicy({ mode: perms.MODES.CONFIRM, writeAllowlist: ['example.com'] });
+
+  const ref = await refOf(page, 'Send');
+  const result = await tools.execute('computer', { action: 'left_click', tabId: 1, ref }, { clientId: 'default' });
+  assert.equal(result.effects, 'applied');
+  assert.equal(result.write.confirmedBy, undefined, 'no confirmation was needed');
+  assert.equal(wired.thread.textContent, 'routine');
+
+  await perms.savePolicy({ mode: perms.MODES.ALLOW, writeAllowlist: [] });
+  perms.invalidatePolicyCache();
+});
+
+test('an Enter in a composer is treated as a submit', async () => {
+  const tools = await import('../extension/src/lib/tools.js');
+  const page = loadPage(THREAD);
+  const wired = wireSubmit(page);
+  wired.editor.textContent = 'sent with the keyboard';
+  wired.editor.focus();
+  await ownTabGroup();
+
+  const result = await tools.execute('computer', { action: 'key', tabId: 1, text: 'Enter' }, { clientId: 'default' });
+
+  assert.ok(result.evidence.submit, 'an Enter inside a composer gets the submit window');
+  assert.equal(result.effects, 'applied');
+  assert.ok(result.evidence.submit.fired.includes('composer emptied'));
+  assert.equal(wired.thread.textContent, 'sent with the keyboard');
+});
+
+test('the submit watch never carries a sensitive value', async () => {
+  const page = loadPage(`<!doctype html><body>
+    <form id="f"><input id="p" type="password"><button type="submit">Submit</button></form>
+  </body>`);
+  page.window.document.getElementById('p').focus();
+  page.window.document.getElementById('p').value = 'hunter2';
+
+  const armed = await page.call({ type: 'SUBMIT_ARM', ref: null });
+  assert.equal(armed.sensitive, true);
+  assert.equal(armed.text, null);
+  assert.equal(JSON.stringify(armed).includes('hunter2'), false);
+});
+
+test('the classifier marks a submit button, a named Send, and neither for a plain link', () => {
+  const page = loadPage(`<!doctype html><body>
+    <form><button id="s" type="submit">OK</button></form>
+    <button id="named">Post comment</button>
+    <a id="plain" href="/about">About</a>
+  </body>`);
+  const { window, agent } = page;
+  const el = (id) => window.document.getElementById(id);
+
+  assert.equal(agent.isSubmitShaped(el('s'), 'button', 'OK'), true, 'type=submit is submit-shaped whatever it is called');
+  assert.equal(agent.isSubmitShaped(el('named'), 'button', 'Post comment'), true);
+  assert.equal(agent.isSubmitShaped(el('plain'), 'link', 'About'), false);
+  assert.equal(agent.undoClass(el('named'), 'button', 'Post comment'), 'reversible');
+  assert.equal(agent.undoClass(el('named'), 'button', 'Send message'), 'sent');
+});

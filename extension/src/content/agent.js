@@ -302,6 +302,102 @@
     return false;
   }
 
+  // ---------------------------------------------------------------------------
+  // Submit-shaped controls and undo (W2, W7)
+  // ---------------------------------------------------------------------------
+  //
+  // A submit is the one click whose effect is not visible where it was pressed:
+  // the composer empties somewhere else, a row appears further down, a toast
+  // shows for a second. The classifier says which controls are worth the longer
+  // window, and the undo table says whether the site offers a way back.
+
+  const SUBMIT_WORDS = ['send', 'post', 'save', 'publish', 'reply', 'submit'];
+
+  const SUBMIT_RE = new RegExp('(^|[^a-z])(' + SUBMIT_WORDS.join('|') + ')([^a-z]|$)', 'i');
+
+  /** Writes the site can reverse with another control, so W7 can name it. */
+  const REVERSIBLE_WORDS = ['save', 'post', 'publish', 'comment', 'update', 'apply', 'edit', 'rename', 'add'];
+
+  const REVERSIBLE_RE = new RegExp('(^|[^a-z])(' + REVERSIBLE_WORDS.join('|') + ')([^a-z]|$)', 'i');
+
+  /** A message that has left the machine. Nothing on the page takes it back. */
+  const SENT_RE = /(^|[^a-z])(send|reply|sent)([^a-z]|$)/i;
+
+  /** Controls that reverse a write, looked for on the page after one lands. */
+  const UNDO_RE =
+    /(^|[^a-z])(undo|revert|restore|discard|unsend|unpublish|delete|remove|edit|cancel\s+(edit|post|comment))([^a-z]|$)/i;
+
+  function isSubmitShaped(el, role, name) {
+    if (!el) return false;
+    const tag = el.tagName ? el.tagName.toUpperCase() : '';
+    const type = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+    if ((tag === 'BUTTON' || tag === 'INPUT') && type === 'submit') return true;
+    if (tag === 'BUTTON' && !type && el.form) return true;
+    if (!name) return false;
+    if (role && role !== 'button' && role !== 'link' && role !== 'menuitem') return false;
+    return SUBMIT_RE.test(name);
+  }
+
+  /**
+   * Whether a write through this control can be taken back.
+   *
+   * `sent` is a message that has gone: the result says so rather than offering
+   * an undo the page cannot honour. `reversible` is an edit, a comment or a
+   * block, where a control on the page after the write reverses it.
+   */
+  function undoClass(el, role, name) {
+    if (!name) return null;
+    if (SENT_RE.test(name)) return 'sent';
+    if (REVERSIBLE_RE.test(name)) return 'reversible';
+    return null;
+  }
+
+  /** The name of a control on the page that would reverse the write just made. */
+  function findUndoControl() {
+    const candidates = document.querySelectorAll(
+      'button, a[href], [role=button], [role=menuitem], input[type=button], input[type=submit]'
+    );
+    for (const el of candidates) {
+      if (isDisabled(el)) continue;
+      const role = roleOf(el);
+      const name = accessibleName(el, role, true);
+      if (!name || !UNDO_RE.test(name)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) continue;
+      return { name, ref: refFor(el), role };
+    }
+    return null;
+  }
+
+  /** The composer or field a submit would send: the element itself, or the one that has focus. */
+  function composerFor(el) {
+    let node = el || document.activeElement;
+    if (!node) return null;
+    if (isEditableHost(node)) return node;
+    const tag = node.tagName ? node.tagName.toUpperCase() : '';
+    if (tag === 'TEXTAREA' || (tag === 'INPUT' && !/^(button|submit|checkbox|radio|file|image|reset)$/i.test(node.type || ''))) {
+      return node;
+    }
+    // A click on the Send button itself: the composer is the field in its form.
+    const form = (node.form || (node.closest && node.closest('form'))) || null;
+    if (form) {
+      const field = form.querySelector('[contenteditable=""], [contenteditable=true], textarea, input[type=text], input:not([type])');
+      if (field) return field;
+    }
+    return null;
+  }
+
+  function editableText(el) {
+    if (!el) return '';
+    if (isEditableHost(el)) return String(el.textContent || '');
+    if ('value' in el && typeof el.value === 'string') return el.value;
+    return String(el.textContent || '');
+  }
+
+  function statusRegions() {
+    return Array.from(document.querySelectorAll('[role=status], [role=alert], [aria-live]'));
+  }
+
   function roleOf(el) {
     const explicit = el.getAttribute && el.getAttribute('role');
     if (explicit) return explicit.trim().split(/\s+/)[0];
@@ -1350,6 +1446,156 @@
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // The submit watch (W2)
+  // ---------------------------------------------------------------------------
+  //
+  // Runs alongside the ordinary watch and answers a different question. The
+  // ordinary watch says whether anything moved. This one says whether the thing
+  // that was pressed did what a submit does: the composer emptied, the text
+  // turned up somewhere else on the page, or a status region spoke.
+
+  let submitWatch = null;
+
+  /** Text worth looking for after a submit. Two characters cannot be matched safely. */
+  function trackableText(text) {
+    const trimmed = String(text || '').trim();
+    return trimmed.length >= 3 ? trimmed.slice(0, 200) : null;
+  }
+
+  function armSubmitWatch({ ref, text } = {}) {
+    if (submitWatch && submitWatch.observer) submitWatch.observer.disconnect();
+    const el = ref ? resolveRef(ref) : null;
+    const composer = composerFor(el || document.activeElement);
+    const composerText = composer ? editableText(composer) : null;
+    const sensitive = composer ? isSensitiveField(composer) : false;
+
+    const state = {
+      composer,
+      composerSensitive: sensitive,
+      composerBefore: composerText === null ? null : composerText.trim().length,
+      // The text the submit is expected to publish. Never returned, only matched.
+      needle: sensitive ? null : trackableText(text || composerText),
+      statuses: new Map(statusRegions().map((node) => [node, normalize(textOf(node))])),
+      newNode: null,
+      status: null,
+      url: location.href,
+      armedAt: Date.now(),
+      observer: null,
+    };
+
+    const absorb = (records) => {
+      for (const record of records) {
+        if (isOwnRecord(record)) continue;
+        if (!state.newNode && state.needle) {
+          for (const node of record.addedNodes || []) {
+            const content = node.nodeType === 3 ? String(node.nodeValue || '') : normalize(textOf(node));
+            if (content && content.includes(state.needle)) {
+              state.newNode = {
+                tag: node.nodeType === 3 ? 'text' : (node.tagName || '').toLowerCase(),
+                chars: content.length,
+              };
+              break;
+            }
+          }
+        }
+        if (!state.status) {
+          const region = closestStatusRegion(record.target);
+          if (region) {
+            const now = normalize(textOf(region));
+            const was = state.statuses.get(region);
+            if (now && now !== was) {
+              state.status = {
+                role: region.getAttribute('role') || 'aria-live',
+                text: now.slice(0, 160),
+              };
+            }
+          }
+        }
+      }
+    };
+
+    state.absorb = absorb;
+    state.observer = new MutationObserver(absorb);
+    state.observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: false,
+    });
+
+    submitWatch = state;
+    return {
+      ok: true,
+      armed: true,
+      composerTracked: composer !== null,
+      textTracked: state.needle !== null,
+      // What the submit is about to publish, for the audit trail. A sensitive
+      // composer reports nothing, whatever the journal is set to.
+      text: sensitive ? null : state.needle,
+      sensitive,
+    };
+  }
+
+  function closestStatusRegion(node) {
+    let el = node && node.nodeType === 3 ? node.parentElement : node;
+    for (; el && el.getAttribute; el = el.parentElement) {
+      const role = el.getAttribute('role');
+      if (role === 'status' || role === 'alert' || el.hasAttribute('aria-live')) return el;
+    }
+    return null;
+  }
+
+  function readSubmitWatch() {
+    if (!submitWatch) return { ok: false, error: 'no submit window is armed' };
+    const state = submitWatch;
+    // Records still queued describe the same window and would otherwise be lost.
+    state.absorb(state.observer.takeRecords());
+    state.observer.disconnect();
+    submitWatch = null;
+
+    // A status region that was already on the page and changed its text without
+    // a mutation record reaching us is still worth reporting.
+    if (!state.status) {
+      for (const [region, before] of state.statuses) {
+        if (!region.isConnected) continue;
+        const now = normalize(textOf(region));
+        if (now && now !== before) {
+          state.status = { role: region.getAttribute('role') || 'aria-live', text: now.slice(0, 160) };
+          break;
+        }
+      }
+      for (const region of statusRegions()) {
+        if (state.statuses.has(region)) continue;
+        const now = normalize(textOf(region));
+        if (now) {
+          state.status = { role: region.getAttribute('role') || 'aria-live', text: now.slice(0, 160) };
+          break;
+        }
+      }
+    }
+
+    const composerAfter =
+      state.composer && state.composer.isConnected ? editableText(state.composer).trim().length : null;
+    const composerEmptied =
+      state.composerBefore === null || composerAfter === null
+        ? null
+        : state.composerBefore > 0 && composerAfter === 0;
+
+    return {
+      ok: true,
+      composerTracked: state.composer !== null,
+      composerEmptied,
+      composerBefore: state.composerBefore,
+      composerAfter,
+      newNode: state.newNode,
+      status: state.status,
+      urlChanged: state.url !== location.href,
+      url: location.href,
+      windowMs: Date.now() - state.armedAt,
+    };
+  }
+
   /** Scrolls the nearest scrollable ancestor of a point, for when a wheel event did nothing. */
   function scrollByFallback({ x, y, direction = 'down', amount = 3 }) {
     const distance = Math.max(1, Number(amount) || 3) * 100;
@@ -1652,8 +1898,66 @@
         // file input, without ever writing a marker attribute onto it.
         isFileInput,
         multiple: isFileInput ? el.multiple : false,
+        submitShaped: isSubmitShaped(el, role, name),
+        undoClass: undoClass(el, role, name),
       };
     },
+
+    // --- submit verification (W2, W4, W7) ------------------------------------
+
+    /**
+     * What a click or an Enter is about to submit.
+     *
+     * With a ref it describes that control. Without one it reads the focused
+     * element, which is how an Enter inside a composer is classified: the key
+     * carries no target of its own.
+     */
+    SUBMIT_TARGET: (msg) => {
+      const el = msg.ref ? resolveRef(msg.ref) : document.activeElement;
+      if (!el || el === document.body || el === document.documentElement) {
+        return { ok: true, present: false, submitShaped: false, irreversible: false };
+      }
+      if (msg.paymentCategory !== undefined) paymentCategoryPage = Boolean(msg.paymentCategory);
+      const role = roleOf(el);
+      const name = accessibleName(el, role, true);
+      const composer = composerFor(el);
+      const inComposer = Boolean(composer);
+      const form = el.form || (el.closest && el.closest('form'));
+      // An Enter with no ref submits when it lands in a composer or a field
+      // inside a form. The control it presses is the form's own submit button.
+      const implicit = msg.ref
+        ? null
+        : form && form.querySelector('button[type=submit], input[type=submit], button:not([type])');
+      const target = implicit || el;
+      const targetRole = target === el ? role : roleOf(target);
+      const targetName = target === el ? name : accessibleName(target, targetRole, true);
+      return {
+        ok: true,
+        present: true,
+        name: targetName,
+        role: targetRole,
+        ref: refFor(target),
+        composerRef: composer ? refFor(composer) : null,
+        inComposer,
+        submitShaped: msg.ref
+          ? isSubmitShaped(el, role, name)
+          : Boolean(inComposer || form) && (implicit ? isSubmitShaped(implicit, targetRole, targetName) : true),
+        irreversible: isIrreversibleControl(target, targetRole, targetName),
+        undoClass: undoClass(target, targetRole, targetName),
+        sensitive: composer ? isSensitiveField(composer) : false,
+      };
+    },
+
+    SUBMIT_ARM: (msg) => armSubmitWatch({ ref: msg.ref, text: msg.text }),
+
+    SUBMIT_REPORT: async (msg) => {
+      const wait = Math.max(0, Math.min(10000, msg.window ?? 0));
+      if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+      return readSubmitWatch();
+    },
+
+    /** A control on the page that would reverse the write that just landed (W7). */
+    UNDO_CONTROL: () => ({ ok: true, control: findUndoControl() }),
 
     SCROLL_TO: (msg) => {
       const el = resolveRef(msg.ref);
@@ -1840,8 +2144,14 @@
   globalThis.__chromeMcpAgent = {
     IRREVERSIBLE_WORDS,
     SENSITIVE_AUTOCOMPLETE,
+    SUBMIT_WORDS,
+    REVERSIBLE_WORDS,
     isSensitiveField,
     isIrreversibleControl,
+    isSubmitShaped,
+    undoClass,
+    findUndoControl,
+    composerFor,
     scrollableAncestor,
     // D2: the per-session overlay host id, and the shared shadow root the
     // indicator overlay (indicator.js, a separate content script sharing this

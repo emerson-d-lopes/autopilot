@@ -7,7 +7,14 @@ const DEFAULT_BLOCKED = [
   '*.bradesco.com.br', '*.caixa.gov.br',
 ];
 
-const DEFAULTS = { mode: 'allow', blockedHosts: DEFAULT_BLOCKED, allowedHosts: [], grants: {} };
+const DEFAULTS = {
+  mode: 'allow',
+  blockedHosts: DEFAULT_BLOCKED,
+  allowedHosts: [],
+  grants: {},
+  writeAllowlist: [],
+  confirmNotifications: false,
+};
 
 const $ = (id) => document.getElementById(id);
 const lines = (value) => value.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -108,6 +115,8 @@ async function render() {
   }
   $('blocked').value = (policy.blockedHosts || []).join('\n');
   $('allowed').value = (policy.allowedHosts || []).join('\n');
+  $('writeAllowlist').value = (policy.writeAllowlist || []).join('\n');
+  $('confirmNotifications').checked = Boolean(policy.confirmNotifications);
   renderGrants(policy);
 }
 
@@ -120,6 +129,8 @@ $('save').addEventListener('click', async () => {
       mode: selected ? selected.value : 'allow',
       blockedHosts: lines($('blocked').value),
       allowedHosts: lines($('allowed').value),
+      writeAllowlist: lines($('writeAllowlist').value),
+      confirmNotifications: $('confirmNotifications').checked,
     },
   });
   await chrome.storage.local.set({ [SHORTCUT_KEY]: textToShortcuts($('shortcuts').value) });
