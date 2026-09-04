@@ -103,11 +103,15 @@ body{font-family:sans-serif;margin:20px}
 <form id="composer" onsubmit="return false">
   <div id="box" contenteditable="true" role="textbox" aria-label="Message"></div>
   <button id="send" type="submit" disabled>Send</button>
+  <button id="draft" type="button">Save draft</button>
 </form>
+<div id="toast" role="status"></div>
 <ul id="thread"></ul>
 <script>
 const box = document.getElementById('box');
 const send = document.getElementById('send');
+const draft = document.getElementById('draft');
+const toast = document.getElementById('toast');
 const thread = document.getElementById('thread');
 const form = document.getElementById('composer');
 box.addEventListener('input', () => {
@@ -121,6 +125,30 @@ form.addEventListener('submit', () => {
   thread.appendChild(li);
   box.textContent = '';
   send.disabled = true;
+  toast.textContent = 'Message sent';
+  // A 2xx from this origin, which is the network half of the submit evidence.
+  fetch('/api/echo', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sent: text }),
+  }).catch(() => {});
+});
+// The reversible half: a save that leaves a control on the page undoing it.
+draft.addEventListener('click', () => {
+  const text = box.textContent.trim();
+  if (!text) return;
+  toast.textContent = 'Draft saved';
+  if (!document.getElementById('discard')) {
+    const undo = document.createElement('button');
+    undo.id = 'discard';
+    undo.type = 'button';
+    undo.textContent = 'Discard draft';
+    undo.addEventListener('click', () => {
+      undo.remove();
+      toast.textContent = 'Draft discarded';
+    });
+    form.appendChild(undo);
+  }
 });
 send.addEventListener('click', (e) => {
   e.preventDefault();

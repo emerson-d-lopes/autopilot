@@ -248,3 +248,34 @@ Test counts on 2026-09-03, `node --test` per file, no browser running:
 `node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 29 files under `extension/src` and `host`.
 
 The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run, and neither was the live verification pass. Nothing in this merge has been driven against a browser.
+
+## Write actions, confirmation, plan mode, 2026-09-04
+
+Branch `plan/writes` off `plan/integration`. Extension version 0.1.12, which adds the `notifications` permission. Covers PLAN.md Phase 4 items W2, W4, W5 and W7, and Phase 6 items F5 and F6.
+
+What landed:
+
+- **W2, submit verification.** A click on a submit-shaped control (`button[type=submit]`, a bare button inside a form, or an accessible name matching send, post, save, publish, reply or submit) and an Enter inside a composer or a form field get a 3 s window instead of 250 ms. Five signals are looked for and named individually under `evidence.submit.fired`: the composer emptied, a new node carrying the typed text, a 2xx from the page's own origin in the recorder's buffer, a `role=status`, `role=alert` or `aria-live` region that spoke, and a navigation. None of them means `effects: unknown` with the hint `re-read the page before retrying`. A submit is never re-dispatched by the throttle retry, since a submit that shows no local effect may still have reached the server.
+- **W4, confirm mode.** A fourth permission mode. A click or an Enter on a control the W3 classifier marks irreversible is refused once with `confirmation_required` carrying `{token, control, origin, screenshotId}`, and performed when the same call comes back with `confirm: <token>` inside 120 s. Tokens are single use and bound to the tab, the origin and the control name. The options page has a per-origin write allow-list that exempts named hosts, and a switch for in-browser approval, which shows a `chrome.notifications` notification with Allow and Deny and settles the pending call on the button. A notification activates no tab and focuses no window.
+- **W5, audit.** An irreversible action returns a `write` object, and the host copies it into the journal as its own field: the control, the origin, the id of the screenshot taken before the click, what the submit evidence found afterwards, and how it was confirmed. The typed value is kept only when the journal is not in redaction mode and the composer was not a sensitive field. `npm run log` prints a Writes section under the timeline.
+- **W7, undo hints.** A control whose name reads as an edit, a save or a comment is classified reversible, and the result carries `undo` naming a control on the page that would reverse it. A sent message reports `undo: none`.
+- **F5, plan mode.** `declare_plan({origins})` checks a list against the blocklist and grants it for the session. In plan mode every other origin is refused with `origin_blocked` and the hint to declare it, reads included, since the point of one approval is that the user saw the whole scope.
+- **F6, domain transitions.** The session's last acted origin is tracked per client. A call on a different origin is a warning on the result in allow and confirm mode, and needs its own grant in ask mode. A `navigate` is checked again after it lands, so a redirect into a third origin is caught.
+
+The before-screenshot goes through the existing capture path and is held in the extension under its id. Nothing fetches those bytes back yet: the id is a correlation handle in the journal and in the confirmation details, not something a tool can render.
+
+Tests, `node --test` per file on 2026-09-04, no browser running:
+
+| File | Tests | Pass |
+|---|---|---|
+| permissions.test.js | 29 | 29 |
+| verify.test.js | 30 | 30 |
+| journal.test.js | 24 | 24 |
+| campaign-server.test.js | 15 | 15 |
+| parity.test.js | 8 | 8 |
+| a11y, sensitive, batch, aliases, cdp, find, screenshot, sessions, tabs | 165 | 165 |
+| errors, ipc, protocol, redact, registry, profile | 137 | 137 |
+
+`node tools/check-errors-copy.js` reports the copy matches. Nothing on this branch has been driven against a browser.
+
+The fixture at `/composer.html` gained a `role=status` toast, a POST to `/api/echo` after a send, and a Save draft control that leaves a Discard draft button behind, so all five submit signals and both undo branches can be rehearsed offline before a real site is touched.

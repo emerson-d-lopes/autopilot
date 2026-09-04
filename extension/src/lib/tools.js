@@ -1064,14 +1064,14 @@ export const handlers = {
     await tabsLib.assertTabInSession(ctx.clientId, tabId);
 
     if (input.url === 'back' || input.url === 'forward') {
-      await perms.checkPermission({ tool: 'navigate', url: await activeUrl(tabId), toolUseId: ctx.toolUseId });
+      await perms.checkPermission({ tool: 'navigate', url: await activeUrl(tabId), toolUseId: ctx.toolUseId, clientId: ctx.clientId });
       await ensureAttached(tabId);
       await cdp.evaluate(tabId, 'history.' + (input.url === 'back' ? 'back' : 'forward') + '()');
       await tabsLib.waitForLoad(tabId, 15000);
     } else {
       let url = String(input.url);
       if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url;
-      await perms.checkPermission({ tool: 'navigate', url, toolUseId: ctx.toolUseId });
+      await perms.checkPermission({ tool: 'navigate', url, toolUseId: ctx.toolUseId, clientId: ctx.clientId });
       await ensureAttached(tabId);
 
       // A page with unsaved input can hold the navigation with a beforeunload

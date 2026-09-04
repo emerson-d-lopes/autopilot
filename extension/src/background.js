@@ -292,6 +292,7 @@ const REQUIRED_ARGS = {
   resize_window: ['tabId', 'width', 'height'],
   tabs_close: ['tabId'],
   shortcuts_execute: ['shortcutId'],
+  declare_plan: ['origins'],
 };
 
 const COMPUTER_ACTIONS = new Set([
