@@ -189,13 +189,14 @@ function frame(obj) {
  * Starts a real native host with a fake extension on its stdio, so the parking
  * and replay are exercised through the code the browser actually drives.
  */
-async function startHost(name) {
+async function startHost(name, extraEnv = {}) {
   const socket = testPath(name);
   const child = spawn(process.execPath, [join(ROOT, 'host', 'native-host.js')], {
     env: {
       ...process.env,
       CHROME_MCP_SOCKET: socket,
       CHROME_MCP_LOG_DIR: path.join(os.tmpdir(), 'chrome-mcp-ipc-test-journal'),
+      ...extraEnv,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -318,4 +319,38 @@ test('the correlation id travels to the extension unchanged', async (t) => {
   assert.equal(forwarded.callId, 'call_42_abcdef');
   assert.notEqual(forwarded.id, 'mcp_1', 'the host renumbers its own request ids');
   client.end();
+});
+
+// ---------------------------------------------------------------------------
+// Open bug 9: the host reports its own journal settings
+// ---------------------------------------------------------------------------
+//
+// The journal is written by the host, which Chrome spawns, so
+// CHROME_MCP_JOURNAL_REDACT has to be in the browser's environment. A tool
+// reading it in its own process printed the wrong answer whenever the two
+// differed, so the state travels with browser_status.
+
+test('browser_status carries the journal settings of the process that writes it', async (t) => {
+  assert.notEqual(process.env.CHROME_MCP_JOURNAL_REDACT, '1', 'this shell is not redacting');
+  const host = await startHost('journalstate', {
+    CHROME_MCP_JOURNAL_REDACT: '1',
+    CHROME_MCP_JOURNAL_DAYS: '3',
+  });
+  t.after(host.stop);
+
+  const client = await connect(host.socket);
+  const status = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('no browser_status arrived')), 5000);
+    client.on('message', (message) => {
+      if (message.type !== 'browser_status') return;
+      clearTimeout(timer);
+      resolve(message);
+    });
+  });
+  client.end();
+
+  assert.ok(status.journal, 'the status carries a journal block');
+  assert.equal(status.journal.redact, true, "the host's redaction state, not this shell's");
+  assert.equal(status.journal.retentionDays, 3);
+  assert.ok(status.journal.dir, 'and the directory it writes to');
 });

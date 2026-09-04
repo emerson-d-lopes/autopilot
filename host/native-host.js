@@ -12,7 +12,7 @@ import { NativeMessaging } from './protocol.js';
 import { socketPathFor, listen } from './ipc.js';
 import { writeEntry, removeEntry } from './registry.js';
 import { detectProfile } from './profile.js';
-import { record as journal, makeEntry, noteEntry, pruneJournal, JOURNAL_DIR } from './journal.js';
+import { record as journal, makeEntry, noteEntry, pruneJournal, JOURNAL_DIR, redactionOn, retentionDays } from './journal.js';
 import { ResponseQueue } from './response-queue.js';
 
 const LOG_PATH = path.join(os.tmpdir(), 'chrome-mcp-host.log');
@@ -103,7 +103,7 @@ chrome.on('message', (message) => {
       // once the extension has said who it is.
       startListening();
       pruneJournalOnce();
-      broadcast({ type: 'browser_status', connected: true, tools: extensionTools, browser, extensionVersion, generation });
+      broadcast({ type: 'browser_status', connected: true, tools: extensionTools, browser, extensionVersion, generation, journal: journalStatus() });
       return;
 
     case 'pong':
@@ -159,6 +159,19 @@ setInterval(() => {
 // MCP server side
 // ---------------------------------------------------------------------------
 
+/**
+ * What this process does with the journal.
+ *
+ * The host is spawned by Chrome, so CHROME_MCP_JOURNAL_REDACT and
+ * CHROME_MCP_JOURNAL_DAYS have to be in the browser's environment. A tool
+ * reading them in its own process printed "redaction off" while the host was
+ * redacting, and the other way round, so the state travels with the status
+ * message instead of being guessed locally.
+ */
+function journalStatus() {
+  return { dir: JOURNAL_DIR, redact: redactionOn(), retentionDays: retentionDays() };
+}
+
 function broadcast(message) {
   for (const client of clients) {
     try {
@@ -207,7 +220,7 @@ function replayFor(client, sessionId) {
 function onConnection(client) {
   clients.add(client);
   log('mcp client connected, total', clients.size);
-  client.send({ type: 'browser_status', connected: extensionReady, tools: extensionTools, browser, extensionVersion, generation });
+  client.send({ type: 'browser_status', connected: extensionReady, tools: extensionTools, browser, extensionVersion, generation, journal: journalStatus() });
 
   // The session id only arrives with the first message, so a replay cannot
   // happen before then.
