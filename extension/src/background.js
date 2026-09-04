@@ -1,6 +1,6 @@
 // Service worker. Owns the native messaging port and routes tool calls.
 
-import { execute, TOOL_NAMES } from './lib/tools.js';
+import { execute, TOOL_NAMES, refExists } from './lib/tools.js';
 import { parseScript, QuickParseError } from './lib/quick.js';
 import { normalizeCall } from './lib/aliases.js';
 import * as shortcuts from './lib/shortcuts.js';
@@ -302,6 +302,13 @@ const COMPUTER_ACTIONS = new Set([
   'left_click_drag', 'type', 'key', 'scroll',
 ]);
 
+/**
+ * Tools that rebuild a tab's tree and hand out new refs. An item after one of
+ * these on the same tab is using a ref that does not exist yet, so it is not
+ * checked against the tree as it stands at batch start.
+ */
+const TREE_REFRESHING_TOOLS = new Set(['read_page', 'find']);
+
 function describeItem(index, action) {
   const where = action && action.lineNo !== undefined ? 'line ' + action.lineNo : 'item ' + (index + 1);
   return where + ' (' + ((action && action.name) || 'no tool named') + ')';
@@ -342,6 +349,10 @@ export async function validateBatch(actions, ctx) {
 
   const checkedTabs = new Set();
   let createsTab = false;
+  // Refs to resolve before item one runs, and the tabs whose tree an earlier
+  // item in this batch rebuilds.
+  const refChecks = [];
+  const refreshedTabs = new Set();
 
   for (let i = 0; i < actions.length; i++) {
     const raw = actions[i] || {};
@@ -381,6 +392,15 @@ export async function validateBatch(actions, ctx) {
     const tabId = input.tabId;
     if (tabId === undefined || tabId === null || tabId === '$last') continue;
     if (typeof tabId !== 'number') return fail('has a tabId that is not a number.');
+
+    // A ref this item names is checked against the tree as it is now, unless an
+    // earlier item in the batch rebuilds that tab's tree, in which case the ref
+    // it uses is one that item is about to create.
+    if (typeof input.ref === 'string' && input.ref && !refreshedTabs.has(tabId)) {
+      refChecks.push({ index: i, raw, tabId, ref: input.ref });
+    }
+    if (TREE_REFRESHING_TOOLS.has(name)) refreshedTabs.add(tabId);
+
     if (checkedTabs.has(tabId)) continue;
     try {
       await tabsLib.assertTabInSession(ctx.clientId, tabId);
@@ -388,6 +408,25 @@ export async function validateBatch(actions, ctx) {
     } catch (err) {
       return fail('targets tab ' + tabId + ' which this session cannot drive. ' + String((err && err.message) || err));
     }
+  }
+
+  // One RESOLVE_REF per distinct ref, in the order the batch uses them, so the
+  // item reported is the first one that would have failed.
+  const seenRefs = new Map();
+  for (const check of refChecks) {
+    const key = check.tabId + ' ' + check.ref;
+    if (!seenRefs.has(key)) seenRefs.set(key, await refExists(check.tabId, check.ref));
+    if (seenRefs.get(key)) continue;
+    return new ToolError(
+      'batch_invalid',
+      'Batch not run: ' + describeItem(check.index, check.raw) + ' names ' + check.ref +
+        ', which is no longer on the page in tab ' + check.tabId + '.',
+      {
+        effects: 'none',
+        hint: 'Read the page again to get current refs, then send the batch. Nothing ran.',
+        details: { index: check.index, lineNo: check.raw.lineNo, name: check.raw.name, ref: check.ref, tabId: check.tabId },
+      }
+    );
   }
   return null;
 }

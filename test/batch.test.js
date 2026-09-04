@@ -135,3 +135,136 @@ test('a call written for the other extension is normalized before it is judged',
   const bad = await background.validateBatch([item('javascript_tool', { tabId: 1, action: 'javascript_exec' })], ctx);
   assert.match(bad.message, /is missing code/);
 });
+
+// ---------------------------------------------------------------------------
+// Open bug 5: refs are pre-validated too
+// ---------------------------------------------------------------------------
+//
+// A batch with a stale ref at item 5 ran items 1 to 4 and stopped at item 5,
+// because a ref was only resolved when its action executed. Every ref the batch
+// names is resolved before item one runs.
+
+/** Answers RESOLVE_REF for a fixed set of live refs and logs what was asked. */
+function scriptRefs(live) {
+  const asked = [];
+  stub.tabs.sendMessage = async (tabId, message) => {
+    if (message.type !== 'RESOLVE_REF') return {};
+    asked.push({ tabId, ref: message.ref });
+    if (live.includes(message.ref)) return { ok: true, geometry: { width: 10, height: 10, inViewport: true } };
+    return { error: 'ref ' + message.ref + ' is no longer on the page. Re-read the page.', code: 'ref_stale' };
+  };
+  return asked;
+}
+
+test('a stale ref anywhere in the batch stops it before the first item runs', async () => {
+  queries = 0;
+  scriptRefs(['ref_1', 'ref_2']);
+
+  await assert.rejects(
+    () =>
+      background.runBatch(
+        [
+          item('tabs_context', {}),
+          item('computer', { tabId: 1, action: 'left_click', ref: 'ref_1' }),
+          item('computer', { tabId: 1, action: 'left_click', ref: 'ref_2' }),
+          item('computer', { tabId: 1, action: 'left_click', ref: 'ref_99999' }),
+        ],
+        ctx
+      ),
+    (err) => {
+      assert.equal(err.code, 'batch_invalid');
+      assert.equal(err.effects, 'none');
+      assert.match(err.message, /item 4 \(computer\) names ref_99999, which is no longer on the page in tab 1/);
+      assert.match(err.hint, /Read the page again/);
+      assert.equal(err.details.index, 3);
+      assert.equal(err.details.ref, 'ref_99999');
+      assert.equal(err.details.tabId, 1);
+      return true;
+    }
+  );
+  assert.equal(queries, 0, 'the three items before it never ran');
+});
+
+test('every distinct ref is resolved once, and a batch of live refs runs', async () => {
+  queries = 0;
+  const asked = scriptRefs(['ref_1', 'ref_2']);
+
+  assert.equal(
+    await background.validateBatch(
+      [
+        item('computer', { tabId: 1, action: 'left_click', ref: 'ref_1' }),
+        item('form_input', { tabId: 1, ref: 'ref_2', value: 'x' }),
+        item('computer', { tabId: 1, action: 'left_click', ref: 'ref_1' }),
+      ],
+      ctx
+    ),
+    null
+  );
+  assert.deepEqual(
+    asked.map((a) => a.ref),
+    ['ref_1', 'ref_2'],
+    'the repeated ref was resolved once'
+  );
+});
+
+test('a ref an earlier item in the batch is about to create is not pre-validated', async () => {
+  const asked = scriptRefs([]);
+
+  assert.equal(
+    await background.validateBatch(
+      [
+        item('read_page', { tabId: 1 }),
+        item('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' }),
+      ],
+      ctx
+    ),
+    null,
+    'a read_page on the same tab exempts the items after it'
+  );
+  assert.deepEqual(asked, [], 'nothing was resolved against a tree that is about to be rebuilt');
+
+  assert.equal(
+    await background.validateBatch(
+      [
+        item('find', { tabId: 1, query: 'the save button' }),
+        item('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' }),
+      ],
+      ctx
+    ),
+    null,
+    'find refreshes the tree the same way'
+  );
+});
+
+test('a read_page on another tab does not exempt a stale ref on this one', async () => {
+  scriptRefs([]);
+  const err = await background.validateBatch(
+    [
+      item('read_page', { tabId: 2 }),
+      item('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' }),
+    ],
+    { clientId: 'default' }
+  );
+  // Tab 2 is outside the session, so that check fires first. Reordered, the ref
+  // check is the one that fires.
+  assert.match(err.message, /targets tab 2/);
+
+  const refErr = await background.validateBatch(
+    [item('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' })],
+    ctx
+  );
+  assert.equal(refErr.code, 'batch_invalid');
+  assert.match(refErr.message, /names ref_7/);
+});
+
+test('a page that cannot answer does not turn into a batch refusal', async () => {
+  stub.tabs.sendMessage = async () => {
+    throw new Error('Could not establish connection. Receiving end does not exist.');
+  };
+  stub.scripting = { async executeScript() {} };
+  assert.equal(
+    await background.validateBatch([item('computer', { tabId: 1, action: 'left_click', ref: 'ref_1' })], ctx),
+    null
+  );
+  stub.tabs.sendMessage = async () => ({});
+});

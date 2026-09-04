@@ -531,6 +531,25 @@ async function isPaymentCategory(url) {
   }
 }
 
+/**
+ * Whether a ref still names an element on its tab.
+ *
+ * Used by browser_batch to resolve every ref before the first item runs, so a
+ * stale ref at item five costs nothing rather than the side effects of items
+ * one to four. A transport failure answers true: the tab check reports a tab
+ * that cannot be reached, and the item itself reports a page that cannot
+ * answer, so this must not turn either into a batch refusal.
+ */
+export async function refExists(tabId, ref) {
+  try {
+    const resolved = await pageCall(tabId, { type: 'RESOLVE_REF', ref });
+    if (resolved && resolved.ok) return true;
+    return !(resolved && resolved.error);
+  } catch {
+    return true;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // computer
 // ---------------------------------------------------------------------------
