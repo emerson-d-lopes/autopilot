@@ -1,12 +1,12 @@
 # chrome-mcp: status, parity and test coverage
 
-State of the build as of 2026-09-04, extension 0.1.28. 26 tools, 29 test files.
+State of the build as of 2026-09-04, extension 0.1.30. 26 tools, 30 test files.
 
 - Source: about 17,600 lines across the extension, host and tools
 - Tests: about 10,500 lines
 - Verified against Chrome for Testing 152 and against the user's own Chrome 152 on Windows 11
 
-On 2026-09-04 the 23 non-browser files (529 tests) pass. The six browser-driven files were last run by the verification pass described under "Live verification of the merged build", which ran on `plan/integration` before wave 2 was merged in. The merged build has not been driven against a browser.
+On 2026-09-04 the non-browser files pass. The merged build was driven against a browser by the pass described under "Live verification of wave 2", which ran `test/campaign.test.js` (12 of 12) along with 48 checks by hand. The other five browser-driven files were not run.
 
 ## Feature parity with Claude Code's browser integration
 
@@ -369,3 +369,20 @@ Test counts on 2026-09-04, `node --test` per file, no browser running:
 `node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 42 files under `extension/src`, `host` and `tools`.
 
 The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. The merged build has not been driven against a browser: the verification pass ran on `plan/integration` before wave 2 was merged in, so its ten open bugs stand and the wave 2 live checks are still open.
+
+## Live verification of wave 2, 2026-09-04
+
+The pass is written up in `docs/claude-in-chrome-comparison/evidence/VERIFY-0.1.28.md`, one entry per check with the call and the verbatim result. It ran against the development browser started by `node tools/browser.js --interferer`, with `test/fixtures/interferer` loaded so the attach recovery ladder fires on every page, and drove `host/mcp-server.js` from this tree through `tools/mcp-client.js`. The user's Chrome was never driven.
+
+Of the 48 checks: 35 passed, 4 passed after a fix made during the pass, 8 were partial and 1 failed. The deferred work is a separate list, since it needs a signed-in profile.
+
+Five commits landed:
+
+- `7091092` `tools/probe-detect.js` parsed the `javascript` result envelope as the recording, so every run printed "nothing was measured" while the page had recorded a full cadence and a full pointer path. It also now uses `tools/mcp-client.js` rather than its own fallback client. With that fixed, per-key typing measures a 15.7 percent coefficient of variation around a 73 ms mean, against the 1 percent band 0.1.7 produced, and the pointer path draws 3 to 6 points.
+- `935e887` A recording reported the stop call's own latency, about 0.8s, rather than its span, because `gif.stop()` answered in `durationMs` and `runTool` overwrites that field. The span travels as `recordedMs` now. Extension 0.1.29.
+- `8894336` The indicator's pill painted while marked hidden, because `.ind-pill` sets `display:flex` and an author rule beats the user agent's `[hidden]{display:none}`. Every tab being driven carried an empty dark capsule at the bottom of the viewport. Extension 0.1.30.
+- `a981f2e` and `e646106` Fixture work the checks needed: a second file input on `/index.html`, `gifview.html` for decoding a recording's frames with `ImageDecoder`, and an Enter handler on the composer, since a form does not submit implicitly from a contenteditable.
+
+What the pass confirmed on the merged build. No `Runtime.enable` in a session that never reads the console, with all four detector pages reporting no bot across three runs each. Screenshots as JPEG at 2.2x fewer bytes, ten captures in 1301 ms. Hidden-tab capture in 107 ms. A coordinate written against a pre-batch screenshot still landing after the batch took its own. Stop and Resume driven by trusted clicks through the DevTools port. Confirm mode's single-use token, and the write journal with and without redaction. The seven first-pass checks re-run to confirm the merge kept those fixes.
+
+Ten new open bugs are listed at the end of the verification file with their reproductions. The ones worth reading first: the screenshot clip fast path never engages because the plan sizes from the metrics device pixel ratio while the capture returns CSS pixels, so every scaled capture warns and pays for a discarded capture; a `navigate` that changes origin carries no transition warning, because the gate reads the tab's URL before the move; and an unanswered ask-in-browser notification waits the full 120 s host timeout and then reports a renderer failure.
