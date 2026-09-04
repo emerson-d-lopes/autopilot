@@ -1165,6 +1165,25 @@ async function editorInput(input, target) {
 }
 
 // ---------------------------------------------------------------------------
+// Window size
+// ---------------------------------------------------------------------------
+
+/** Two sizes are the same when the window manager rounded by a pixel or two. */
+function nearSize(a, b) {
+  return typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) <= 2;
+}
+
+/** What Chrome says the window is, or null when it cannot be read. */
+async function windowBounds(windowId) {
+  try {
+    const win = await chrome.windows.get(windowId);
+    return { width: win.width, height: win.height, state: win.state };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Tool table
 // ---------------------------------------------------------------------------
 
@@ -1681,17 +1700,45 @@ export const handlers = {
     return { ...settled, navigated, networkIdle, timedOut: load.timedOut };
   },
 
+  /**
+   * Resizes the window a tab is in.
+   *
+   * Never focuses or activates anything. The size is read back from Chrome
+   * rather than assumed, so a window manager that refused the request is
+   * reported as a refusal rather than as a success.
+   */
   resize_window: async (ctx, input) => {
     const tab = await tabsLib.assertTabInSession(ctx.clientId, input.tabId);
     // A maximized or fullscreen window ignores a size, so it is set to normal
     // first. A minimized one is left minimized: restoring it would bring it
     // in front of the user.
     const win = await chrome.windows.get(tab.windowId);
-    const props = { width: Math.max(200, input.width), height: Math.max(200, input.height) };
-    if (win.state === 'maximized' || win.state === 'fullscreen') props.state = 'normal';
+    const size = { width: Math.max(200, input.width), height: Math.max(200, input.height) };
     const before = await pageCall(input.tabId, { type: 'PAGE_STATE' }).catch(() => null);
-    await chrome.windows.update(tab.windowId, props);
+    const boundsBefore = { width: win.width, height: win.height, state: win.state };
+
+    // A maximized or fullscreen window ignores a size. Chrome also ignores the
+    // size when it arrives in the same update as the state change, which is why
+    // a resize to 1000x700 left a maximized window at 1200x900, so the state is
+    // set on its own first. A minimized window is left minimized: restoring it
+    // would bring it in front of the user.
+    if (win.state === 'maximized' || win.state === 'fullscreen') {
+      await chrome.windows.update(tab.windowId, { state: 'normal' });
+      await cdp.sleep(100, input.tabId);
+    }
+    await chrome.windows.update(tab.windowId, size);
     await cdp.sleep(150, input.tabId);
+
+    // The window manager gets one more chance. A window that was maximized a
+    // moment ago sometimes lands on its pre-maximize bounds rather than the
+    // requested ones, and a second update from a settled normal state takes.
+    let after = await windowBounds(tab.windowId);
+    if (after && !(nearSize(after.width, size.width) && nearSize(after.height, size.height))) {
+      await chrome.windows.update(tab.windowId, size).catch(() => {});
+      await cdp.sleep(150, input.tabId);
+      after = await windowBounds(tab.windowId);
+    }
+
     shot.clearScalingContext(input.tabId);
     const state = await pageCall(input.tabId, { type: 'PAGE_STATE' });
 
@@ -1699,25 +1746,44 @@ export const handlers = {
     // The layout viewport is not the outer size once device pixel ratio and
     // browser chrome are taken out, so the result says which number the request
     // was measured against.
-    const requested = { width: props.width, height: props.height };
-    const outer = { width: state.outerWidth, height: state.outerHeight };
+    const requested = { width: size.width, height: size.height };
+    // Chrome's window bounds are the outer size in the same units the request
+    // used, so they are the answer to "did the resize take". The page's
+    // window.outerWidth stands in when the window cannot be read.
+    const outer =
+      after && typeof after.width === 'number'
+        ? { width: after.width, height: after.height }
+        : { width: state.outerWidth, height: state.outerHeight };
     const viewport = state.viewport;
-    const near = (a, b) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) <= 2;
     let matched = 'neither';
-    if (near(outer.width, requested.width) && near(outer.height, requested.height)) matched = 'outer';
-    else if (near(viewport.width, requested.width) && near(viewport.height, requested.height)) matched = 'viewport';
+    if (nearSize(outer.width, requested.width) && nearSize(outer.height, requested.height)) matched = 'outer';
+    else if (nearSize(viewport.width, requested.width) && nearSize(viewport.height, requested.height)) matched = 'viewport';
 
     const warnings = [];
+    const dpr = state.devicePixelRatio;
     if (matched === 'neither') {
       warnings.push(
         'the window ended at ' + outer.width + 'x' + outer.height + ' outer and ' +
           viewport.width + 'x' + viewport.height + ' viewport, neither of which is the requested size'
       );
+      // A request written in device pixels lands short by exactly the ratio, so
+      // saying which reading does match tells the caller what to ask for.
+      if (typeof dpr === 'number' && dpr !== 1) {
+        if (nearSize(Math.round(outer.width * dpr), requested.width) && nearSize(Math.round(outer.height * dpr), requested.height)) {
+          warnings.push(
+            'the outer size in device pixels is the requested size: this display has a device pixel ratio of ' +
+              dpr + ', and chrome.windows.update takes CSS pixels'
+          );
+        }
+      }
+      if (boundsBefore.state === 'minimized') {
+        warnings.push('the window is minimized, which is left alone rather than restored in front of the user');
+      }
     }
     const changed = Boolean(
-      before && (before.outerWidth !== outer.width || before.outerHeight !== outer.height ||
+      before && (before.outerWidth !== state.outerWidth || before.outerHeight !== state.outerHeight ||
         before.viewport.width !== viewport.width || before.viewport.height !== viewport.height)
-    );
+    ) || Boolean(after && (boundsBefore.width !== after.width || boundsBefore.height !== after.height));
 
     return {
       ...state,
@@ -1738,6 +1804,9 @@ export const handlers = {
         before: before ? { outerWidth: before.outerWidth, outerHeight: before.outerHeight, viewport: before.viewport } : undefined,
         after: { outerWidth: outer.width, outerHeight: outer.height, viewport },
         devicePixelRatio: state.devicePixelRatio,
+        // What Chrome says the window is, read back after the update rather
+        // than assumed from the request.
+        windowBounds: { before: boundsBefore, after: after || undefined },
       },
       warnings: changed ? warnings : warnings.concat('no observable change within 150ms'),
     };
