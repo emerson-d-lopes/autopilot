@@ -121,18 +121,94 @@ function contentTokens(tokens) {
   return filtered.length ? filtered : tokens;
 }
 
+/**
+ * Role words that settle what a query is asking for, rather than only nudging
+ * the ranking.
+ *
+ * On GitHub's new-issue page "issue title field" returned twenty markdown
+ * toolbar buttons and "submit new issue button" returned no Create button at
+ * all, while `textbox "Add a title"` and `button "Create ( )"` were both in the
+ * tree. A word from this list is a filter: candidates carrying the role it
+ * names are the ones ranked, and the rest are left out entirely as long as at
+ * least one candidate has it. `title` and `search` stay out of the list, since
+ * they are as often part of a label as a request for a role.
+ */
+const STRONG_ROLE_WORDS = new Set([
+  'field', 'input', 'box', 'textbox', 'textarea', 'button', 'link',
+  'checkbox', 'menu', 'dropdown', 'select', 'tab',
+]);
+
+/**
+ * Words a query uses for the control that completes a form, and the words such
+ * a control is labelled with. "submit new issue button" names GitHub's Create
+ * button, which shares no word with the query at all. Deliberately narrow:
+ * `add` and `continue` label half the toolbar on a page like that.
+ */
+const SUBMIT_INTENT_WORDS = new Set([
+  'submit', 'send', 'post', 'save', 'create', 'publish', 'apply',
+  'confirm', 'update', 'comment', 'done', 'ok', 'finish',
+]);
+
+/** Score for a control labelled as the one that completes what the query names. */
+export const SUBMIT_INTENT_BONUS = 3.5;
+
+/** Roles whose accessible name scopes the controls under it. */
+const FORM_ROLES = new Set(['form', 'search']);
+
 function roleHintsFor(tokens) {
   const roles = new Set();
+  const strongRoles = new Set();
   const consumed = new Set();
+  const strongWords = [];
   for (const hint of ROLE_HINTS) {
     for (const word of hint.words) {
-      if (tokens.includes(word)) {
-        hint.roles.forEach((r) => roles.add(r));
-        consumed.add(word);
+      if (!tokens.includes(word)) continue;
+      hint.roles.forEach((r) => roles.add(r));
+      consumed.add(word);
+      if (STRONG_ROLE_WORDS.has(word)) {
+        hint.roles.forEach((r) => strongRoles.add(r));
+        strongWords.push(word);
       }
     }
   }
-  return { roles, consumed };
+  // A strong word decides the role, so the weak hints go back to the scorer as
+  // ordinary terms. "issue title field" asks for a textbox, and `title` is then
+  // part of the label rather than a request for a heading.
+  if (strongRoles.size) {
+    const kept = new Set();
+    for (const word of consumed) if (STRONG_ROLE_WORDS.has(word)) kept.add(word);
+    return { roles: strongRoles, strongRoles, consumed: kept, strongWords };
+  }
+  return { roles, strongRoles, consumed, strongWords };
+}
+
+/** The `type=` value the tree reported for a node, lowercased. */
+function typeOf(node) {
+  const match = /\btype=(\S+)/.exec(node.matchableAttrs || '');
+  return match ? match[1].toLowerCase() : '';
+}
+
+/** Whether the query named this node's input type, which stands in for its role. */
+function typeNamed(node, terms) {
+  const type = typeOf(node);
+  return Boolean(type) && terms.includes(type);
+}
+
+/**
+ * The accessible name of the nearest enclosing form, by tree indentation.
+ *
+ * On a page whose controls share no word with the query, the form they sit in
+ * often carries it: GitHub's Create button and its title textbox are both
+ * inside the new-issue form, which is how "new" and "issue" reach them.
+ */
+function attachFormNames(nodes) {
+  const stack = [];
+  for (const node of nodes) {
+    while (stack.length && stack[stack.length - 1].depth >= node.depth) stack.pop();
+    node.formName = stack.length ? stack[stack.length - 1].name : '';
+    if (FORM_ROLES.has(node.role) && node.name) stack.push({ depth: node.depth, name: node.name });
+  }
+  return nodes;
 }
 
 /**
@@ -195,18 +271,23 @@ function exactnessBonus(name, nameWords, { queryTokens, exactLabels }) {
  * Name matches dominate, role agreement breaks ties, and an offscreen element
  * loses to an equivalent visible one.
  */
-function scoreNode(node, { phrase, terms, roles, consumed, queryTokens, exactLabels }) {
+function scoreNode(node, { phrase, terms, roles, consumed, queryTokens, exactLabels, submitIntent }) {
   const name = (node.name || '').toLowerCase();
   const attrWords = new Set(tokenize(node.matchableAttrs || ''));
   const nameWords = tokenize(name);
+  // A placeholder is a label a person reads, so it scores above the rest of the
+  // attribute text. The form name scores under both: it is shared by every
+  // control inside it, so it separates the form from the page around it rather
+  // than one control from another.
+  const placeholderMatch = /\bplaceholder=(?:"((?:[^"\\]|\\.)*)"|(\S+))/.exec(node.matchableAttrs || '');
+  const placeholderWords = tokenize(placeholderMatch ? placeholderMatch[1] || placeholderMatch[2] : '');
+  const formWords = tokenize(node.formName || '');
   let score = 0;
 
   // A query that names the control's type ("file input", "email field",
   // "password box") is about that type, and a file input is rendered as a
   // button, so the type has to be able to satisfy the role hint on its own.
-  const typeMatch = /\btype=(\S+)/.exec(node.matchableAttrs || '');
-  const type = typeMatch ? typeMatch[1].toLowerCase() : '';
-  const typeHit = Boolean(type) && terms.includes(type);
+  const typeHit = typeNamed(node, terms);
   if (typeHit) score += 3;
 
   if (name && name === phrase) score += 10;
@@ -214,6 +295,17 @@ function scoreNode(node, { phrase, terms, roles, consumed, queryTokens, exactLab
 
   const exact = exactnessBonus(name, nameWords, { queryTokens, exactLabels });
   score += exact;
+
+  // The query asked for the control that completes the form and this one is
+  // labelled as such. On GitHub's new-issue page that is the whole of what
+  // separates Create from twenty markdown toolbar buttons in the same form.
+  // A submit control is labelled with the action ("Create", "Post comment"),
+  // so the word leading a short name is worth more than the same word buried
+  // in a description of something else ("Add a comment").
+  if (submitIntent && nameWords.length) {
+    if (SUBMIT_INTENT_WORDS.has(nameWords[0]) && nameWords.length <= 3) score += SUBMIT_INTENT_BONUS;
+    else if (nameWords.some((w) => SUBMIT_INTENT_WORDS.has(w))) score += SUBMIT_INTENT_BONUS / 2;
+  }
 
   let matchedTerms = 0;
   let roleWordInName = false;
@@ -233,6 +325,13 @@ function scoreNode(node, { phrase, terms, roles, consumed, queryTokens, exactLab
       else if (word.startsWith(term) && term.length >= 3) best = Math.max(best, 1.6);
       else if (word.includes(term) && term.length >= 4) best = Math.max(best, 1.0);
     }
+    if (best < 1.2) {
+      for (const word of placeholderWords) {
+        if (word === term) best = Math.max(best, 1.2);
+        else if (word.startsWith(term) && term.length >= 3) best = Math.max(best, 0.9);
+      }
+    }
+    if (best < 0.8 && formWords.includes(term)) best = 0.8;
     // Whole words only. Substring matching against attributes was the source of
     // matches that shared no meaning with the query.
     if (best === 0 && attrWords.has(term)) best = 0.7;
@@ -266,16 +365,28 @@ function scoreNode(node, { phrase, terms, roles, consumed, queryTokens, exactLab
  * @param {number} limit
  */
 export function scoreCandidates(treeText, query, limit = 20) {
-  const nodes = parseTree(treeText);
+  const nodes = attachFormNames(parseTree(treeText));
   const rawTokens = tokenize(query);
   const terms = contentTokens(rawTokens);
-  const { roles, consumed } = roleHintsFor(rawTokens);
+  const { roles, strongRoles, consumed } = roleHintsFor(rawTokens);
   const phrase = String(query || '').toLowerCase().trim();
   const exactLabels = quotedLabels(query);
+  const submitIntent = rawTokens.some((t) => SUBMIT_INTENT_WORDS.has(t));
+
+  // The role filter. A query that names a role is about that role, so when the
+  // page has one, everything else is off the list rather than one point behind
+  // it. When nothing on the page carries it, the filter is dropped and the
+  // ranking is the ordinary one, with roleGapNote saying so.
+  const candidates = strongRoles.size
+    ? nodes.filter((n) => strongRoles.has(n.role) || typeNamed(n, terms))
+    : nodes;
+  const ranked = candidates.length ? candidates : nodes;
 
   const scored = [];
-  for (const node of nodes) {
-    const score = scoreNode(node, { phrase, terms, roles, consumed, queryTokens: rawTokens, exactLabels });
+  for (const node of ranked) {
+    const score = scoreNode(node, {
+      phrase, terms, roles, consumed, queryTokens: rawTokens, exactLabels, submitIntent,
+    });
     if (score > 0.5) scored.push({ ...node, score: Math.round(score * 100) / 100 });
   }
 
