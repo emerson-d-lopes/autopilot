@@ -60,6 +60,19 @@
     </div>
 
     <div class="section">
+      <h2>Console capture</h2>
+      <p>Reading the console needs Chrome's <code>Runtime</code> domain, which is the signal a site checks to tell that the browser is being driven through the DevTools protocol. Nothing else needs it: clicking, typing, <code>javascript</code>, page reads and network capture all work with it off.</p>
+      <label class="choice">
+        <input type="radio" name="consoleCapture" value="lazy" />
+        <span>Only while reading<span class="desc">Default. Turned on by the first <code>read_console_messages</code> on a tab and off again by a read that clears the buffer. Messages logged before that first read are lost, and the result says so.</span></span>
+      </label>
+      <label class="choice">
+        <input type="radio" name="consoleCapture" value="always" />
+        <span>From the moment a tab joins<span class="desc">Captures everything since page load, and leaves <code>Runtime</code> enabled for the life of the tab.</span></span>
+      </label>
+    </div>
+
+    <div class="section">
       <h2>Blocked hosts</h2>
       <p>One host per line. A leading <code>*.</code> matches subdomains. Blocked hosts are refused for reading as well as acting.</p>
       <textarea class="textarea" id="blocked" spellcheck="false"></textarea>

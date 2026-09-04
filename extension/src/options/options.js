@@ -62,6 +62,9 @@ function renderGrants(policy) {
 }
 
 const SHORTCUT_KEY = 'shortcuts';
+// Whether the Runtime domain is enabled on the first console read (lazy) or
+// when the tab joins the session (always). See recorder.js.
+const CONSOLE_CAPTURE_KEY = 'consoleCapture';
 // The label the extension sends in its hello frame, so the host can name this
 // browser in list_connected_browsers instead of showing a random id.
 const LABEL_KEY = 'browserLabel';
@@ -93,9 +96,13 @@ document.getElementById('version').textContent = 'v' + chrome.runtime.getManifes
 
 async function render() {
   const policy = await load();
-  const stored = await chrome.storage.local.get([SHORTCUT_KEY, LABEL_KEY]);
+  const stored = await chrome.storage.local.get([SHORTCUT_KEY, LABEL_KEY, CONSOLE_CAPTURE_KEY]);
   $('shortcuts').value = shortcutsToText(stored[SHORTCUT_KEY]);
   $('label').value = stored[LABEL_KEY] || '';
+  const capture = stored[CONSOLE_CAPTURE_KEY] === 'always' ? 'always' : 'lazy';
+  for (const input of document.querySelectorAll('input[name=consoleCapture]')) {
+    input.checked = input.value === capture;
+  }
   for (const input of document.querySelectorAll('input[name=mode]')) {
     input.checked = input.value === policy.mode;
   }
@@ -116,6 +123,8 @@ $('save').addEventListener('click', async () => {
     },
   });
   await chrome.storage.local.set({ [SHORTCUT_KEY]: textToShortcuts($('shortcuts').value) });
+  const capture = document.querySelector('input[name=consoleCapture]:checked');
+  await chrome.storage.local.set({ [CONSOLE_CAPTURE_KEY]: capture && capture.value === 'always' ? 'always' : 'lazy' });
   // The hello frame is sent once at connect time, so a new label reaches the
   // host on the next reconnect rather than straight away.
   await chrome.storage.local.set({ [LABEL_KEY]: $('label').value.trim() });
@@ -125,7 +134,7 @@ $('save').addEventListener('click', async () => {
 });
 
 $('reset').addEventListener('click', async () => {
-  await chrome.storage.local.set({ [STORAGE_KEY]: { ...DEFAULTS } });
+  await chrome.storage.local.set({ [STORAGE_KEY]: { ...DEFAULTS }, [CONSOLE_CAPTURE_KEY]: 'lazy' });
   render();
 });
 

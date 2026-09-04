@@ -10,7 +10,7 @@ It works against the browser you are already signed into, so it can act on Gmail
 - Clicks, types, hovers, scrolls, and drags through CDP, so events arrive with `isTrusted` set
 - Fills form controls in one call, including selects, checkboxes, and React-managed inputs
 - Captures screenshots downscaled to a fixed token budget, with coordinates that map back correctly on any display scaling
-- Reads console output and network requests captured from the moment the tab joined the session
+- Reads network requests captured from the moment the tab joined the session, and console output from the first read onward, which keeps the domain a CDP detector watches off tabs that never ask for it
 - Runs several actions in one round trip with `browser_batch`, or a whole compact script with `quick`
 - Attaches local files to file inputs and to drag-and-drop upload zones
 - Draws a pointer on the page so you can watch what it is doing
@@ -231,4 +231,5 @@ The recovery suite proves the parts that only fail over time: a session survives
 - Cross-origin iframes are reported as leaves, since reading inside one needs a frame-targeted call
 - A JavaScript modal dialog blocks all further extension calls until a human dismisses it, which is a Chrome constraint
 - The CDP debugger banner is visible on tabs the session has attached
+- A site probing for CDP automation can detect the session. `deviceandbrowserinfo.com/are_you_a_bot` returned `isBot: true` on all three runs of the 0.1.7 comparison campaign, with `isAutomatedWithCDP: true` as the only flag set: webdriver, Selenium, Playwright and headless markers all read `false`, and the canvas, WebGL, plugin and user-agent fingerprints matched an unautomated Chrome exactly. Driving the browser through the DevTools protocol is what the project does, so this is a true positive rather than a fixable leak. From 0.1.12 console capture is off until a tool asks for it, which keeps `Runtime.enable` off tabs that never read the console and reduces the surface without removing it. `browserscan.net/bot-detection`, whose own CDP section is named for this check, reported Normal on the same build
 - Completely covering the Chrome window can stall input until the extension raises it again, because Chrome stops the renderer of an occluded window

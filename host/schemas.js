@@ -225,6 +225,13 @@ export const TOOLS = [
           type: 'boolean',
           description: 'For "type": select the field\'s contents first, so the text replaces what is there instead of appending to it.',
         },
+        cadence: {
+          type: 'number',
+          description:
+            'For "type" with perKey: mean milliseconds between keystrokes, default 60. Each interval is drawn ' +
+            'around this mean rather than held constant. Raise it for a field that debounces slowly, lower it to ' +
+            'type faster.',
+        },
         modifiers: { type: 'string', description: 'Held modifiers, e.g. "ctrl", "shift", "ctrl+shift".' },
         scroll_direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
         scroll_amount: { type: 'number', description: 'Wheel ticks. Default 3.' },
@@ -280,8 +287,9 @@ export const TOOLS = [
   {
     name: 'read_console_messages',
     description:
-      'Read console output captured since the tab joined this session, including errors thrown before you looked. ' +
-      'Console output is verbose, so filter with pattern or only_errors rather than reading everything.',
+      'Read console output from the page. Capture starts on the first call for a tab, so the first result says what ' +
+      'it could not see, and later calls return everything since then. Console output is verbose, so filter with ' +
+      'pattern or only_errors rather than reading everything.',
     inputSchema: {
       type: 'object',
       properties: {

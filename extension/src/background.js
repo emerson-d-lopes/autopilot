@@ -8,7 +8,7 @@ import * as tabsLib from './lib/tabs.js';
 import * as recorder from './lib/recorder.js';
 import * as cdp from './lib/cdp.js';
 import * as shot from './lib/screenshot.js';
-import { PermissionDenied } from './lib/permissions.js';
+import { PermissionDenied, checkPermission } from './lib/permissions.js';
 import * as sessions from './lib/sessions.js';
 import { ToolError, isToolError } from './lib/errors.js';
 
@@ -375,12 +375,44 @@ export async function validateBatch(actions, ctx) {
 }
 
 /**
+ * Turns console capture on before a sequence that ends in a console read (D1).
+ *
+ * A quick script that runs an action and then reads the console would otherwise
+ * arm the capture after the action it wanted to see. The tab ids are known
+ * before anything runs, so the arming happens up front and the rest of the
+ * script produces console output into a live buffer.
+ */
+async function armConsoleReads(actions) {
+  const tabIds = new Set();
+  for (const action of actions) {
+    const { name, input } = normalizeCall(action.name, action.input);
+    if (name !== 'read_console_messages') continue;
+    if (input && typeof input.tabId === 'number') tabIds.add(input.tabId);
+  }
+  for (const tabId of tabIds) {
+    try {
+      // The same check the read itself runs, so a blocked origin is not
+      // attached to and does not get Runtime enabled ahead of the refusal.
+      // read_console_messages is read-only, so this consumes no grant.
+      const tab = await chrome.tabs.get(tabId);
+      await checkPermission({ tool: 'read_console_messages', url: tab.url });
+      await recorder.startCapture(tabId);
+      await recorder.enableConsole(tabId);
+    } catch {
+      // A tab that cannot be armed here still arms itself on the read, and a
+      // failure must not stop the batch from running.
+    }
+  }
+}
+
+/**
  * Runs a sequence in one round trip. Stops at the first error so a batch cannot
  * keep acting on a page after a step failed to land.
  */
 export async function runBatch(actions, ctx) {
   const invalid = await validateBatch(actions, ctx);
   if (invalid) throw invalid;
+  await armConsoleReads(actions);
 
   const results = [];
   let lastCreatedTab = null;
