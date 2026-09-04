@@ -944,9 +944,11 @@ async function computerTool(ctx, input) {
       await perms.verifyOriginUnchanged(tabId, url);
 
       // An Enter inside a composer or a form field is a submit with no target
-      // of its own, so the page is asked what it would press (W2, W4).
-      const pressesEnter = /(^|[\s+])enter([\s+]|$)/i.test(String(input.text));
-      const target = pressesEnter
+      // of its own, so the page is asked what it would press (W2, W4). Every
+      // spelling the key parser accepts counts: "Return" pressed Enter and was
+      // invisible to the literal word this used to test for.
+      const entersSubmit = cdp.pressesEnter(input.text);
+      const target = entersSubmit
         ? await pageCall(tabId, { type: 'SUBMIT_TARGET', paymentCategory: await isPaymentCategory(url) }).catch(
             () => null
           )

@@ -1079,6 +1079,56 @@ test('a plain 0, and ctrl held with an unrelated key, are not refused', async ()
 });
 
 // ---------------------------------------------------------------------------
+// Every spelling of Enter is Enter (W2)
+// ---------------------------------------------------------------------------
+
+test('Return, NumpadEnter and a newline all count as pressing Enter', () => {
+  const newline = String.fromCharCode(10);
+  const carriageReturn = String.fromCharCode(13);
+  for (const name of ['Enter', 'enter', 'Return', 'return', 'NumpadEnter', newline, carriageReturn]) {
+    assert.equal(cdp.pressesEnter(name), true, JSON.stringify(name) + ' presses Enter');
+  }
+  assert.equal(cdp.pressesEnter('ctrl+Return'), true, 'a chord ending in Enter submits too');
+  assert.equal(cdp.pressesEnter('Tab Tab Return'), true, 'a sequence is checked key by key');
+});
+
+test('a key that is not Enter is not treated as a submit', () => {
+  for (const name of ['Tab', 'Escape', 'a', 'ctrl+a', 'entertain', '', undefined, null]) {
+    assert.equal(cdp.pressesEnter(name), false, JSON.stringify(name) + ' is not Enter');
+  }
+});
+
+test('Return dispatches the same key event Enter does', async () => {
+  const calls = scriptDebuggerWithParams();
+  await cdp.attach(47);
+  await cdp.pressKeyLoose(47, 'Return');
+  const keys = calls.filter((c) => c.method === 'Input.dispatchKeyEvent');
+  assert.ok(keys.length >= 2, 'a key down and a key up');
+  assert.equal(keys[0].params.key, 'Enter');
+  assert.equal(keys[0].params.windowsVirtualKeyCode, 13);
+  await cdp.detachAll();
+});
+
+test('NumpadEnter presses Enter from the numeric keypad rather than failing', async () => {
+  const calls = scriptDebuggerWithParams();
+  await cdp.attach(48);
+  await cdp.pressKeyLoose(48, 'NumpadEnter');
+  const keys = calls.filter((c) => c.method === 'Input.dispatchKeyEvent');
+  assert.equal(keys[0].params.key, 'Enter');
+  assert.equal(keys[0].params.code, 'NumpadEnter');
+  await cdp.detachAll();
+});
+
+test('a bare newline is Enter rather than a character to insert', async () => {
+  const calls = scriptDebuggerWithParams();
+  await cdp.attach(49);
+  await cdp.pressKeyLoose(49, String.fromCharCode(10));
+  const keys = calls.filter((c) => c.method === 'Input.dispatchKeyEvent');
+  assert.equal(keys[0].params.key, 'Enter');
+  await cdp.detachAll();
+});
+
+// ---------------------------------------------------------------------------
 // Open bug 3: the replacement ladder has a cap
 // ---------------------------------------------------------------------------
 //
