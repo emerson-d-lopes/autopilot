@@ -844,6 +844,12 @@ export function pointerPath(from, to, { steps, rand = Math.random } = {}) {
  * one slice of it and pays for its own dispatch out of that slice, so a path
  * costs the same wall time a single jump plus the gap used to cost. A tab with
  * no known pointer position gets the single move it always got.
+ *
+ * Only the last point waits for an acknowledgement. A hidden tab produces no
+ * frames, so every intermediate move would otherwise pay `sendInput`'s full
+ * ack timeout and a six-point path would cost seconds. The events are queued
+ * in order either way, and the point the press lands on is the one worth
+ * knowing the renderer took.
  */
 async function movePointerTo(tabId, x, y, { modifiers = 0, buttons = 0, onMove, gapMs = 0 } = {}) {
   const from = lastPointer(tabId);
@@ -853,8 +859,14 @@ async function movePointerTo(tabId, x, y, { modifiers = 0, buttons = 0, onMove, 
   for (let i = 0; i < path.length; i++) {
     const point = path[i];
     const before = Date.now();
+    const params = { type: 'mouseMoved', x: point.x, y: point.y, modifiers, buttons };
     if (onMove) onMove(point.x, point.y);
-    await sendInput(tabId, { type: 'mouseMoved', x: point.x, y: point.y, modifiers, buttons });
+    if (i === path.length - 1) {
+      await sendInput(tabId, params);
+    } else {
+      sendNoWait(tabId, 'Input.dispatchMouseEvent', params);
+      setLastPointer(tabId, point.x, point.y);
+    }
     // The slices telescope to exactly gapMs however the points divide it.
     const slice = Math.round((gapMs * (i + 1)) / path.length) - Math.round((gapMs * i) / path.length);
     const wait = slice - (Date.now() - before);

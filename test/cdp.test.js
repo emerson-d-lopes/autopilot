@@ -856,3 +856,42 @@ test('a click with no hover gap waits for nothing', async () => {
   assert.deepEqual(events.waits, [], 'a caller who asked for no gap does not get one back');
   await cdp.detachAll();
 });
+
+test('only the last move on a path waits for an acknowledgement', async () => {
+  // A hidden tab acknowledges nothing, so every awaited move costs the full
+  // ack timeout. A six-point path that waited on each would cost seconds.
+  const events = [];
+  globalThis.chrome.debugger = {
+    attach(_t, _v, done) {
+      chrome.runtime.lastError = null;
+      done();
+    },
+    detach(_t, done) {
+      chrome.runtime.lastError = null;
+      done();
+    },
+    sendCommand(_t, method, params, done) {
+      if (method === 'Input.dispatchMouseEvent') events.push({ ...params });
+      // A move is never acknowledged, which is the hidden-tab case. The press
+      // and everything else answers, so only the moves are being measured.
+      if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseMoved') return;
+      chrome.runtime.lastError = null;
+      done({});
+    },
+    onEvent: { addListener() {}, removeListener() {} },
+    onDetach: { addListener() {} },
+  };
+
+  await cdp.attach(77);
+  cdp.setLastPointer(77, 20, 20);
+  const startedAt = Date.now();
+  await cdp.mouseClick(77, 700, 400, { hoverDelay: 0 });
+  const elapsed = Date.now() - startedAt;
+
+  const moves = events.filter((e) => e.type === 'mouseMoved');
+  assert.ok(moves.length >= 3, 'the path was still dispatched, got ' + moves.length + ' moves');
+  assert.ok(elapsed < 900, 'one ack timeout was paid, not one per point, took ' + elapsed + ' ms');
+  assert.equal(cdp.rendererLooksThrottled(77), true, 'and the missing ack on the target was still noticed');
+  cdp.clearThrottleFlag(77);
+  await cdp.detachAll();
+});
