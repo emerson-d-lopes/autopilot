@@ -202,8 +202,22 @@ With more than one browser connected the browser-driven files pick, in order, `C
 - Cross-origin iframes are reported as leaves
 - A JavaScript modal dialog blocks all further extension calls until a human dismisses it, which is a Chrome constraint
 - The CDP debugger banner is visible on tabs the session has attached
+- A site probing for CDP automation can detect the session. On 0.1.7, `deviceandbrowserinfo.com/are_you_a_bot` returned `isBot: true` on all three runs with `isAutomatedWithCDP: true` as the only flag set, while every spoofable signal read clean: webdriver, Selenium, Playwright and headless markers `false`, and canvas, WebGL, plugin and user-agent fingerprints identical to the same Chrome driven by hand (`docs/claude-in-chrome-comparison/evidence/D-bot-detection.md` section 4). `browserscan.net/bot-detection` reported Normal on the same build, including its own CDP section, so vendors disagree on the heuristic. 0.1.12 makes console capture opt-in, so `Runtime.enable` is never issued on a tab that does not read the console, which reduces the surface without removing it
 - Completely covering the browser window can stall input until the extension raises it again
 - `wait_for_page` cannot catch an update driven by a bare timer with no DOM or network activity, because it has nothing to wait on. `test/campaign.test.js` uses a retry loop for that case
+
+## Phase 7, detectability, 2026-09-04
+
+Branch `plan/detect`, extension 0.1.12. Items D1, D3, D4 and D5 from `docs/claude-in-chrome-comparison/IMPROVEMENTS.md`.
+
+- D1. `Runtime.enable` is no longer part of joining a session. A tab gets `Log`, `Network`, `Page` and `DOM`, and `Runtime` goes on when `read_console_messages` first runs on that tab, then off again on a read that passes `clear: true`. `browser_batch` arms it before the batch starts when a later item reads the console, so an action earlier in the same batch is still captured. The console output logged before the first read is lost, and that read carries a warning saying so. `only_errors` carries a second warning, because an uncaught exception needs the same domain. A `consoleCapture` setting in `chrome.storage.local`, on the options page, restores the always-on behaviour.
+- D3. `typeKeysReal` draws each inter-key interval from a distribution around a mean of 60 ms, plus or minus 40 percent, with a longer pause after roughly one space in seven. The mean is the interval the page sees, so the time the three key events took is subtracted from it, which is what keeps 500 characters inside the 30911 ms the campaign measured on 0.1.7. `computer type` takes a `cadence` argument to set the mean when `perKey` is true.
+- D4. A click or a hover moves the pointer along a bowed path of 3 to 6 `mouseMoved` events from the tab's last known pointer position, dispatched inside the hover gap that was already being spent, so the wall time is unchanged. The last position is recorded in `sendInput` for every `mouseMoved`, so drags and hovers feed it too. A tab with no known position, or a target within 8 px, gets the single move it got before.
+- D5. The README and the list above record what the campaign measured.
+
+`tools/probe-detect.js` drives the campaign fixture and prints the keydown intervals and the mousemove path points the page recorded, so D3 and D4 can be measured rather than assumed. It uses `tools/mcp-client.js` when that file is present and an equivalent client of its own when it is not.
+
+Untested live at the time of writing: everything above is covered by `test/recorder.test.js` and `test/cdp.test.js` against the chrome stub. The CDP trace, the re-run of the four detector pages and the probe output belong to the verification pass.
 
 ## Plan phases 0 to 3 integrated, 2026-09-03
 
