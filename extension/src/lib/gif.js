@@ -191,14 +191,27 @@ export function drawProgressBar(ctx, frameIndex, totalFrames, canvasWidth, canva
   return { ratio, top, barHeight };
 }
 
-/** A small translucent text mark, bottom right, so a shared gif is traceable to its source. */
+/**
+ * A small text mark, bottom right, so a shared gif is traceable to its source.
+ *
+ * Translucent white alone reads on a dark page and vanishes on a light one,
+ * which is every frame of a recording of an ordinary white page. The glyphs
+ * carry a dark stroke behind them, so the mark has contrast against whatever
+ * the page put underneath it.
+ */
 export function drawWatermark(ctx, canvasWidth, canvasHeight, text = 'chrome-mcp') {
+  const x = canvasWidth - 6;
+  const y = canvasHeight - 8;
   ctx.save();
   ctx.font = '10px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'bottom';
-  ctx.fillText(text, canvasWidth - 6, canvasHeight - 8);
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillText(text, x, y);
   ctx.restore();
   return { text };
 }

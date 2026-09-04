@@ -181,6 +181,21 @@ test('the watermark is drawn bottom right', () => {
   assert.ok(text[3] < 270, 'y sits inside the canvas');
 });
 
+test('the watermark strokes the glyphs so it reads on a light page', () => {
+  const { ctx, calls } = makeCtxStub();
+  drawWatermark(ctx, 480, 270);
+  const stroke = calls.find((c) => c[0] === 'strokeText');
+  const fill = calls.find((c) => c[0] === 'fillText');
+  assert.ok(stroke, 'the mark carries a stroke behind the fill');
+  assert.equal(stroke[1], 'chrome-mcp');
+  assert.deepEqual([stroke[2], stroke[3]], [fill[2], fill[3]], 'stroke and fill sit at the same point');
+  const strokeIndex = calls.indexOf(stroke);
+  const fillIndex = calls.indexOf(fill);
+  assert.ok(strokeIndex < fillIndex, 'the stroke is painted first, so the glyphs stay readable');
+  const strokeStyle = calls.filter((c) => c[0] === 'set:strokeStyle').at(-1);
+  assert.match(strokeStyle[1], /^rgba\(0,0,0/, 'the stroke is dark');
+});
+
 // ---------------------------------------------------------------------------
 // P1. applyOverlays: options gate each layer independently
 // ---------------------------------------------------------------------------
