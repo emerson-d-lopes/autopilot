@@ -674,3 +674,31 @@ for (const tool of TOOLS) {
 }
 
 export const TOOL_NAMES = TOOLS.map((t) => t.name);
+
+// ---------------------------------------------------------------------------
+// Required arguments
+// ---------------------------------------------------------------------------
+//
+// The schemas already declare them, and nothing read the declaration: navigate
+// without a url was accepted, undefined was normalized as a bare host, and the
+// tab spent five seconds landing on an error page. The lists below are the
+// schema's own, so a tool that gains a required argument is guarded by
+// declaring it.
+
+/** The `required` list one tool declares. */
+export function requiredArgs(name) {
+  const tool = TOOLS.find((t) => t.name === name);
+  const required = tool && tool.inputSchema && tool.inputSchema.required;
+  return Array.isArray(required) ? required : [];
+}
+
+/**
+ * The required arguments a call is missing.
+ *
+ * `false`, `0` and `""` are values a caller meant to send, so only undefined and
+ * null count as missing.
+ */
+export function missingRequired(name, args = {}) {
+  const input = args && typeof args === 'object' ? args : {};
+  return requiredArgs(name).filter((key) => input[key] === undefined || input[key] === null);
+}

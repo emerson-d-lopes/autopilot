@@ -21,7 +21,7 @@ import {
   devBrowserId,
 } from './registry.js';
 import { SESSION_DOMAINS, registrableDomain } from '../extension/src/lib/sessions.js';
-import { TOOLS, TOOL_NAMES } from './schemas.js';
+import { TOOLS, TOOL_NAMES, missingRequired } from './schemas.js';
 import { encodeGif } from './gif.js';
 import {
   shouldEscalateToModel,
@@ -994,6 +994,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (!TOOL_NAMES.includes(name)) {
     return {
       content: [textBlock(formatError(toError('bad_request', { message: 'Unknown tool: ' + name, id: callId })))],
+      isError: true,
+    };
+  }
+
+  // An argument the tool cannot run without is refused here, before a browser
+  // is chosen or a connection opened. The schema already declared the list.
+  const missing = missingRequired(name, args);
+  if (missing.length) {
+    return {
+      content: [
+        textBlock(
+          formatError(
+            toError('bad_request', {
+              message:
+                name + ' needs ' + missing.join(' and ') +
+                '. The call was refused here, so nothing was sent to the browser.',
+              hint: 'Add ' + missing.join(' and ') + ' and call again.',
+              details: { tool: name, missing },
+              id: callId,
+            })
+          )
+        ),
+      ],
       isError: true,
     };
   }

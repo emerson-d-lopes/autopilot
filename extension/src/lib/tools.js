@@ -9,6 +9,7 @@ import { scoreCandidates, shouldWiden, NARROW_SCOPE_RATIO, FIND_TREE_CHAR_BUDGET
 import * as gif from './gif.js';
 import * as shortcuts from './shortcuts.js';
 import { ToolError, withCode } from './errors.js';
+import { missingRequired, missingRequiredMessage } from './required.js';
 
 const CONTENT_SCRIPT = 'src/content/agent.js';
 const CONTENT_SCRIPTS = [CONTENT_SCRIPT, 'src/content/indicator.js'];
@@ -1826,6 +1827,17 @@ export const TOOL_NAMES = Object.keys(handlers);
 export async function execute(name, input, ctx) {
   const handler = handlers[name];
   if (!handler) throw new ToolError('bad_request', 'unknown tool: ' + name);
+  // A missing required argument is refused here rather than normalized into
+  // something the page can act on. navigate without a url turned undefined into
+  // a bare host and drove the tab to https://undefined.
+  const missing = missingRequired(name, input);
+  if (missing.length) {
+    throw new ToolError('bad_request', missingRequiredMessage(name, missing), {
+      effects: 'none',
+      hint: 'Add ' + missing.join(' and ') + ' and call again.',
+      details: { tool: name, missing },
+    });
+  }
   const context = ctx || {};
   context.warnings = [];
   try {

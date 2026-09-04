@@ -73,6 +73,42 @@ test('a missing required argument names the item', async () => {
   );
 });
 
+// ---------------------------------------------------------------------------
+// The same check on a direct call
+// ---------------------------------------------------------------------------
+
+test('a direct call missing a required argument is refused before it runs', async () => {
+  const { execute } = await import('../extension/src/lib/tools.js');
+  await assert.rejects(
+    () => execute('navigate', { tabId: 1 }, ctx),
+    (err) => {
+      assert.equal(err.code, 'bad_request');
+      assert.equal(err.effects, 'none');
+      assert.match(err.message, /navigate needs url/);
+      assert.deepEqual(err.details.missing, ['url']);
+      return true;
+    },
+    'navigate without a url used to drive the tab to https://undefined'
+  );
+  await assert.rejects(
+    () => execute('form_input', { tabId: 1, ref: 'ref_1' }, ctx),
+    /form_input needs value/
+  );
+  await assert.rejects(
+    () => execute('computer', { action: 'left_click', ref: 'ref_1' }, ctx),
+    /computer needs tabId/
+  );
+});
+
+test('a direct call carrying every required argument is not refused by the check', async () => {
+  const { execute } = await import('../extension/src/lib/tools.js');
+  const { missingRequired } = await import('../extension/src/lib/required.js');
+  assert.deepEqual(missingRequired('navigate', { tabId: 1, url: 'https://a.test/' }), []);
+  // tabs_context declares nothing required and still runs.
+  const result = await execute('tabs_context', {}, ctx);
+  assert.ok(result);
+});
+
 test('an unknown computer action is caught before anything is dispatched', async () => {
   await assert.rejects(
     () => background.runBatch([item('computer', { tabId: 1, action: 'left_clik', ref: 'ref_1' })], ctx),
