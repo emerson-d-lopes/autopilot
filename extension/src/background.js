@@ -821,6 +821,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // a call this worker made.
 tabsLib.resetGroupStatuses().catch(() => {});
 
+// chrome.runtime.reload() throws this worker away with everything it held, so
+// the session table is read back and its tabs put into their group again. The
+// first tabs_context reports the ones that are gone.
+tabsLib.ensureRestored().catch(() => {});
+
 // R7. A tab a session tab opened joins that session's group, so the click that
 // opened it can name it and the caller can act on it. Unselected, never
 // activated.
@@ -834,6 +839,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   recorder.clearTab(tabId);
   tabsLib.forgetAdopted(tabId);
+  tabsLib.forgetRemovedTab(tabId).catch(() => {});
 });
 
 chrome.tabs.onUpdated.addListener((tabId, info) => {

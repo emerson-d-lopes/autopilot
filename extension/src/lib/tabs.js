@@ -8,9 +8,200 @@ import * as cdp from './cdp.js';
 
 const GROUP_TITLE = 'chrome-mcp';
 const STORAGE_KEY = 'tabGroups';
+const SESSION_TABLE_KEY = 'sessionTable';
 
 /** @type {Map<string, number>} clientId -> tabGroupId */
 const sessionGroups = new Map();
+
+// ---------------------------------------------------------------------------
+// The session table, so a worker restart does not cost the session
+// ---------------------------------------------------------------------------
+//
+// chrome.runtime.reload() throws the service worker away with everything it
+// held in memory. The group id survived in storage.local, but which tabs the
+// session owned did not, so tabs_context after a reload returned an empty list
+// and the tab ids the caller was holding reported that they had been closed.
+//
+// The table is written on every change and read back at worker start. Tabs that
+// still exist are put back in the session's group, and the ones that are gone
+// are held for the first tabs_context to report.
+
+/** @type {Map<string, {tabIds: number[], groupId: number|null, browserId: string|null, at: number}>} */
+const sessionTable = new Map();
+
+/** @type {Map<string, number[]>} clientId -> tab ids that were gone at restore */
+const goneTabs = new Map();
+
+let cachedBrowserId = null;
+
+async function currentBrowserId() {
+  if (cachedBrowserId) return cachedBrowserId;
+  try {
+    const stored = await chrome.storage.local.get('browserId');
+    cachedBrowserId = stored.browserId || null;
+  } catch {
+    cachedBrowserId = null;
+  }
+  return cachedBrowserId;
+}
+
+/**
+ * Writes the table to both storage areas.
+ *
+ * storage.session is the right home for state that belongs to this browser run.
+ * storage.local is written as well because a reload of the extension clears the
+ * session area, which is the case this exists for.
+ */
+async function persistSessionTable() {
+  const payload = Object.fromEntries(sessionTable);
+  const areas = [chrome.storage.session, chrome.storage.local];
+  for (const area of areas) {
+    if (!area || typeof area.set !== 'function') continue;
+    try {
+      await area.set({ [SESSION_TABLE_KEY]: payload });
+    } catch {
+      /* a storage area that refuses a write must not fail the call that made it */
+    }
+  }
+}
+
+async function readSessionTable() {
+  for (const area of [chrome.storage.session, chrome.storage.local]) {
+    if (!area || typeof area.get !== 'function') continue;
+    try {
+      const stored = await area.get(SESSION_TABLE_KEY);
+      const table = stored && stored[SESSION_TABLE_KEY];
+      if (table && typeof table === 'object' && Object.keys(table).length) return table;
+    } catch {
+      /* try the other area */
+    }
+  }
+  return {};
+}
+
+/**
+ * Records which tabs a session owns right now.
+ *
+ * Called after anything that changes group membership, so what is on disk is
+ * never behind what Chrome has.
+ */
+export async function recordSession(clientId) {
+  if (!clientId) return;
+  const groupId = sessionGroups.has(clientId) ? sessionGroups.get(clientId) : null;
+  let tabIds = [];
+  if (groupId !== null && groupId !== undefined) {
+    const tabs = await chrome.tabs.query({ groupId }).catch(() => []);
+    tabIds = tabs.map((t) => t.id).filter((id) => typeof id === 'number');
+  }
+  sessionTable.set(clientId, {
+    tabIds,
+    groupId: groupId === undefined ? null : groupId,
+    browserId: await currentBrowserId(),
+    at: Date.now(),
+  });
+  await persistSessionTable();
+}
+
+/** Drops a closed tab from the table, so a restart does not report it twice. */
+export async function forgetRemovedTab(tabId) {
+  let changed = false;
+  for (const [clientId, entry] of sessionTable) {
+    if (!entry.tabIds.includes(tabId)) continue;
+    sessionTable.set(clientId, { ...entry, tabIds: entry.tabIds.filter((id) => id !== tabId) });
+    changed = true;
+  }
+  if (changed) await persistSessionTable();
+}
+
+/**
+ * Puts the session table back after a worker restart.
+ *
+ * Nothing here activates a tab or focuses a window: a tab that fell out of its
+ * group is grouped again, which leaves it exactly where it was.
+ */
+export async function restoreSessions() {
+  const stored = await readSessionTable();
+  await loadGroups();
+  let restoredTabs = 0;
+  let missing = 0;
+
+  for (const [clientId, entry] of Object.entries(stored)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const alive = [];
+    const gone = [];
+    for (const tabId of Array.isArray(entry.tabIds) ? entry.tabIds : []) {
+      try {
+        await chrome.tabs.get(tabId);
+        alive.push(tabId);
+      } catch {
+        gone.push(tabId);
+      }
+    }
+
+    let groupId = entry.groupId === undefined ? null : entry.groupId;
+    if (!(await groupExists(groupId))) groupId = null;
+
+    if (alive.length) {
+      try {
+        if (groupId === null) {
+          groupId = await chrome.tabs.group({ tabIds: alive });
+          await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'purple' }).catch(() => {});
+        } else {
+          const inGroup = new Set((await chrome.tabs.query({ groupId }).catch(() => [])).map((t) => t.id));
+          const strays = alive.filter((id) => !inGroup.has(id));
+          if (strays.length) await chrome.tabs.group({ tabIds: strays, groupId });
+        }
+        sessionGroups.set(clientId, groupId);
+        restoredTabs += alive.length;
+      } catch {
+        /* the tabs went away between the get and the group */
+      }
+    } else if (groupId !== null) {
+      sessionGroups.set(clientId, groupId);
+    }
+
+    if (gone.length) {
+      goneTabs.set(clientId, gone);
+      missing += gone.length;
+    }
+    sessionTable.set(clientId, {
+      tabIds: alive,
+      groupId,
+      browserId: entry.browserId === undefined ? null : entry.browserId,
+      at: Date.now(),
+    });
+  }
+
+  await persistGroups();
+  await persistSessionTable();
+  return { sessions: Object.keys(stored).length, tabs: restoredTabs, missing };
+}
+
+let restorePromise = null;
+
+/** Restores once per worker, and lets anything that needs the table wait for it. */
+export function ensureRestored() {
+  if (!restorePromise) {
+    restorePromise = restoreSessions().catch(() => ({ sessions: 0, tabs: 0, missing: 0 }));
+  }
+  return restorePromise;
+}
+
+/** The tabs this session lost across the restart, reported once. */
+export function takeMissingTabs(clientId) {
+  const gone = goneTabs.get(clientId) || [];
+  goneTabs.delete(clientId);
+  return gone;
+}
+
+/** Drops every restore record. Tests only. */
+export function resetSessionTable() {
+  sessionTable.clear();
+  goneTabs.clear();
+  sessionGroups.clear();
+  restorePromise = null;
+  cachedBrowserId = null;
+}
 
 async function loadGroups() {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
@@ -224,6 +415,7 @@ export function resumeSession(clientId) {
  * createIfEmpty is set and none exists.
  */
 export async function tabsContext(clientId, { createIfEmpty = false } = {}) {
+  await ensureRestored();
   let tabs = await listGroupTabs(clientId);
 
   if (!tabs.length && createIfEmpty) {
@@ -241,6 +433,11 @@ export async function tabsContext(clientId, { createIfEmpty = false } = {}) {
       /* the group went away between the two calls */
     }
   }
+  // The tabs the session had before the worker restarted that are no longer
+  // open. Reported once, on the first listing after the restart, so a caller
+  // holding one of those ids learns why it stopped working.
+  const missingTabs = takeMissingTabs(clientId);
+  await recordSession(clientId);
   return {
     tabGroupId: groupId,
     groupTitle,
@@ -252,6 +449,10 @@ export async function tabsContext(clientId, { createIfEmpty = false } = {}) {
       status: t.status,
       windowId: t.windowId,
     })),
+    missingTabs: missingTabs.length ? missingTabs : undefined,
+    warnings: missingTabs.length
+      ? ['tab ' + missingTabs.join(', ') + ' did not survive the extension restart and is no longer open']
+      : [],
   };
 }
 
@@ -306,6 +507,7 @@ export async function createTab(clientId, { url = 'about:blank', newWindow = fal
     await chrome.tabs.group({ tabIds: [tab.id], groupId });
   }
 
+  await recordSession(clientId);
   return { id: tab.id, url: tab.url, windowId: tab.windowId, tabGroupId: groupId };
 }
 
@@ -343,6 +545,7 @@ export async function closeTab(clientId, tabId) {
   const tab = await assertTabInSession(clientId, tabId);
   const replaced = await keepWindowAlive(clientId, tab);
   await chrome.tabs.remove(tabId);
+  await recordSession(clientId);
   return { ok: true, keptWindowOpen: replaced };
 }
 
@@ -381,6 +584,7 @@ export async function adoptTab(clientId, tabId) {
   } else {
     await chrome.tabs.group({ tabIds: [tabId], groupId });
   }
+  await recordSession(clientId);
   return { tabId, tabGroupId: groupId };
 }
 
@@ -446,6 +650,7 @@ export async function adoptOpenedTab(tab) {
   const seen = adoptedByOpener.get(openerTabId) || [];
   if (!seen.includes(tab.id)) seen.push(tab.id);
   adoptedByOpener.set(openerTabId, seen);
+  await recordSession(found.clientId);
   return { openerTabId, tabId: tab.id, tabGroupId: found.groupId };
 }
 
@@ -522,6 +727,7 @@ export async function replaceSessionTab(tabId) {
   cdp.forgetTab(tabId);
   await chrome.tabs.remove(tabId).catch(() => {});
   if (url !== 'about:blank') await waitForLoad(created.id, 15000);
+  await recordSession(clientId);
 
   return { clientId, tabGroupId: groupId, oldTabId: tabId, newTabId: created.id, url };
 }
@@ -544,6 +750,7 @@ export async function releaseSession(clientId, { closeEmptyOnly = true } = {}) {
     sessionGroups.delete(clientId);
     await persistGroups();
   }
+  await recordSession(clientId);
   return { closed: toClose.length, remaining: tabs.length - toClose.length };
 }
 
