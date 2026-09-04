@@ -627,3 +627,22 @@ The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, 
 1. The session restore, driven by stopping the worker from `chrome://serviceworker-internals`. `tabs_context` after the restart must list both tabs under their old ids, in their group.
 2. A confirmation toast left alone for the deadline, which must still time out, and one answered deliberately after it has been on screen a few seconds, which must be taken.
 3. The image a `confirmation_required` names, which must carry no orange border and no Stop capsule.
+
+## Live verification of the bugs3 merge and the fourth pass fixes, 2026-09-04
+
+Extension 0.1.39, branch `plan/integration2`, written up in `docs/claude-in-chrome-comparison/evidence/VERIFY-0.1.39.md`. This is the fifth live pass. It drove the five `plan/bugs3` fixes and the three fixes for what the fourth pass opened, none of which had been run against a browser.
+
+All eight hold, on the development browser `bwlhg5ra0` with the interferer loaded. The user's Chrome was never driven and nothing activated a tab or focused a window.
+
+- A session survives a service worker restart. Two tabs, the worker stopped from `chrome://serviceworker-internals` with a trusted click and again with `Target.closeTarget`, proved restarted both times by a changed target id and a lost `globalThis` marker. `tabs_context` lists both tabs under their old ids in their old group, and `read_page` works. A session whose tabs are really closed still empties.
+- A stray click on the confirmation toast is not an answer. An Allow at 102 ms is ignored and the call waits out its 60 s. Fourteen clicks between 231 and 4294 ms, five of them past the settle window, approve nothing. One Allow at 3118 ms approves and the write row reads `confirmedBy: "notification"`. A Deny at 3022 ms comes back in 3 ms. The options page checkbox reads off with no stored setting, and the warning paragraph under it names the three rules.
+- The before-write capture hides the acting indicator. The stored image a `confirmation_required` points at has no orange border and no Stop capsule, against a raw `Page.captureScreenshot` of the same tab with the indicator forced on, which has both. The overlay host is back to `display: block` after the capture.
+- `get_page_text` on `/feed.html` returns 433 characters against `main.innerText`'s 439, with `rejectedHidden` at 2, all three names and quotes present and the collapsed and invisible copy absent.
+- Save draft and Close issue both get the 3000 ms window, with `undo: "Discard draft"` and `undo: "Reopen issue"`. A press that opens a modal reports `applied` with the missing submit evidence as a warning and no hint.
+- `find "issue title field"` on the new-issue page returns the title textbox first and no toolbar buttons, `find "submit new issue button"` puts Create at match 0, and a query naming a role the page does not carry gets the note in `warnings` and under `evidence.roleGap`.
+
+Regression on all four earlier passes reproduced their results: first-pass 6, 7, 17, 24, 25, 28, 29, second-pass 1, 6, 10, 20, third-pass 1, 2, 3, 5, 6, 8, and fourth-pass 1, 2, 3, 5, 6, 7, 9, 11, 12. `node --test test/campaign.test.js` is 12 of 12. `npm run bench` and `npm run bench:screenshot` are in the write-up.
+
+Commit made during the pass: `3c253d6`, the fixture pages checks 11 to 14 needed. `/composer.html` gets a Close issue control that swaps to Reopen issue and a Delete draft press that opens a modal, and `/newissue.html` is new: a title field, a twenty-button markdown toolbar and a Create button. `test/campaign-server.test.js` covers the routes, 17 of 17. Nothing under `extension/` changed, so the manifest stayed at 0.1.39.
+
+One open bug. Ten screenshots take 1501 ms on a freshly launched browser and up to 19098 ms on the instance that had been up for the whole pass, with every other bench row unchanged and the payloads byte-identical. Tab count, capture count, attached tabs, session count and the pass's own worker instrumentation were each measured on a fresh browser and none reproduced it. Restarting the browser clears it. Attribution is unresolved and it may be Chrome for Testing rather than this code.
