@@ -581,3 +581,49 @@ Test counts on 2026-09-04, `node --test --test-concurrency=1` per file, no brows
 The 23 files excluding `campaign-server` run together as 642 of 642. `node tools/check-errors-copy.js` reports the extension copy matches, and `node --check` passes on all 43 files under `extension/src`, `host` and `tools`.
 
 The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. The live checks these five ask for are the fixture pages, not LinkedIn or GitHub: `get_page_text` on `/feed.html` against `javascript` reading `feedInnerTextLength()`, a click on the composer fixture's Save draft and on a Close issue control, a click that opens a modal, and `find "issue title field"` and `find "submit new issue button"` on a page carrying both a title textbox and a Create button.
+
+## Fixes for the three bugs the fourth pass opened, 2026-09-04
+
+Extension 0.1.39, branch `plan/integration2`, with `plan/bugs3` merged in. The three bugs are the ones `docs/claude-in-chrome-comparison/evidence/VERIFY-0.1.34.md` left open. None of the three fixes has been driven against a browser.
+
+- A session survives a service worker restart. Check 13: with two tabs in a session and the worker stopped from `chrome://serviceworker-internals`, `read_page` on a live tab returned `tab_gone` and `tabs_context` listed nothing with a null group, while the DevTools page list showed both tabs open. The persisted record was rewritten to `{groupId: null, tabIds: []}` about 18 s after the stop with no tool call. `restoreSessions` persisted whatever it computed, so a restore that read nothing destroyed the record it was reading. Every write to the table goes through `persistSessionTable` now, it waits for the restore, and emptying a record has to be proved: every tab id in it has to answer that it is gone. `chrome.tabs.get` rejecting with anything but "No tab with id" is the API declining to answer, so that id stays. A record the gate rescues is put back through the same `reviveEntry` the restore uses, so its group and its tab ids come back with it. A session whose tabs the user really closed still empties.
+- A stray click on the confirmation toast is not an answer. The finding under check 8: `chrome.notifications.onButtonClicked` fired with index 0 while nobody was answering, at 2.6 s, 4.4 s, 8.4 s and 23.6 s in different runs, and once as fourteen activations between 13.6 s and 18.1 s. A click in the first 1500 ms is ignored, an Allow that follows another click within 500 ms is ignored, Allow is accepted once per prompt, and a click on the toast body counts as a click without being an answer. Deny is taken as soon as the settle window has passed. The switch was already off in `DEFAULT_POLICY`, and the options page now says so under the checkbox along with the risk: a toast over the screen can be hit by mistake.
+- The before-write capture hides the acting indicator. Open bug 3: the image a `confirmation_required` points at showed the orange border and the red Stop capsule. `captureBeforeWrite` goes through `hideForCapture` now, the same call the screenshot and zoom paths make, and restores the indicator in a `finally`.
+
+Test counts on 2026-09-04, `node --test --test-concurrency=1` over the 24 non-browser files, no browser running:
+
+| File | Tests | Pass |
+|---|---|---|
+| a11y.test.js | 55 | 55 |
+| aliases.test.js | 6 | 6 |
+| batch.test.js | 16 | 16 |
+| campaign-server.test.js | 15 | 15 |
+| cdp.test.js | 67 | 67 |
+| errors.test.js | 44 | 44 |
+| find.test.js | 59 | 59 |
+| gif.test.js | 34 | 34 |
+| indicator.test.js | 10 | 10 |
+| ipc.test.js | 18 | 18 |
+| journal.test.js | 28 | 28 |
+| parity.test.js | 12 | 12 |
+| permissions.test.js | 42 | 42 |
+| probe-detect.test.js | 8 | 8 |
+| profile.test.js | 20 | 20 |
+| protocol.test.js | 14 | 14 |
+| recorder.test.js | 12 | 12 |
+| redact.test.js | 22 | 22 |
+| registry.test.js | 20 | 20 |
+| screenshot.test.js | 52 | 52 |
+| sensitive.test.js | 16 | 16 |
+| sessions.test.js | 14 | 14 |
+| tabs.test.js | 30 | 30 |
+| verify.test.js | 57 | 57 |
+| **Total** | **671** | **671** |
+
+`node tools/check-errors-copy.js` reports the extension copy matches, and `node --check` passes on all 43 files under `extension/src`, `host` and `tools`.
+
+The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run. What the live pass has to check:
+
+1. The session restore, driven by stopping the worker from `chrome://serviceworker-internals`. `tabs_context` after the restart must list both tabs under their old ids, in their group.
+2. A confirmation toast left alone for the deadline, which must still time out, and one answered deliberately after it has been on screen a few seconds, which must be taken.
+3. The image a `confirmation_required` names, which must carry no orange border and no Stop capsule.
