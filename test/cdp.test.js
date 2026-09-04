@@ -203,7 +203,38 @@ test('wake sets focus emulation and an active lifecycle state once per attachmen
   await cdp.detachAll();
 });
 
-test('a hidden tab is captured through one screencast frame', async () => {
+test('a hidden tab is captured from the renderer, which cannot hold a stale surface', async () => {
+  cdp.resetRendererCaptureProbe();
+  const calls = scriptDebugger();
+  chrome.debugger.onEvent = { addListener: () => {}, removeListener: () => {} };
+  let params = null;
+  const plainSend = chrome.debugger.sendCommand;
+  chrome.debugger.sendCommand = (target, method, sent, done) => {
+    if (method === 'Page.getLayoutMetrics') {
+      chrome.runtime.lastError = null;
+      done({ cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } });
+      return;
+    }
+    if (method === 'Page.captureScreenshot') {
+      params = sent;
+      calls.push(method);
+      chrome.runtime.lastError = null;
+      done({ data: 'RENDERER' });
+      return;
+    }
+    plainSend(target, method, sent, done);
+  };
+  chrome.tabs.get = async () => ({ id: 14, active: false, windowId: 1 });
+  await cdp.attach(14);
+  const data = await cdp.captureScreenshot(14, { format: 'png' });
+  assert.equal(data, 'RENDERER');
+  assert.equal(params.fromSurface, false, 'read from the renderer, not the compositor surface');
+  assert.ok(!calls.includes('Page.startScreencast'), 'no screencast is needed when the renderer answers');
+  await cdp.detachAll();
+});
+
+test('a hidden tab falls back to a screencast frame when the renderer capture is refused', async () => {
+  cdp.resetRendererCaptureProbe();
   const calls = scriptDebugger();
   const listeners = [];
   chrome.debugger.onEvent = {
@@ -216,6 +247,12 @@ test('a hidden tab is captured through one screencast frame', async () => {
       calls.push(method);
       chrome.runtime.lastError = null;
       done({ cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } });
+      return;
+    }
+    if (method === 'Page.captureScreenshot') {
+      chrome.runtime.lastError = { message: 'fromSurface is not supported' };
+      done();
+      chrome.runtime.lastError = null;
       return;
     }
     if (method === 'Page.startScreencast') {
@@ -233,10 +270,62 @@ test('a hidden tab is captured through one screencast frame', async () => {
   await cdp.attach(12);
   const data = await cdp.captureScreenshot(12, { format: 'png' });
   assert.equal(data, 'FRAME');
-  assert.ok(calls.includes('Page.startScreencast'));
+  assert.equal(
+    calls.filter((c) => c === 'Page.startScreencast').length,
+    2,
+    'screencasts are opened until two carry the same image, which an unchanged page reaches on the second'
+  );
   assert.ok(calls.includes('Page.stopScreencast'), 'the screencast is stopped after the frame');
-  assert.ok(!calls.includes('Page.captureScreenshot'), 'no surface capture was attempted');
   assert.equal(listeners.length, 0, 'the frame listener is removed');
+  const wakeIndex = calls.indexOf('Page.setWebLifecycleState');
+  assert.ok(wakeIndex !== -1, 'the tab is woken, since a sleeping tab emits no frame at all');
+  assert.ok(wakeIndex < calls.indexOf('Page.startScreencast'), 'the wake comes before the screencast');
+  await cdp.detachAll();
+});
+
+test('a screencast that produces no frame is retried once after a forced wake', async () => {
+  cdp.resetRendererCaptureProbe();
+  const calls = scriptDebugger();
+  const listeners = [];
+  chrome.debugger.onEvent = {
+    addListener: (fn) => listeners.push(fn),
+    removeListener: (fn) => listeners.splice(listeners.indexOf(fn), 1),
+  };
+  let starts = 0;
+  const plainSend = chrome.debugger.sendCommand;
+  chrome.debugger.sendCommand = (target, method, params, done) => {
+    if (method === 'Page.getLayoutMetrics') {
+      chrome.runtime.lastError = null;
+      done({ cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } });
+      return;
+    }
+    if (method === 'Page.captureScreenshot') {
+      chrome.runtime.lastError = { message: 'fromSurface is not supported' };
+      done();
+      chrome.runtime.lastError = null;
+      return;
+    }
+    if (method === 'Page.startScreencast') {
+      starts++;
+      calls.push(method);
+      chrome.runtime.lastError = null;
+      done({});
+      // The first screencast stays silent, which is what a sleeping tab does.
+      // Everything after the forced wake answers, and two matching frames end
+      // the settle loop.
+      if (starts > 1) {
+        setTimeout(() => listeners.slice().forEach((fn) => fn({ tabId: 13 }, 'Page.screencastFrame', { data: 'SECOND', sessionId: 1 })), 5);
+      }
+      return;
+    }
+    plainSend(target, method, params, done);
+  };
+  chrome.tabs.get = async () => ({ id: 13, active: false, windowId: 1 });
+  await cdp.attach(13);
+  const data = await cdp.captureScreenshot(13, { format: 'png', screencastTimeout: 400 });
+  assert.equal(data, 'SECOND');
+  assert.equal(starts, 3, 'one silent screencast, then two matching ones after the forced wake');
+  assert.equal(listeners.length, 0, 'both frame listeners are removed');
   await cdp.detachAll();
 });
 

@@ -975,12 +975,129 @@ async function bytesToBase64(blob) {
   return btoa(binary);
 }
 
-async function captureHidden(tabId, { format, quality, clip }) {
+/** Ceiling on the two animation frames a capture waits for. */
+const RAF_TIMEOUT_MS = 1000;
+
+/** How many screencasts a capture will open before it accepts what it has. */
+const SETTLE_ATTEMPTS = 6;
+
+/** Pause between two reads of the surface, so a paint in progress can finish. */
+const SETTLE_PAUSE_MS = 60;
+
+/**
+ * A screencast frame taken once the hidden tab's surface has stopped changing.
+ *
+ * Chrome draws a hidden tab's compositor surface lazily and pushes no frames
+ * while nothing asks for one. Starting a screencast is the request, and the
+ * frame it opens with is the surface as it was before that request forced the
+ * redraw. Opening a second screencast then returns the redrawn surface.
+ *
+ * Measured on Chrome 152.0.7977.75 with a second extension injecting an iframe
+ * into every page, which makes the attach recovery mutate the DOM on every
+ * call: a single screencast returned a blank image for /composer.html and
+ * /sensitive.html, byte for byte identical to each other, while /unload.html on
+ * the same run was correct. Holding one screencast open across a repaint does
+ * not help, because no further frame is ever pushed.
+ *
+ * So screencasts are opened until two in a row carry the same image, which is
+ * the surface saying it has settled. An unchanged page costs two, a page that
+ * was mid-repaint costs three, and a page that never stops animating stops at
+ * SETTLE_ATTEMPTS with the last frame it produced.
+ */
+async function settledScreencastFrame(tabId, { format, quality, maxWidth, maxHeight, timeout = 4000 }) {
+  // The wake restores requestAnimationFrame on a hidden tab, so two frames of
+  // it are the renderer saying it has drawn what is there now.
+  await evaluate(tabId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))', {
+    timeout: RAF_TIMEOUT_MS,
+  }).catch(() => {});
+
+  const deadline = Date.now() + timeout;
+  let previous = null;
+  for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt++) {
+    const left = deadline - Date.now();
+    // The first attempt is the one allowed to fail loudly: a tab that produces
+    // no frame at all is the caller's problem, not a settling question.
+    if (left <= 0) return previous;
+    const frame = await screencastFrame(tabId, {
+      format,
+      quality,
+      maxWidth,
+      maxHeight,
+      timeout: attempt === 0 ? timeout : Math.min(left, timeout),
+    });
+    if (previous !== null && frame === previous) return frame;
+    previous = frame;
+    // A redraw that has started but not finished reads as a half-painted
+    // surface, and two reads taken back to back land in the same half. The
+    // pause gives the paint somewhere to finish before the next read.
+    await sleep(SETTLE_PAUSE_MS, tabId);
+  }
+  return previous;
+}
+
+
+/**
+ * Whether this build lets the extension debugger read a capture straight from
+ * the renderer. Null until the first attempt answers.
+ * @type {boolean|null}
+ */
+let rendererCaptureWorks = null;
+
+/** Test seam, so a suite can drive both capture paths. */
+export function resetRendererCaptureProbe() {
+  rendererCaptureWorks = null;
+}
+
+async function captureHidden(tabId, { format, quality, clip, screencastTimeout }) {
   const metrics = await send(tabId, 'Page.getLayoutMetrics');
   const viewport = metrics.cssLayoutViewport || metrics.layoutViewport;
   const width = Math.max(1, Math.round(viewport.clientWidth));
   const height = Math.max(1, Math.round(viewport.clientHeight));
-  const frame = await screencastFrame(tabId, { format, quality, maxWidth: width, maxHeight: height });
+
+  // A tab Chrome has put to sleep produces no screencast frame at all. Measured
+  // on Chrome 152.0.7977.75 over the DevTools port: zero frames in four seconds
+  // on a background tab, one frame immediately after the same wake this file
+  // already uses for input. Page.captureScreenshot is not a way out, it hung
+  // for the full 15 s timeout on the same tab.
+  //
+  // The wake is forced because a tab falls asleep again on every navigation and
+  // the recorded state does not: with the cached wake, the first screenshot
+  // after a navigate spent the whole 4 s screencast timeout before the retry
+  // below rescued it. Two CDP commands cost about 4 ms.
+  await wake(tabId, { force: true }).catch(() => {});
+
+  // The renderer holds the current document, so a capture taken from it is
+  // never the stale compositor surface a hidden tab keeps. Measured on Chrome
+  // 152.0.7977.75 at 256 to 292 ms against a screencast frame's 40 ms, which is
+  // worth paying for a picture of the page that is actually there. The
+  // screencast path below stays as the fallback, since fromSurface is refused
+  // on some builds and there is no way to ask in advance.
+  if (rendererCaptureWorks !== false) {
+    try {
+      const params = { format, fromSurface: false, captureBeyondViewport: false };
+      if (quality !== undefined && format === 'jpeg') params.quality = quality;
+      if (clip) params.clip = clip;
+      const result = await send(tabId, 'Page.captureScreenshot', params, { retry: false, timeout: 10000 });
+      if (result && result.data) {
+        rendererCaptureWorks = true;
+        return result.data;
+      }
+    } catch (err) {
+      // One refusal is taken as this build refusing it, so the cost is paid
+      // once rather than on every capture.
+      rendererCaptureWorks = false;
+    }
+  }
+
+  let frame;
+  try {
+    frame = await settledScreencastFrame(tabId, { format, quality, maxWidth: width, maxHeight: height, timeout: screencastTimeout });
+  } catch (err) {
+    // The wake can have worn off since it was last recorded, so it is worth one
+    // forced repeat before the capture is given up on.
+    await wake(tabId, { force: true }).catch(() => {});
+    frame = await settledScreencastFrame(tabId, { format, quality, maxWidth: width, maxHeight: height, timeout: screencastTimeout });
+  }
   if (!clip) return frame;
 
   // A zoom is a crop of the frame. The frame was requested at CSS size, so the
@@ -1004,8 +1121,8 @@ async function captureHidden(tabId, { format, quality, clip }) {
  * everything the browser composites. A hidden or minimized tab is captured
  * through a screencast frame, since its surface never draws.
  */
-export async function captureScreenshot(tabId, { format = 'png', quality, clip } = {}) {
-  if (!(await onScreen(tabId))) return captureHidden(tabId, { format, quality, clip });
+export async function captureScreenshot(tabId, { format = 'png', quality, clip, screencastTimeout } = {}) {
+  if (!(await onScreen(tabId))) return captureHidden(tabId, { format, quality, clip, screencastTimeout });
   const params = { format, captureBeyondViewport: false, fromSurface: true };
   if (quality !== undefined && format === 'jpeg') params.quality = quality;
   if (clip) params.clip = clip;
@@ -1285,7 +1402,10 @@ export async function mouseDragDwell(tabId, from, to, modifiers = 0, hooks = {},
  * time it was produced, which is a paint clock the extension can compare
  * against the moment of the last input.
  */
-export function screencastFrameAfter(tabId, sinceMs, { timeout = 300, format = 'jpeg', quality = 50 } = {}) {
+export async function screencastFrameAfter(tabId, sinceMs, { timeout = 300, format = 'jpeg', quality = 50 } = {}) {
+  // Same reason as captureHidden: a sleeping tab emits no frame, so the paint
+  // wait would report painted false on every hidden tab.
+  await wake(tabId, { force: true }).catch(() => {});
   return new Promise((resolve) => {
     let done = false;
     const finish = (result) => {
