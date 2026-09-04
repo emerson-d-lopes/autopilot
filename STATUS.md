@@ -248,3 +248,22 @@ Test counts on 2026-09-03, `node --test` per file, no browser running:
 `node tools/check-errors-copy.js` reports the extension copy matches. `node --check` passes on all 29 files under `extension/src` and `host`.
 
 The six browser-driven files (`live`, `e2e`, `edge`, `resilience`, `shortcuts`, `campaign`) were not run, and neither was the live verification pass. Nothing in this merge has been driven against a browser.
+
+## Live verification of the merged build, 2026-09-04
+
+The pass is written up in `docs/claude-in-chrome-comparison/evidence/VERIFY-0.1.11.md`, one entry per check with the call and the verbatim result. It ran entirely against the development browser started by `node tools/browser.js --interferer --detach`, with `test/fixtures/interferer` loaded so the attach recovery ladder fires on every page.
+
+Two tools were added for it. `tools/mcp-client.js` spawns `host/mcp-server.js` from the working tree and drives it over stdio, as a library and as a one-off CLI, because a Claude Code session's MCP tools are bound to whichever server process it started. `tools/browser.js --interferer` loads the second extension.
+
+Of the 57 checks: 39 passed, 5 passed after a fix made during the pass, 6 were partial, 2 failed, and 7 are deferred because they need a signed-in profile or a DevTools window opened by hand.
+
+Eleven fixes landed, each with a unit test and a manifest bump. Extension 0.1.11 to 0.1.27. The ones that changed behaviour a caller can see:
+
+- Screenshots of a hidden tab did not work at all. A sleeping tab emits no screencast frame, and once woken, the frame a screencast opens with is the surface as it was before the redraw that request forced. The capture now wakes the tab, waits two animation frames, and opens screencasts until two carry the same image. A window that stays barren is raised as `timeout`, which the read retry policy handles.
+- Per-key typing inserted every character twice, so `ja` arrived as `jjaa` and the jQuery UI autocomplete never opened. Both the keyDown and the char event carried the text.
+- A click on an inert element reported `effects: applied`, because focus falling back to the body counted as a focus change and the value comparison read whatever held focus at the end of the window.
+- A type with nothing able to hold text focused reported `ok`. It is now a `no_effect` naming what did have focus.
+- Chrome's `chrome://` refusals were classified as `internal` rather than `origin_blocked`.
+- A tab opened by a click was recorded after the click had already read the bookkeeping.
+
+Ten open bugs are listed at the end of the verification file with their reproductions. The ones worth reading first: a batch does not pre-validate refs the way it pre-validates tool names, a session does not survive `chrome.runtime.reload()`, and calls are serialized behind a frozen renderer so a long `javascript` blocks the next call for its whole duration.
