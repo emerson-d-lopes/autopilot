@@ -331,11 +331,19 @@ test('live browser automation', options, async (t) => {
     assert.match(result.text, /""/, 'hovering did not trigger the click handler');
   });
 
-  await t.test('resize_window changes the viewport', async () => {
+  await t.test('resize_window resizes the window and says which measurement took', async () => {
     const resized = await callTool(mcp, 'resize_window', { tabId, width: 900, height: 700 });
     assert.equal(resized.isError, false, resized.text);
     const state = JSON.parse(resized.text);
-    assert.ok(state.viewport.width < 900, 'viewport is inside the new window, got ' + state.viewport.width);
+    // The tool measures the request against the outer window bounds and the
+    // layout viewport and reports which one matched. The window bounds are the
+    // authoritative answer: on Windows the page's innerWidth was seen to lag a
+    // resize by more than a second, and under Xvfb with no window manager the
+    // viewport and the outer size are the same number.
+    // effects is "none" when the window already had this size from an earlier
+    // run against the same browser, so only the measurement is asserted.
+    assert.notEqual(state.matched, 'neither', 'neither the window nor the viewport took the size: ' + resized.text);
+    assert.deepEqual(state.requested, { width: 900, height: 700 });
   });
 
   await t.test('right click fires contextmenu without opening a native menu', async () => {
