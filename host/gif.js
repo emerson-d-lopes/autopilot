@@ -146,7 +146,11 @@ export function encodeGif({ width, height, palette, frames, loop = true }) {
 
     const minCodeSize = depth;
     push(minCodeSize);
-    push(...subBlocks(lzwCompress(frame.indices, minCodeSize)));
+    // Appended one byte at a time rather than spread as arguments: a frame the
+    // size of a browser window compresses to more bytes than V8 accepts as a
+    // single argument list, and the spread threw "Maximum call stack size
+    // exceeded" on a 1200x900 recording.
+    for (const byte of subBlocks(lzwCompress(frame.indices, minCodeSize))) out.push(byte);
   }
 
   push(0x3b);

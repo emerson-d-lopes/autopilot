@@ -8,6 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { installChromeStub } from './chrome-stub.js';
+import { encodeGif } from '../host/gif.js';
 
 // gif.js imports cdp.js, which touches the chrome global at module init
 // (installDialogListener runs on import), so the stub has to be in place
@@ -438,4 +439,21 @@ test('a page with no content script does not fail the frame', async () => {
     throw new Error('Receiving end does not exist');
   };
   assert.equal(await withOverlayHidden(43, async () => 'bytes'), 'bytes');
+});
+
+test('a frame the size of a browser window encodes without overflowing the argument list', () => {
+  // 1200x900 of noise compresses to hundreds of thousands of bytes, more than
+  // V8 accepts as one spread argument list. Encoding used to throw "Maximum
+  // call stack size exceeded" here and the caller saw "Could not write the gif".
+  const indices = new Uint8Array(1200 * 900);
+  let seed = 7;
+  for (let i = 0; i < indices.length; i++) {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    indices[i] = seed & 0xff;
+  }
+  const palette = [];
+  for (let i = 0; i < 256; i++) palette.push(i, i, i);
+  const bytes = encodeGif({ width: 1200, height: 900, palette, frames: [{ indices, delayMs: 100 }] });
+  assert.equal(Buffer.from(bytes.subarray(0, 6)).toString('latin1'), 'GIF89a');
+  assert.ok(bytes.length > 150000, 'the compressed frame is past the spread limit, got ' + bytes.length);
 });
