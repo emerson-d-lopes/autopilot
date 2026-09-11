@@ -105,6 +105,9 @@ const args = [
   '--disable-features=CalculateNativeWinOcclusion',
   'about:blank',
 ];
+// A CI runner has no GPU, a small /dev/shm, and often no user namespaces for the
+// sandbox. These are the flags every headed Chrome on a runner needs.
+if (process.env.CI) args.unshift('--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage');
 // The DevTools port is always on for this profile. It is a throwaway automation
 // browser, and the test suite needs it to seed extension storage, which only the
 // extension itself can write.

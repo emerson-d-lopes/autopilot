@@ -336,8 +336,11 @@ test('edge cases against a live page', options, async (t) => {
 
   await t.test('select_browser accepts a real id and rejects a made-up one', async () => {
     const listed = await call('list_connected_browsers', {});
-    const id = listed.text.split('\n')[1].split(/\s+/)[0];
-    assert.ok(id, 'an id was listed');
+    // The browser this suite is pinned to, not the first one listed: with a
+    // second browser connected, selecting that one would move the session
+    // away from the tab every later case uses.
+    const id = bridge.id;
+    assert.ok(listed.text.includes(id), 'the pinned browser is listed: ' + listed.text);
 
     const good = await call('select_browser', { browserId: id });
     assert.equal(good.isError, false, good.text);

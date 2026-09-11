@@ -69,15 +69,34 @@ jobs:
       - name: Launch the browser with the extension
         run: node tools/browser.js --detach
 
+      - name: Wait for the extension to connect
+        # The suites skip themselves when no bridge is listening, which would
+        # turn a browser that never connected into a green run. The job fails
+        # here instead.
+        run: |
+          for i in $(seq 1 45); do
+            if node -e "import('./host/registry.js').then(async (r) => process.exit((await r.listBrowsers()).length ? 0 : 1))"; then
+              echo "bridge up after ${i}x2s"; exit 0
+            fi
+            sleep 2
+          done
+          echo "no browser connected within 90s"
+          npm run doctor || true
+          exit 1
+
       - name: Doctor
-        run: npm run doctor || true
+        run: npm run doctor
 
       - name: Live, edge, campaign, resilience, and shortcuts suites
         run: node --test --test-concurrency=1 test/live.test.js test/edge.test.js test/campaign.test.js test/resilience.test.js test/shortcuts.test.js
 
       - name: Chrome log
-        if: failure()
-        run: tail -n 200 .browsers/chrome.log || true
+        if: always()
+        run: |
+          ls -la .browsers .browsers/profile || true
+          ls -la "${TMPDIR:-/tmp}/autopilot-browsers" || true
+          pgrep -a chrome | head -5 || true
+          tail -n 200 .browsers/chrome.log || true
       - name: Journal
-        if: failure()
+        if: always()
         run: npm run log || true

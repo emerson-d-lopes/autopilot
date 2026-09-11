@@ -20,7 +20,7 @@ It works against the browser you are already signed into, so it can act on Gmail
 
 ## Requirements
 
-- Node 20 or newer
+- Node 22 or newer
 - A Chromium browser. Chrome, Edge, Brave, and Vivaldi are registered automatically.
 
 ## Install
@@ -102,7 +102,7 @@ Install and connect the Autopilot MCP server on this machine. Autopilot drives t
 
 Do these steps in order and stop at the first failure, quoting the output.
 
-1. Clone or update the repository to `C:\Users\<user>\workspace\autopilot` (any path works, but every later step uses the path you chose). Run `npm install` there. Node 20 or newer is required, and on this machine Node is managed by fnm, so run the commands from a shell where `node --version` answers.
+1. Clone or update the repository to `C:\Users\<user>\workspace\autopilot` (any path works, but every later step uses the path you chose). Run `npm install` there. Node 22 or newer is required, and on this machine Node is managed by fnm, so run the commands from a shell where `node --version` answers.
 
 2. Register the native messaging host: `npm run install-host`. It writes `host\com.autopilot.host.json`, rewrites `host\native-host.bat` with the real path to the node binary, registers the host with Chrome and Edge (and Brave and Vivaldi when installed), and removes any old `com.chromemcp.host` registration from an earlier name of this project. Read its output. Do not run `npm run keygen`: the extension key is committed and pins the id `giagijohigincdlpkfolgcljkhmjdiaa`, which the host registration expects.
 
@@ -250,7 +250,7 @@ npm run test:live     # browser tests only
 npm run test:resilience   # the slow recovery tests on their own
 ```
 
-[CONTRIBUTING.md](CONTRIBUTING.md) has the full script list, the rules CI enforces (a version bump on every change under `extension/`, `host/errors.js` as the canonical error table, coverage thresholds in `tools/run-tests.js`), and how to write a test. Every pull request runs lint, Prettier, the unit suite on Node 20, 22 and 24 with coverage thresholds, CodeQL, and, when the extension or host changed, the live suite on Chrome for Testing.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the full script list, the rules CI enforces (a version bump on every change under `extension/`, `host/errors.js` as the canonical error table, coverage thresholds in `tools/run-tests.js`), and how to write a test. Every pull request runs lint, Prettier, the unit suite on Node 22 and 24 with coverage thresholds, CodeQL, and, when the extension or host changed, the live suite on Chrome for Testing.
 
 Live tests skip themselves when no bridge is listening, so `npm test` stays useful without a browser. With several browsers connected they prefer the one `npm run browser` started, which it records in `.browsers/dev-browser-id`. Start that browser from a terminal that stays open: launched from a shell that exits, it goes with it.
 

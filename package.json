@@ -5,7 +5,7 @@
   "type": "module",
   "description": "MCP server driving Chrome through a Manifest V3 extension and the DevTools Protocol",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "bin": {
     "autopilot-chrome": "./host/mcp-server.js"

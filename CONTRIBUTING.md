@@ -17,7 +17,7 @@ npm run check
 
 `npm run check` is what CI runs on every pull request: ESLint, Prettier in check mode, the version sync check, the errors copy check, and the unit suite with coverage thresholds. It takes about a minute and needs no browser.
 
-Node 20 or newer. The pinned development version is in `.node-version`.
+Node 22 or newer (Node 20 reached end of life in April 2026, and jsdom 30, which the page tests use, needs 22). The pinned development version is in `.node-version`.
 
 ## Scripts
 

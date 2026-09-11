@@ -50,7 +50,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        node: [20.x, 22.x, 24.x]
+        node: [22.x, 24.x]
         include:
           - os: windows-latest
             node: 24.x
