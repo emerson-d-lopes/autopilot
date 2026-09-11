@@ -36,7 +36,7 @@ jobs:
             echo "No CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY secret, skipping the review."
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.creds.outputs.present == 'true'
         with:
           fetch-depth: 0
