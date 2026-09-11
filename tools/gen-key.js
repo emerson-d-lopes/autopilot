@@ -40,8 +40,15 @@ function loadOrCreateKey() {
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
-  mkdirSync(dirname(KEY_PATH), { recursive: true });
-  writeFileSync(KEY_PATH, privateKey, { mode: 0o600 });
+  mkdirSync(dirname(KEY_PATH), { recursive: true, mode: 0o700 });
+  try {
+    // wx: a key written by another process between the check above and this
+    // write is kept, so two concurrent keygens cannot end with different ids.
+    writeFileSync(KEY_PATH, privateKey, { mode: 0o600, flag: 'wx' });
+  } catch (err) {
+    if (err.code === 'EEXIST') return readFileSync(KEY_PATH, 'utf8');
+    throw err;
+  }
   return privateKey;
 }
 

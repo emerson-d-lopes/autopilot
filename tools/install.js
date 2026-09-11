@@ -6,7 +6,16 @@
 // a bare "node" in the wrapper resolves in a terminal and fails under Chrome.
 // The absolute interpreter path is baked in at install time instead.
 
-import { writeFileSync, mkdirSync, existsSync, readFileSync, chmodSync, realpathSync, rmSync } from 'node:fs';
+import {
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  readFileSync,
+  chmodSync,
+  realpathSync,
+  rmSync,
+  truncateSync,
+} from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -230,10 +239,12 @@ function main() {
         }
       } else if (target.manifestDir) {
         const file = join(target.manifestDir, HOST_NAME + '.json');
-        if (existsSync(file)) {
-          writeFileSync(file, '');
+        try {
+          truncateSync(file, 0);
           console.log('cleared ' + file);
           removed++;
+        } catch (err) {
+          if (err.code !== 'ENOENT') throw err;
         }
       }
     }
