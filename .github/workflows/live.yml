@@ -1,0 +1,79 @@
+# Runs the suites that need a real browser: Chrome for Testing with the
+# extension loaded, the native host registered for that profile, and the MCP
+# server driving it over the real pipe. Not a required check: it is slower and
+# depends on a browser download, so it runs nightly, on demand, and on pull
+# requests that touch the extension or the host.
+name: Live browser suite
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 5 * * *'
+  pull_request:
+    paths:
+      - 'extension/**'
+      - 'host/**'
+      - 'test/live.test.js'
+      - 'test/edge.test.js'
+      - 'test/campaign.test.js'
+      - 'test/resilience.test.js'
+      - 'test/shortcuts.test.js'
+      - '.github/workflows/live.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: Live suite on Chrome for Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+
+      - name: Cache Chrome for Testing
+        id: chrome-cache
+        uses: actions/cache@v4
+        with:
+          path: .browsers/chrome
+          key: chrome-for-testing-${{ runner.os }}-stable-v1
+      - name: Install Chrome for Testing
+        if: steps.chrome-cache.outputs.cache-hit != 'true'
+        run: npx --yes @puppeteer/browsers install chrome@stable --path .browsers
+
+      - name: Register the native host for the test profile
+        # On Linux, Chrome reads native messaging manifests from
+        # <user-data-dir>/NativeMessagingHosts, so the manifest the installer
+        # writes for the system profiles is copied into the test profile too.
+        run: |
+          npm run install-host
+          mkdir -p .browsers/profile/NativeMessagingHosts
+          cp host/com.autopilot.host.json .browsers/profile/NativeMessagingHosts/
+
+      - name: Start a virtual display
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb
+          Xvfb :99 -screen 0 1600x1000x24 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+
+      - name: Launch the browser with the extension
+        run: node tools/browser.js --detach
+
+      - name: Doctor
+        run: npm run doctor || true
+
+      - name: Live, edge, campaign, resilience, and shortcuts suites
+        run: node --test --test-concurrency=1 test/live.test.js test/edge.test.js test/campaign.test.js test/resilience.test.js test/shortcuts.test.js
+
+      - name: Chrome log
+        if: failure()
+        run: tail -n 200 .browsers/chrome.log || true
+      - name: Journal
+        if: failure()
+        run: npm run log || true

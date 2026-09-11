@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Autopilot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Drives this browser for a local MCP server, in the background, in its own tab group.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -20,22 +20,15 @@
     "cookies",
     "notifications"
   ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "src/background.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": [
-        "<all_urls>"
-      ],
-      "js": [
-        "src/content/agent.js",
-        "src/content/indicator.js"
-      ],
+      "matches": ["<all_urls>"],
+      "js": ["src/content/agent.js", "src/content/indicator.js"],
       "run_at": "document_start",
       "all_frames": false,
       "match_origin_as_fallback": true

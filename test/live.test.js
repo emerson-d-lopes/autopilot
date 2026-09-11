@@ -87,7 +87,10 @@ async function callTool(mcp, name, args) {
   return {
     isError: response.result.isError === true,
     content,
-    text: content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'),
+    text: content
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
+      .join('\n'),
     image: content.find((b) => b.type === 'image'),
   };
 }
@@ -248,7 +251,7 @@ test('live browser automation', options, async (t) => {
     const shot = await callTool(mcp, 'computer', { tabId, action: 'screenshot' });
     assert.equal(shot.isError, false, shot.text);
     assert.ok(shot.image, 'an image block came back');
-    assert.equal(shot.image.mimeType, 'image/png');
+    assert.equal(shot.image.mimeType, 'image/jpeg', 'the default format is jpeg, which fits the token budget');
     assert.ok(shot.image.data.length > 5000, 'image has real bytes');
 
     const dims = shot.text.match(/screenshot (\d+)x(\d+) \(~(\d+) tokens\)/);
@@ -286,7 +289,11 @@ test('live browser automation', options, async (t) => {
       tabId,
       code: 'document.getElementById("result").textContent',
     });
-    assert.match(result.text, /"ordered .* in Brazil/, 'coordinate click landed on the submit button, got ' + result.text);
+    assert.match(
+      result.text,
+      /"ordered .* in Brazil/,
+      'coordinate click landed on the submit button, got ' + result.text
+    );
   });
 
   await t.test('zoom captures a region and keeps coordinates usable', async () => {
@@ -552,7 +559,9 @@ test('live browser automation', options, async (t) => {
 
   await t.test('quick refuses to run a script with a bad command', async () => {
     const readResult = async () =>
-      JSON.parse((await callTool(mcp, 'javascript', { tabId, code: 'document.getElementById("result").textContent' })).text).result;
+      JSON.parse(
+        (await callTool(mcp, 'javascript', { tabId, code: 'document.getElementById("result").textContent' })).text
+      ).result;
     const before = await readResult();
     const result = await callTool(mcp, 'quick', {
       tabId,
@@ -569,10 +578,12 @@ test('live browser automation', options, async (t) => {
   await t.test('quick stops at the first failing line', async () => {
     const result = await callTool(mcp, 'quick', {
       tabId,
-      script: ['P', 'F ref_99999 x', 'J window.__quickShouldNotRun = true'].join('\n'),
+      // A stale ref is rejected before anything runs (batch_invalid), so the
+      // runtime failure that stops the script mid-way is a throwing J line.
+      script: ['P', 'J throw new Error("boom")', 'J window.__quickShouldNotRun = true'].join('\n'),
     });
     assert.match(result.text, /line 1 P ok/);
-    assert.match(result.text, /line 2 F FAILED/);
+    assert.match(result.text, /line 2 J FAILED/);
     assert.match(result.text, /Stopped at line 2/);
 
     const ran = await callTool(mcp, 'javascript', {
@@ -647,6 +658,10 @@ test('live browser automation', options, async (t) => {
   });
 
   await t.test('reads console output captured since page load', async () => {
+    await callTool(mcp, 'javascript', {
+      tabId,
+      code: 'document.getElementById("email").value = "buyer@example.com"; document.getElementById("submit").click()',
+    });
     await callTool(mcp, 'javascript', { tabId, code: 'document.getElementById("log-error").click()' });
     await new Promise((r) => setTimeout(r, 300));
 
@@ -698,17 +713,33 @@ test('live browser automation', options, async (t) => {
     const batch = await callTool(mcp, 'browser_batch', {
       actions: [
         { name: 'page_state', input: { tabId } },
-        { name: 'form_input', input: { tabId, ref: 'ref_99999', value: 'x' } },
+        // A stale ref is rejected up front, so the runtime failure is a throw.
+        { name: 'javascript', input: { tabId, code: 'throw new Error("boom")' } },
         { name: 'javascript', input: { tabId, code: 'window.__shouldNotRun = true' } },
       ],
     });
 
     assert.match(batch.text, /\[0\] page_state ok/);
-    assert.match(batch.text, /\[1\] form_input FAILED/);
+    assert.match(batch.text, /\[1\] javascript FAILED/);
     assert.match(batch.text, /Stopped at action 1/);
 
     const ran = await callTool(mcp, 'javascript', { tabId, code: 'window.__shouldNotRun === true' });
     assert.match(ran.text, /false/, 'the action after the failure did not run');
+  });
+
+  await t.test('a batch naming a stale ref is rejected before anything runs', async () => {
+    const batch = await callTool(mcp, 'browser_batch', {
+      actions: [
+        { name: 'javascript', input: { tabId, code: 'window.__staleBatchRan = true' } },
+        { name: 'form_input', input: { tabId, ref: 'ref_99999', value: 'x' } },
+      ],
+    });
+    assert.equal(batch.isError, true);
+    assert.match(batch.text, /Batch not run: item 2 (form_input) names ref_99999/);
+    assert.match(batch.text, /code=batch_invalid/);
+
+    const ran = await callTool(mcp, 'javascript', { tabId, code: 'window.__staleBatchRan === true' });
+    assert.match(ran.text, /false/, 'the valid first action did not run either');
   });
 
   await t.test('a stale ref fails with a recoverable message', async () => {
@@ -759,7 +790,10 @@ test('live browser automation', options, async (t) => {
       const content = response.result.content || [];
       return {
         isError: response.result.isError === true,
-        text: content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'),
+        text: content
+          .filter((b) => b.type === 'text')
+          .map((b) => b.text)
+          .join('\n'),
       };
     };
 

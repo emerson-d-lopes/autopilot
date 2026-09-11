@@ -1,5 +1,7 @@
 # Autopilot
 
+[![CI](https://github.com/emerson-d-lopes/autopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/emerson-d-lopes/autopilot/actions/workflows/ci.yml) [![Live browser suite](https://github.com/emerson-d-lopes/autopilot/actions/workflows/live.yml/badge.svg)](https://github.com/emerson-d-lopes/autopilot/actions/workflows/live.yml) [![CodeQL](https://github.com/emerson-d-lopes/autopilot/actions/workflows/codeql.yml/badge.svg)](https://github.com/emerson-d-lopes/autopilot/actions/workflows/codeql.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 An MCP server that drives your real Chrome through a Manifest V3 extension and the DevTools Protocol. It works in the background, in its own tab group, and its popup shows what it is doing. Built to match the capability set documented in [SPEC.md](SPEC.md).
 
 It works against the browser you are already signed into, so it can act on Gmail, Notion, an internal dashboard, or a localhost dev server without any API credentials.
@@ -240,11 +242,15 @@ The native host is the listener and MCP servers are clients, so several Claude C
 ## Development
 
 ```bash
+npm run check         # what CI runs: lint, format, version sync, unit suite with coverage
 npm test              # everything, about two minutes with a browser up
+npm run test:unit     # the unit suite with browser discovery off, the CI command
 npm run browser       # isolated browser with the extension loaded
 npm run test:live     # browser tests only
 npm run test:resilience   # the slow recovery tests on their own
 ```
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the full script list, the rules CI enforces (a version bump on every change under `extension/`, `host/errors.js` as the canonical error table, coverage thresholds in `tools/run-tests.js`), and how to write a test. Every pull request runs lint, Prettier, the unit suite on Node 20, 22 and 24 with coverage thresholds, CodeQL, and, when the extension or host changed, the live suite on Chrome for Testing.
 
 Live tests skip themselves when no bridge is listening, so `npm test` stays useful without a browser. With several browsers connected they prefer the one `npm run browser` started, which it records in `.browsers/dev-browser-id`. Start that browser from a terminal that stays open: launched from a shell that exits, it goes with it.
 

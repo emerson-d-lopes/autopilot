@@ -1,0 +1,11 @@
+node_modules/
+.browsers/
+.bench/
+.keys/
+docs/
+coverage/
+package-lock.json
+*.md
+*.svg
+host/native-host.bat
+host/com.autopilot.host.json

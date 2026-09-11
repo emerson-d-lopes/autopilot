@@ -7,3 +7,4 @@ host/com.chromemcp.host.json
 *.log
 .browsers/
 .bench/
+coverage/

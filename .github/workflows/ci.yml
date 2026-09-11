@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run check:versions
+      - run: npm run check:errors-copy
+
+  version-bump:
+    name: Extension version bumped
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Require a manifest version bump when extension/ changed
+        run: node tools/check-versions.js --base origin/${{ github.base_ref }}
+
+  test:
+    name: Unit tests (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        node: [20.x, 22.x, 24.x]
+        include:
+          - os: windows-latest
+            node: 24.x
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Unit tests with coverage thresholds
+        run: npm run test:coverage
+      - name: Coverage summary
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [ -f coverage/summary.txt ]; then
+            {
+              echo "## Coverage (Node ${{ matrix.node }})"
+              echo '```'
+              cat coverage/summary.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Linux' && matrix.node == '24.x'
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: ignore
+
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every required job succeeded
+        run: |
+          echo '${{ toJSON(needs) }}'
+          [ "${{ needs.lint.result }}" = success ] && [ "${{ needs.test.result }}" = success ]

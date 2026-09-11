@@ -1,0 +1,20 @@
+name: Feature request
+description: A tool, option, or behaviour that is missing
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you were trying to do with an agent when you hit the gap.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What the tool or option would look like. A sample call and a sample response help.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead

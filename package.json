@@ -1,6 +1,6 @@
 {
   "name": "autopilot-chrome",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "MCP server driving Chrome through a Manifest V3 extension and the DevTools Protocol",
@@ -24,12 +24,41 @@
     "test:resilience": "node --test test/resilience.test.js",
     "bench": "node tools/bench.js",
     "bench:screenshot": "node tools/bench-screenshot.js",
-    "test:fast": "node --test --test-concurrency=1 --test-skip-pattern=\"survives|recovers when|resume a session|stale request\" \"test/*.test.js\""
+    "test:fast": "node --test --test-concurrency=1 --test-skip-pattern=\"survives|recovers when|resume a session|stale request\" \"test/*.test.js\"",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:versions": "node tools/check-versions.js",
+    "check:errors-copy": "node tools/check-errors-copy.js",
+    "check": "npm run lint && npm run format:check && npm run check:versions && npm run check:errors-copy && npm run test:coverage",
+    "test:unit": "node tools/run-tests.js",
+    "test:coverage": "node tools/run-tests.js --coverage"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "devDependencies": {
-    "jsdom": "^30.0.1"
-  }
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^17.12.0",
+    "jsdom": "^30.0.1",
+    "prettier": "^3.9.6"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/emerson-d-lopes/autopilot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/emerson-d-lopes/autopilot/issues"
+  },
+  "homepage": "https://github.com/emerson-d-lopes/autopilot#readme",
+  "files": [
+    "host/",
+    "extension/",
+    "tools/",
+    "README.md",
+    "LICENSE"
+  ]
 }

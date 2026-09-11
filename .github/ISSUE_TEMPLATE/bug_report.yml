@@ -1,0 +1,38 @@
+name: Bug report
+description: Something behaves differently from what the README says
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The tool call you made, and what came back. Paste the `[ok=... code=... id=...]` trailer if there was one.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `npm run doctor`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Relevant lines from `npm run log`
+      description: The journal redacts secrets, but check before pasting.
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Extension version (chrome://extensions), Chrome version, Node version, OS.
+      placeholder: 'ext 0.2.1, Chrome 152, Node 24.15, Windows 11'
+    validations:
+      required: true

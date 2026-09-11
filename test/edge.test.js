@@ -95,7 +95,10 @@ test('edge cases against a live page', options, async (t) => {
     const content = response.result.content || [];
     return {
       isError: response.result.isError === true,
-      text: content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'),
+      text: content
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n'),
       image: content.find((b) => b.type === 'image'),
     };
   };
@@ -255,9 +258,9 @@ test('edge cases against a live page', options, async (t) => {
     const result = await call('computer', { tabId, action: 'screenshot', save_to_disk: true });
     assert.equal(result.isError, false, result.text);
     assert.ok(result.image, 'the image still comes back inline');
-    assert.match(result.text, /saved: .*\.png/);
+    assert.match(result.text, /saved: .*\.(?:png|jpe?g)/);
 
-    const path = result.text.match(/saved: (.+\.png)/)[1];
+    const path = result.text.match(/saved: (.+\.(?:png|jpe?g))/)[1];
     const { statSync } = await import('node:fs');
     assert.ok(statSync(path).size > 1000, 'the file has real bytes');
   });
@@ -356,8 +359,7 @@ test('edge cases against a live page', options, async (t) => {
     // Saved the way the options page saves them.
     await call('javascript', {
       tabId,
-      code:
-        'chrome === undefined',
+      code: 'chrome === undefined',
     }).catch(() => {});
 
     const seed = await call('quick', {
@@ -391,7 +393,7 @@ test('edge cases against a live page', options, async (t) => {
       tabId,
       code: 'document.getElementById("imginfo").textContent',
     });
-    assert.match(info.text, /\.png/);
+    assert.match(info.text, /\.(?:png|jpe?g)/);
   });
 
   await t.test('upload_image reports a missing file clearly', async () => {

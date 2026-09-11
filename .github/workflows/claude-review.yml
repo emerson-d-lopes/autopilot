@@ -1,0 +1,57 @@
+# Automated first-pass review by Claude on every pull request. Runs only when
+# the repository has a CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY secret, so a
+# fork without one still gets the rest of CI. Set the secret with
+# `claude /install-github-app` or in Settings > Secrets and variables > Actions.
+name: Claude review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Review the pull request
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    env:
+      HAS_OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+      HAS_API_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    steps:
+      - name: Check for credentials
+        id: creds
+        run: |
+          if [ "$HAS_OAUTH" = true ] || [ "$HAS_API_KEY" = true ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY secret, skipping the review."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.present == 'true'
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        if: steps.creds.outputs.present == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request against CONTRIBUTING.md. Focus on:
+            - correctness bugs, swallowed errors, missing awaits, timers never cleared
+            - the tool contract in host/schemas.js staying in sync with the handlers in extension/src/lib/tools.js
+            - host/errors.js and extension/src/lib/errors.js staying identical (tools/check-errors-copy.js)
+            - any change under extension/ carrying a manifest version bump
+            - tests: new behaviour has a unit test, changed behaviour has its test updated
+            - prose in comments and docs following the writing rules in CONTRIBUTING.md
+            Post one review comment with findings ordered by severity. Say "no findings" if there are none.
+          claude_args: '--max-turns 25'
