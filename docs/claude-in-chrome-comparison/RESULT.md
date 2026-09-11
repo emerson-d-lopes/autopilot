@@ -104,7 +104,7 @@ Extension 0.1.35, profile `Profile 3 "Emerson Lopes"`, driven through `tools/mcp
 
 ### The GitHub write rehearsal
 
-Run in allow mode on the user's private repository `camelo-discord-bot`, session `ghrehearsal`, at extension 0.1.35. Confirm mode was not switched on in that browser, so the run exercised the write path without the confirmation gate. The user declined the LinkedIn flows before it started.
+Run in allow mode on a private repository of the user's, session `ghrehearsal`, at extension 0.1.35. Confirm mode was not switched on in that browser, so the run exercised the write path without the confirmation gate. The user declined the LinkedIn flows before it started.
 
 | Step | Result |
 |---|---|

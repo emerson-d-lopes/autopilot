@@ -99,7 +99,7 @@ Verdict: x.com content **not accessible either way** (real login wall, not a bri
 
 ## 4. linkedin.com/feed
 
-Unlike x.com, LinkedIn loaded fully signed in on both bridges (as the user, "Emerson Lopes, Senior Software Engineer at Luxury Presence"), consistent with the shared signed-in Chrome profile. First 3 feed items were readable and matched in content type across bridges within each run (feed is dynamic/live and shows slightly different posts run-to-run since it's a real, changing feed, but structure was identical).
+Unlike x.com, LinkedIn loaded fully signed in on both bridges (as the signed-in user), consistent with the shared signed-in Chrome profile. First 3 feed items were readable and matched in content type across bridges within each run (feed is dynamic/live and shows slightly different posts run-to-run since it's a real, changing feed, but structure was identical).
 
 | Bridge | Run | `get_page_text` result | `read_page` / `computer` |
 |---|---|---|---|

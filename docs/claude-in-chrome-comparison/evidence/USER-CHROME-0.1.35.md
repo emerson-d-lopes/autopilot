@@ -12,7 +12,7 @@ Driven through `tools/mcp-client.js --browser bz04vrv3f` (the new host code), pr
 | `get_page_text` on notion.so | Redirected to notion.com/pt marketing page. The profile holds no Notion session cookie now (`sessions` lists none), so the Notion check cannot run in this profile. Deferred |
 | Origin transition warning | Present on the first call after switching from linkedin.com to notion.com and back. Pass |
 
-## Write rehearsal on GitHub, camelo-discord-bot (private), allow mode
+## Write rehearsal on GitHub, a private repository, allow mode
 
 The user declined the LinkedIn flows. Confirm mode was not switched on in the user's extension, so the run exercised the write path in allow mode. Driven through `tools/mcp-client.js --browser bz04vrv3f`, session `ghrehearsal`.
 
