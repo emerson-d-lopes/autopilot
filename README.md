@@ -210,6 +210,13 @@ Each connected browser gets its own native host, its own pipe, and an entry in a
 
 ## Architecture
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.svg">
+  <img alt="architecture: how does a tool call from an MCP client reach a hidden tab in the user's own Chrome?" src="docs/architecture-light.svg">
+</picture>
+
+*how does a tool call from an MCP client reach a hidden tab in the user's own Chrome?* reads go through the content script in a few milliseconds. input and capture go through chrome.debugger so the page sees trusted events. the tab is opened unselected and woken with focus emulation, which is why nothing on screen moves while an agent works.
+
 ```
 Claude Code ──stdio──> mcp-server.js ──named pipe──> native-host.js ──native messaging──> extension ──CDP──> page
 ```
