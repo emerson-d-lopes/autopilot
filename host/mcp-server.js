@@ -6,9 +6,6 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
-import { statSync, accessSync, constants, writeFileSync, mkdirSync } from 'node:fs';
-import { resolve as resolvePath, join as joinPath } from 'node:path';
-import { tmpdir } from 'node:os';
 import { connect } from './ipc.js';
 import {
   listBrowsers,
@@ -22,7 +19,8 @@ import {
 } from './registry.js';
 import { SESSION_DOMAINS, registrableDomain } from '../extension/src/lib/sessions.js';
 import { TOOLS, TOOL_NAMES, missingRequired } from './schemas.js';
-import { encodeGif } from './gif.js';
+import { textBlock, formatResult } from './format.js';
+import { materializeImage, lastSavedImage, prepareUploadPaths, capturedImageIds } from './images.js';
 import {
   shouldEscalateToModel,
   capTreeForModel,
@@ -38,7 +36,6 @@ import {
   retryDecision,
   newCallId,
   contractLine,
-  stepContractLine,
   formatError,
   ToolFailure,
 } from './errors.js';
@@ -513,229 +510,6 @@ async function runFindEscalation({ query, tabId, scope, route, findResult, seman
   return { escalated: true, because, matches, warnings };
 }
 
-// ---------------------------------------------------------------------------
-// Result formatting
-// ---------------------------------------------------------------------------
-
-function textBlock(text) {
-  return { type: 'text', text };
-}
-
-function imageBlock(image) {
-  return { type: 'image', data: image.data, mimeType: image.mediaType };
-}
-
-function formatTreeResult(result) {
-  const header = [
-    result.url ? 'url: ' + result.url : null,
-    result.title ? 'title: ' + result.title : null,
-    result.nodes !== undefined ? 'nodes: ' + result.nodes : null,
-  ]
-    .filter(Boolean)
-    .join('  |  ');
-
-  let body = result.text || '(no matching elements)';
-  if (result.truncated) {
-    body +=
-      '\n\n[truncated: showing ' +
-      (result.shownNodes ?? '?') +
-      ' of ' +
-      result.nodes +
-      ' nodes, ' +
-      result.totalChars +
-      ' chars total. Narrow with ref_id to read one subtree, or lower depth.]';
-  }
-  return [textBlock(header + '\n\n' + body)];
-}
-
-/**
- * The line under a clipped read saying how much was left out.
- *
- * read_page has always said "158 more nodes not shown, 310 in total". These two
- * said "3 URL(s) clipped to 300 characters" with no row count at all, so a
- * reader could not tell whether entries had been dropped as well as clipped.
- *
- * @param {string} unit  what the rows are, for the count
- * @param {string} part  what was clipped inside a row
- */
-function clipNote(result, unit, part) {
-  const parts = [];
-  const returned = result.returned ?? 0;
-  const total = result.total ?? returned;
-  parts.push(returned < total ? 'showing ' + returned + ' of ' + total + ' ' + unit : returned + ' ' + unit);
-  if (result.clipped) {
-    parts.push(
-      result.clipped +
-        ' ' +
-        part +
-        (result.clipped === 1 ? '' : 's') +
-        ' clipped to ' +
-        result.clippedTo +
-        ' characters' +
-        (result.longestClipped ? ', the longest was ' + result.longestClipped : '')
-    );
-  }
-  return '\n\n[' + parts.join(', ') + ']';
-}
-
-function formatConsole(result) {
-  if (!result.entries.length) {
-    return [textBlock('No console messages' + (result.capturing ? '.' : ' (capture is not active for this tab).'))];
-  }
-  const lines = result.entries.map((e) => {
-    const where = e.url ? ' (' + e.url.split('/').pop() + (e.line ? ':' + e.line : '') + ')' : '';
-    return '[' + (e.level || 'log') + '] ' + e.text + where;
-  });
-  return [textBlock(lines.join('\n') + clipNote(result, 'entries', 'message'))];
-}
-
-function formatNetwork(result) {
-  if (!result.requests.length) return [textBlock('No network requests captured.')];
-  const lines = result.requests.map((r) => {
-    const status = r.failed ? 'FAILED ' + (r.errorText || '') : r.status || 'pending';
-    const size = r.encodedDataLength ? ' ' + Math.round(r.encodedDataLength / 1024) + 'kb' : '';
-    return [status, r.method || '', r.url].filter(Boolean).join(' ') + size;
-  });
-  return [textBlock(lines.join('\n') + clipNote(result, 'requests', 'URL'))];
-}
-
-function formatFind(result) {
-  if (!result.matches.length) {
-    return [
-      textBlock(
-        'No elements matched ' +
-          JSON.stringify(result.query) +
-          ' among ' +
-          result.searched +
-          ' searched. ' +
-          'Try read_page with filter "interactive", or a shorter query.'
-      ),
-    ];
-  }
-  const lines = result.matches.map((m) => {
-    const parts = [m.role];
-    if (m.name) parts.push(JSON.stringify(m.name));
-    parts.push('[' + m.ref + ']');
-    if (m.offscreen) parts.push('(offscreen)');
-    if (m.attrs) parts.push(m.attrs);
-    if (m.count > 1) parts.push('(and ' + (m.count - 1) + ' more like it)');
-    if (m.source === 'model') parts.push('(model' + (m.reason ? ': ' + m.reason : '') + ')');
-    return parts.join(' ');
-  });
-  const header =
-    result.matches.length +
-    ' match(es)' +
-    (result.escalatedBecause ? ', from a model call (' + result.escalatedBecause + ')' : '') +
-    ':';
-  return [textBlock(header + '\n' + lines.join('\n'))];
-}
-
-/**
- * Steps that return content the caller actually needs (a tree, page text, a
- * screenshot) have it inlined. Everything else collapses to one status line, so
- * a long script does not spend tokens confirming that clicks clicked.
- */
-const INLINE_IN_SEQUENCE = new Set([
-  'read_page',
-  'get_page_text',
-  'find',
-  'page_state',
-  'javascript',
-  'tabs_context',
-  'tabs_create',
-  'wait_for_page',
-  'read_console_messages',
-  'read_network_requests',
-  'gif_creator',
-]);
-
-function formatSequence(result, { quick = false } = {}) {
-  const blocks = [];
-  const summary = [];
-
-  for (const step of result.results) {
-    const label =
-      quick && step.lineNo ? 'line ' + step.lineNo + ' ' + step.command : '[' + step.index + '] ' + step.name;
-    if (!step.ok) {
-      summary.push(label + ' FAILED: ' + step.error.message);
-      if (step.error.code) {
-        summary.push(
-          '  [ok=false code=' +
-            step.error.code +
-            ' effects=' +
-            step.error.effects +
-            ' retryable=' +
-            step.error.retryable +
-            ']'
-        );
-      }
-      continue;
-    }
-    summary.push(label + ' ok');
-    // The step's own contract, so evidence produced inside a script is visible
-    // rather than folded into one line for the whole run.
-    const contract = stepContractLine(step);
-    if (contract) summary.push(contract);
-    const inner = formatResult(step.name, step.result, step.input || {});
-    // A step that produced an image also produced the line naming its id, size
-    // and saved path, which is what a later upload_image or a message needs.
-    const carriesImage = inner.some((block) => block.type === 'image');
-    for (const block of inner) {
-      if (block.type === 'image') blocks.push(block);
-      else if (INLINE_IN_SEQUENCE.has(step.name) || carriesImage) summary.push(block.text);
-    }
-  }
-
-  if (!result.completed) {
-    const stopped = result.results[result.results.length - 1];
-    summary.push(
-      '\nStopped at ' +
-        (quick && stopped?.lineNo ? 'line ' + stopped.lineNo : 'action ' + result.stoppedAt) +
-        '. Later actions did not run.'
-    );
-  }
-  return [textBlock(summary.join('\n')), ...blocks];
-}
-
-function formatGif(result, filename) {
-  if (!result || !result.frames) {
-    return [textBlock(JSON.stringify(result, null, 2))];
-  }
-  try {
-    mkdirSync(SHOT_DIR, { recursive: true });
-    const wanted = filename ? String(filename).replace(/[\\/:*?"<>|]/g, '_') : '';
-    const name = wanted
-      ? /\.gif$/i.test(wanted)
-        ? wanted
-        : wanted + '.gif'
-      : 'recording-' + new Date().toISOString().replace(/[:.]/g, '-') + '.gif';
-    const file = joinPath(SHOT_DIR, name);
-    writeFileSync(file, encodeGif(result));
-    // recordedMs is the span the recording covered. It is deliberately not
-    // called durationMs, which every result carries as the calling tool's own
-    // latency and which used to overwrite this number.
-    const span = Number.isFinite(result.recordedMs) ? ' over ' + (result.recordedMs / 1000).toFixed(1) + 's' : '';
-    return [
-      textBlock(
-        'Recorded ' +
-          result.frames.length +
-          ' frames' +
-          span +
-          ' at ' +
-          result.width +
-          'x' +
-          result.height +
-          '.\nsaved: ' +
-          file
-      ),
-    ];
-  } catch (err) {
-    return [textBlock('Could not write the gif: ' + err.message)];
-  }
-}
-
-const SHOT_DIR = envVar('SCREENSHOT_DIR') || joinPath(tmpdir(), 'autopilot-screenshots');
-
 /** Drops the current connection so the next call reconnects to the chosen browser. */
 function dropLink() {
   if (link) {
@@ -858,169 +632,6 @@ async function handleBrowserTool(name, args) {
   return [textBlock('Now using ' + describeBrowser(match) + ' (' + match.id + ').')];
 }
 
-let lastImagePath = null;
-
-// Screenshots taken in this session, by id, so upload_image can attach one the
-// way Claude in Chrome does with imageId. Bounded so a long session does not
-// hold every capture in memory.
-const capturedImages = new Map();
-let imageSeq = 0;
-
-function rememberImage(image) {
-  const id = 'img_' + ++imageSeq;
-  capturedImages.set(id, image);
-  while (capturedImages.size > 20) capturedImages.delete(capturedImages.keys().next().value);
-  return id;
-}
-
-/**
- * Normalizes a filename the page will see (P11). The official extension
- * refuses a name carrying a directory and caps it at 255 chars, the ext4/NTFS
- * filename ceiling; Autopilot takes real filesystem paths for file_upload, so
- * the only place a caller hands over a free-form name is upload_image's
- * `filename` argument, which is what this guards.
- */
-function normalizeUploadFilename(name, fallback) {
-  const raw = String(name || '').trim();
-  if (!raw) return fallback;
-  if (/[\\/]/.test(raw)) {
-    throw new Error('filename ' + JSON.stringify(raw) + ' must not contain a path separator');
-  }
-  if (raw.length <= 255) return raw;
-  const dot = raw.lastIndexOf('.');
-  // Only treat it as an extension when it is short, so a name with no real
-  // extension is not truncated at some unrelated dot near the end.
-  const ext = dot > 0 && raw.length - dot <= 10 ? raw.slice(dot) : '';
-  return raw.slice(0, 255 - ext.length) + ext;
-}
-
-/** Writes a remembered screenshot to disk under the name the page should see. */
-function materializeImage(id, filename) {
-  const image = capturedImages.get(id);
-  if (!image) return null;
-  mkdirSync(SHOT_DIR, { recursive: true });
-  const ext = image.mediaType === 'image/jpeg' ? '.jpg' : '.png';
-  const base = normalizeUploadFilename(filename, id + ext).replace(/[:*?"<>|]/g, '_');
-  const file = joinPath(SHOT_DIR, /\.(png|jpe?g)$/i.test(base) ? base : base + ext);
-  writeFileSync(file, Buffer.from(image.data, 'base64'));
-  return file;
-}
-
-/** Path of the most recent screenshot this server wrote, for upload_image "last". */
-function lastSavedImage() {
-  return lastImagePath;
-}
-
-/** Writes a captured image to disk and returns its path. */
-function saveImage(image) {
-  mkdirSync(SHOT_DIR, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const file = joinPath(SHOT_DIR, 'shot-' + stamp + (image.mediaType === 'image/jpeg' ? '.jpg' : '.png'));
-  writeFileSync(file, Buffer.from(image.data, 'base64'));
-  lastImagePath = file;
-  return file;
-}
-
-/** Resolves and checks upload paths before they reach the browser. */
-function prepareUploadPaths(paths) {
-  const MAX_TOTAL = 25 * 1024 * 1024;
-  let total = 0;
-  const resolved = [];
-
-  for (const raw of paths) {
-    const full = resolvePath(String(raw));
-    let stat;
-    try {
-      stat = statSync(full);
-    } catch {
-      throw new Error('No such file: ' + full);
-    }
-    if (!stat.isFile()) throw new Error('Not a file: ' + full);
-    try {
-      accessSync(full, constants.R_OK);
-    } catch {
-      throw new Error('File is not readable: ' + full);
-    }
-    total += stat.size;
-    if (total > MAX_TOTAL) {
-      throw new Error('Upload exceeds the ' + MAX_TOTAL / (1024 * 1024) + 'MB limit.');
-    }
-    resolved.push(full);
-  }
-  return resolved;
-}
-
-function formatResult(toolName, result, args = {}) {
-  if (result === null || result === undefined) return [textBlock('ok')];
-
-  switch (toolName) {
-    case 'read_page':
-      return formatTreeResult(result);
-    case 'get_page_text':
-      return [
-        textBlock(
-          'url: ' +
-            result.url +
-            '\n\n' +
-            (result.text || '(no text)') +
-            (result.truncated ? '\n\n[truncated: ' + result.totalChars + ' chars total]' : '')
-        ),
-      ];
-    case 'find':
-      return formatFind(result);
-    case 'read_console_messages':
-      return formatConsole(result);
-    case 'read_network_requests':
-      return formatNetwork(result);
-    case 'gif_creator':
-      return formatGif(result, args.filename);
-    case 'browser_batch':
-      return formatSequence(result);
-    case 'quick':
-      return formatSequence(result, { quick: true });
-    case 'shortcuts_execute':
-      return [
-        textBlock('Ran shortcut ' + (result.shortcut ? result.shortcut.name : '')),
-        ...formatSequence(result, { quick: true }),
-      ];
-    default:
-      break;
-  }
-
-  const blocks = [];
-  if (result.image) {
-    blocks.push(imageBlock(result.image));
-    const imageId = rememberImage(result.image);
-    let saved = '';
-    if (result.saveToDisk) {
-      // The extension cannot touch the filesystem, so the server writes the file.
-      try {
-        saved = '\nsaved: ' + saveImage(result.image);
-      } catch (err) {
-        saved = '\ncould not save the image: ' + err.message;
-      }
-    }
-    blocks.push(
-      textBlock(
-        'screenshot ' +
-          result.image.width +
-          'x' +
-          result.image.height +
-          ' (~' +
-          result.image.estimatedTokens +
-          ' tokens) id: ' +
-          imageId +
-          (result.image.note ? '\n' + result.image.note : '') +
-          (result.pageState ? '\nurl: ' + result.pageState.url + '\nscroll: ' + result.pageState.scrollY : '') +
-          saved
-      )
-    );
-    return blocks;
-  }
-
-  return [textBlock(JSON.stringify(result, null, 2))];
-}
-
 // ---------------------------------------------------------------------------
 // C1. The contract, written into the reply
 // ---------------------------------------------------------------------------
@@ -1137,7 +748,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 'No screenshot with id ' +
                   args.imageId +
                   ' in this session. Ids are printed under each screenshot. Known: ' +
-                  ([...capturedImages.keys()].join(', ') || 'none') +
+                  (capturedImageIds().join(', ') || 'none') +
                   '.'
               ),
             ],
@@ -1145,7 +756,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         }
       } else if (path === 'last' || !path) {
-        const lastId = [...capturedImages.keys()].pop();
+        const lastId = capturedImageIds().pop();
         path = lastSavedImage() || (lastId ? materializeImage(lastId, args.filename) : null);
       }
       if (!path) {
