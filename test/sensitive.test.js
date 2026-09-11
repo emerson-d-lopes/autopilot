@@ -41,7 +41,16 @@ test('the sensitivity test covers types and autocomplete tokens', () => {
   assert.equal(agent.isSensitiveField(byId('email')), false, 'an ordinary email field is not sensitive');
   assert.deepEqual(
     [...agent.SENSITIVE_AUTOCOMPLETE].sort(),
-    ['cc-csc', 'cc-exp', 'cc-exp-month', 'cc-exp-year', 'cc-number', 'current-password', 'new-password', 'one-time-code'],
+    [
+      'cc-csc',
+      'cc-exp',
+      'cc-exp-month',
+      'cc-exp-year',
+      'cc-number',
+      'current-password',
+      'new-password',
+      'one-time-code',
+    ],
     'the list is the one the plan names'
   );
 });
@@ -176,8 +185,15 @@ test('the word list marks the controls that cannot be undone', async () => {
   const mark = (name) => nodes.find((n) => n.name === name).irreversible;
 
   for (const name of [
-    'Send', 'Publish post', 'Delete account', 'Pay now', 'Buy it now',
-    'Confirm order', 'Transfer funds', 'Unsubscribe', 'Remove from list',
+    'Send',
+    'Publish post',
+    'Delete account',
+    'Pay now',
+    'Buy it now',
+    'Confirm order',
+    'Transfer funds',
+    'Unsubscribe',
+    'Remove from list',
   ]) {
     assert.equal(mark(name), true, name + ' should be marked');
   }
@@ -226,7 +242,11 @@ test('a page in the payment category marks every control', async () => {
   const nodes = parseTree(
     (await call({ type: 'READ_PAGE', filter: 'interactive', depth: 20, paymentCategory: true })).text
   );
-  assert.equal(nodes.every((n) => n.irreversible), true, 'nothing on a payment page is assumed reversible');
+  assert.equal(
+    nodes.every((n) => n.irreversible),
+    true,
+    'nothing on a payment page is assumed reversible'
+  );
 
   // And the flag does not leak into the next read.
   const after = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive', depth: 20 })).text);
@@ -236,5 +256,8 @@ test('a page in the payment category marks every control', async () => {
 test('static content is never marked, whatever it says', async () => {
   const { call } = loadPage('<!doctype html><body><h1>Delete your account</h1><p>Send us a note.</p></body>');
   const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'all', depth: 20 })).text);
-  assert.equal(nodes.some((n) => n.irreversible), false);
+  assert.equal(
+    nodes.some((n) => n.irreversible),
+    false
+  );
 });

@@ -39,7 +39,10 @@ test('evaluated leaves a body with no result field alone', () => {
 
 test('asText reads the mcp-client shape and the MCP content shape', () => {
   assert.equal(asText({ text: 'hello' }), 'hello');
-  assert.equal(asText({ content: [{ type: 'text', text: 'a' }, { type: 'image' }, { type: 'text', text: 'b' }] }), 'a\nb');
+  assert.equal(
+    asText({ content: [{ type: 'text', text: 'a' }, { type: 'image' }, { type: 'text', text: 'b' }] }),
+    'a\nb'
+  );
   assert.equal(asText('plain'), 'plain');
   assert.equal(asText(null), '');
 });

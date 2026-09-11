@@ -34,7 +34,9 @@ function renderState(state) {
     label.textContent = 'Working';
   } else if (state.connected) {
     dot.classList.add('connected');
-    label.textContent = state.clients ? 'Connected, ' + state.clients + ' client' + (state.clients === 1 ? '' : 's') : 'Connected, idle';
+    label.textContent = state.clients
+      ? 'Connected, ' + state.clients + ' client' + (state.clients === 1 ? '' : 's')
+      : 'Connected, idle';
   } else {
     label.textContent = 'Host not connected. Run npm run doctor.';
   }
@@ -53,7 +55,7 @@ function renderSessions(sessions) {
   for (const s of sessions) {
     const li = document.createElement('li');
     li.className = 'session';
-    li.title = 'Show this session\'s tabs';
+    li.title = "Show this session's tabs";
     const mark = document.createElement('span');
     mark.textContent = s.mark || '·';
     const grow = document.createElement('span');

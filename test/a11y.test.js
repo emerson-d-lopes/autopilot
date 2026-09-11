@@ -38,7 +38,14 @@ function loadPage(html, { width = 1024, height = 768 } = {}) {
     const offscreen = this.hasAttribute('data-offscreen');
     const top = offscreen ? 5000 : 100;
     return {
-      left: 50, top, right: 250, bottom: top + 30, width: 200, height: 30, x: 50, y: top,
+      left: 50,
+      top,
+      right: 250,
+      bottom: top + 30,
+      width: 200,
+      height: 30,
+      x: 50,
+      y: top,
     };
   };
 
@@ -108,18 +115,37 @@ test('roles are derived from tags and attributes', async () => {
   const select = nodes.find((n) => n.role === 'combobox');
   assert.ok(select, 'select maps to combobox');
   assert.match(select.attrs, /options="Brazil\|United States"/);
-  assert.equal(nodes.some((n) => n.role === 'option'), false, 'options are summarised, not listed');
-  assert.equal(nodes.some((n) => n.role === 'form'), true);
-  assert.equal(nodes.some((n) => n.role === 'navigation'), true);
+  assert.equal(
+    nodes.some((n) => n.role === 'option'),
+    false,
+    'options are summarised, not listed'
+  );
+  assert.equal(
+    nodes.some((n) => n.role === 'form'),
+    true
+  );
+  assert.equal(
+    nodes.some((n) => n.role === 'navigation'),
+    true
+  );
 });
 
 test('accessible names come from labels, placeholders, and alt text', async () => {
   const { call } = loadPage(LOGIN_PAGE);
   const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'all', depth: 20 })).text);
 
-  assert.ok(nodes.find((n) => n.name === 'Email address' && n.role === 'textbox'), 'label[for] resolved');
-  assert.ok(nodes.find((n) => n.name === 'Acme logo'), 'img alt resolved');
-  assert.ok(nodes.find((n) => n.name === 'Password' && n.role === 'textbox'), 'wrapping label resolved');
+  assert.ok(
+    nodes.find((n) => n.name === 'Email address' && n.role === 'textbox'),
+    'label[for] resolved'
+  );
+  assert.ok(
+    nodes.find((n) => n.name === 'Acme logo'),
+    'img alt resolved'
+  );
+  assert.ok(
+    nodes.find((n) => n.name === 'Password' && n.role === 'textbox'),
+    'wrapping label resolved'
+  );
 });
 
 test('an image with empty alt is treated as decorative and dropped', async () => {
@@ -131,18 +157,36 @@ test('an image with empty alt is treated as decorative and dropped', async () =>
 test('a display:none subtree is pruned entirely', async () => {
   const { call } = loadPage(LOGIN_PAGE);
   const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'all', depth: 20 })).text);
-  assert.equal(nodes.some((n) => n.name === 'Hidden action'), false);
+  assert.equal(
+    nodes.some((n) => n.name === 'Hidden action'),
+    false
+  );
 });
 
 test('the interactive filter drops static content', async () => {
   const { call } = loadPage(LOGIN_PAGE);
   const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive', depth: 20 })).text);
 
-  assert.equal(nodes.some((n) => n.role === 'heading'), false);
-  assert.equal(nodes.some((n) => n.role === 'navigation'), false);
-  assert.equal(nodes.some((n) => n.role === 'link'), true);
-  assert.equal(nodes.some((n) => n.role === 'button'), true);
-  assert.equal(nodes.every((n) => n.ref.startsWith('ref_')), true);
+  assert.equal(
+    nodes.some((n) => n.role === 'heading'),
+    false
+  );
+  assert.equal(
+    nodes.some((n) => n.role === 'navigation'),
+    false
+  );
+  assert.equal(
+    nodes.some((n) => n.role === 'link'),
+    true
+  );
+  assert.equal(
+    nodes.some((n) => n.role === 'button'),
+    true
+  );
+  assert.equal(
+    nodes.every((n) => n.ref.startsWith('ref_')),
+    true
+  );
 });
 
 test('refs are stable across repeated reads', async () => {
@@ -167,7 +211,10 @@ test('refs survive an unrelated DOM mutation', async () => {
 
   const after = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);
   assert.equal(after.find((n) => n.name === 'Sign in' && n.role === 'button').ref, signIn.ref);
-  assert.ok(after.find((n) => n.name === 'Newly added'), 'new element appears');
+  assert.ok(
+    after.find((n) => n.name === 'Newly added'),
+    'new element appears'
+  );
 });
 
 test('RESOLVE_REF returns geometry for a live element', async () => {
@@ -337,8 +384,14 @@ test('ref_id reads only the requested subtree', async () => {
   const subtree = await call({ type: 'READ_PAGE', ref_id: form.ref, refId: form.ref, filter: 'all', depth: 20 });
   const nodes = parseTree(subtree.text);
 
-  assert.equal(nodes.some((n) => n.role === 'navigation'), false);
-  assert.equal(nodes.some((n) => n.name === 'Email address'), true);
+  assert.equal(
+    nodes.some((n) => n.role === 'navigation'),
+    false
+  );
+  assert.equal(
+    nodes.some((n) => n.name === 'Email address'),
+    true
+  );
 });
 
 test('depth bounds nesting in the emitted tree', async () => {
@@ -352,8 +405,14 @@ test('depth bounds nesting in the emitted tree', async () => {
   const shallow = parseTree((await call({ type: 'READ_PAGE', filter: 'all', depth: 2 })).text);
   const deep = parseTree((await call({ type: 'READ_PAGE', filter: 'all', depth: 20 })).text);
 
-  assert.equal(shallow.some((n) => n.name && n.name.startsWith('Level three')), false);
-  assert.equal(deep.some((n) => n.name && n.name.startsWith('Level three')), true);
+  assert.equal(
+    shallow.some((n) => n.name && n.name.startsWith('Level three')),
+    false
+  );
+  assert.equal(
+    deep.some((n) => n.name && n.name.startsWith('Level three')),
+    true
+  );
 });
 
 test('anonymous wrappers do not consume the depth budget', async () => {
@@ -364,13 +423,14 @@ test('anonymous wrappers do not consume the depth budget', async () => {
   const { call } = loadPage('<!doctype html><body>' + html + '</body>');
 
   const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive', depth: 15 })).text);
-  assert.equal(nodes.some((n) => n.name === 'Deeply nested action'), true);
+  assert.equal(
+    nodes.some((n) => n.name === 'Deeply nested action'),
+    true
+  );
 });
 
 test('a label associated with a control is not emitted twice', async () => {
-  const { call } = loadPage(
-    '<!doctype html><body><label for="x">Full name</label><input id="x"></body>'
-  );
+  const { call } = loadPage('<!doctype html><body><label for="x">Full name</label><input id="x"></body>');
   const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'all', depth: 20 })).text);
   const named = nodes.filter((n) => n.name === 'Full name');
   assert.equal(named.length, 1);
@@ -384,7 +444,10 @@ test('open shadow roots are traversed', async () => {
   root.innerHTML = '<button>Inside shadow</button>';
 
   const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive', depth: 20 })).text);
-  assert.equal(nodes.some((n) => n.name === 'Inside shadow'), true);
+  assert.equal(
+    nodes.some((n) => n.name === 'Inside shadow'),
+    true
+  );
 });
 
 test('aria-label overrides text content', async () => {
@@ -413,8 +476,14 @@ test('aria-hidden nodes are excluded', async () => {
     '<!doctype html><body><button aria-hidden="true">Ghost</button><button>Real</button></body>'
   );
   const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'interactive' })).text);
-  assert.equal(nodes.some((n) => n.name === 'Ghost'), false);
-  assert.equal(nodes.some((n) => n.name === 'Real'), true);
+  assert.equal(
+    nodes.some((n) => n.name === 'Ghost'),
+    false
+  );
+  assert.equal(
+    nodes.some((n) => n.name === 'Real'),
+    true
+  );
 });
 
 test('state attributes are reported', async () => {
@@ -526,9 +595,18 @@ test('table structure maps to table roles', async () => {
     <tbody><tr><td>Widget</td><td>$10</td></tr></tbody>
   </table></body>`);
   const nodes = parseTree((await call({ type: 'READ_PAGE', filter: 'all', depth: 20 })).text);
-  assert.equal(nodes.some((n) => n.role === 'table'), true);
-  assert.equal(nodes.some((n) => n.role === 'columnheader' && n.name === 'Name'), true);
-  assert.equal(nodes.some((n) => n.role === 'cell' && n.name === 'Widget'), true);
+  assert.equal(
+    nodes.some((n) => n.role === 'table'),
+    true
+  );
+  assert.equal(
+    nodes.some((n) => n.role === 'columnheader' && n.name === 'Name'),
+    true
+  );
+  assert.equal(
+    nodes.some((n) => n.role === 'cell' && n.name === 'Widget'),
+    true
+  );
 });
 
 test('an interactive div takes its name from its text', () => {
@@ -545,7 +623,10 @@ test('an interactive div takes its name from its text', () => {
 test('a plain container still contributes no name', () => {
   const { call } = loadPage('<!doctype html><body><div><span>just text</span></div></body>');
   return call({ type: 'READ_PAGE', filter: 'all', depth: 20 }).then((r) => {
-    assert.equal(parseTree(r.text).some((n) => n.name === 'just text'), false);
+    assert.equal(
+      parseTree(r.text).some((n) => n.name === 'just text'),
+      false
+    );
   });
 });
 
@@ -600,7 +681,7 @@ test('bare text in a container with no role is emitted as text', async () => {
   assert.ok(!/text "/.test(interactive.text), 'the interactive filter carries no text nodes');
 });
 
-test('GET_PAGE_TEXT skips page chrome but keeps an article\'s own header and hidden panels stay out', async () => {
+test("GET_PAGE_TEXT skips page chrome but keeps an article's own header and hidden panels stay out", async () => {
   const { call } = loadPage(`<!doctype html><html><body>
     <header><nav><a href="/">Home</a><a href="/about">About</a></nav></header>
     <main>

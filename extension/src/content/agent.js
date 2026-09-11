@@ -92,9 +92,7 @@
     TEXTAREA: () => 'textbox',
     INPUT: (el) => {
       const type = (el.getAttribute('type') || 'text').toLowerCase();
-      return Object.prototype.hasOwnProperty.call(INPUT_ROLES, type)
-        ? INPUT_ROLES[type]
-        : 'textbox';
+      return Object.prototype.hasOwnProperty.call(INPUT_ROLES, type) ? INPUT_ROLES[type] : 'textbox';
     },
     IMG: (el) => (el.getAttribute('alt') === '' ? null : 'img'),
     H1: () => 'heading',
@@ -299,13 +297,7 @@
     'i'
   );
 
-  const IRREVERSIBLE_ROLES = new Set([
-    'button',
-    'link',
-    'menuitem',
-    'menuitemcheckbox',
-    'menuitemradio',
-  ]);
+  const IRREVERSIBLE_ROLES = new Set(['button', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio']);
 
   // Set by the caller when the page is in the permission policy's payment
   // category, where every control is treated as irreversible.
@@ -340,8 +332,23 @@
   // their navigation or their 2xx after the 250 ms window in the 0.1.35
   // rehearsal, which is what the longer window exists for.
   const SUBMIT_WORDS = [
-    'send', 'post', 'save', 'publish', 'reply', 'submit', 'create', 'comment',
-    'close', 'delete', 'remove', 'confirm', 'apply', 'update', 'ok', 'done', 'yes',
+    'send',
+    'post',
+    'save',
+    'publish',
+    'reply',
+    'submit',
+    'create',
+    'comment',
+    'close',
+    'delete',
+    'remove',
+    'confirm',
+    'apply',
+    'update',
+    'ok',
+    'done',
+    'yes',
   ];
 
   const SUBMIT_RE = new RegExp('(^|[^a-z])(' + SUBMIT_WORDS.join('|') + ')([^a-z]|$)', 'i');
@@ -354,8 +361,17 @@
    * findUndoControl returns.
    */
   const REVERSIBLE_WORDS = [
-    'save', 'post', 'publish', 'comment', 'update', 'apply', 'edit', 'rename', 'add',
-    'close', 'reopen',
+    'save',
+    'post',
+    'publish',
+    'comment',
+    'update',
+    'apply',
+    'edit',
+    'rename',
+    'add',
+    'close',
+    'reopen',
   ];
 
   const REVERSIBLE_RE = new RegExp('(^|[^a-z])(' + REVERSIBLE_WORDS.join('|') + ')([^a-z]|$)', 'i');
@@ -411,17 +427,22 @@
 
   /** The composer or field a submit would send: the element itself, or the one that has focus. */
   function composerFor(el) {
-    let node = el || document.activeElement;
+    const node = el || document.activeElement;
     if (!node) return null;
     if (isEditableHost(node)) return node;
     const tag = node.tagName ? node.tagName.toUpperCase() : '';
-    if (tag === 'TEXTAREA' || (tag === 'INPUT' && !/^(button|submit|checkbox|radio|file|image|reset)$/i.test(node.type || ''))) {
+    if (
+      tag === 'TEXTAREA' ||
+      (tag === 'INPUT' && !/^(button|submit|checkbox|radio|file|image|reset)$/i.test(node.type || ''))
+    ) {
       return node;
     }
     // A click on the Send button itself: the composer is the field in its form.
-    const form = (node.form || (node.closest && node.closest('form'))) || null;
+    const form = node.form || (node.closest && node.closest('form')) || null;
     if (form) {
-      const field = form.querySelector('[contenteditable=""], [contenteditable=true], textarea, input[type=text], input:not([type])');
+      const field = form.querySelector(
+        '[contenteditable=""], [contenteditable=true], textarea, input[type=text], input:not([type])'
+      );
       if (field) return field;
     }
     return null;
@@ -481,8 +502,7 @@
   function associatedLabel(el) {
     if (el.id) {
       const root = el.getRootNode();
-      const escaped =
-        typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(el.id) : el.id.replace(/"/g, '\\"');
+      const escaped = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(el.id) : el.id.replace(/"/g, '\\"');
       const label = root.querySelector && root.querySelector('label[for="' + escaped + '"]');
       if (label) return label;
     }
@@ -529,9 +549,7 @@
       const parts = labelledBy
         .split(/\s+/)
         .map((id) => {
-          const target = root.getElementById
-            ? root.getElementById(id)
-            : document.getElementById(id);
+          const target = root.getElementById ? root.getElementById(id) : document.getElementById(id);
           return target ? normalize(textOf(target)) : '';
         })
         .filter(Boolean);
@@ -877,8 +895,7 @@
     if (current) push('current', current);
     if (role === 'heading') {
       const level =
-        (el.getAttribute && el.getAttribute('aria-level')) ||
-        (/^H([1-6])$/.test(el.tagName) ? el.tagName[1] : null);
+        (el.getAttribute && el.getAttribute('aria-level')) || (/^H([1-6])$/.test(el.tagName) ? el.tagName[1] : null);
       push('level', level);
     }
     if (el.hasAttribute && el.hasAttribute('required')) push('required', 'true');
@@ -1007,7 +1024,11 @@
           const text = child.nodeValue.replace(/\s+/g, ' ').trim();
           if (!text) continue;
           nodeCount++;
-          lines.push('  '.repeat(Math.min(childDepth, 30)) + 'text ' + JSON.stringify(text.length > 300 ? text.slice(0, 297) + '...' : text));
+          lines.push(
+            '  '.repeat(Math.min(childDepth, 30)) +
+              'text ' +
+              JSON.stringify(text.length > 300 ? text.slice(0, 297) + '...' : text)
+          );
         }
       }
 
@@ -1076,7 +1097,11 @@
     const overlay = coveringForeignFrame();
     if (overlay) {
       lines.unshift(
-        'note: a cross-origin frame (' + overlay.src + ') covers ' + overlay.percent + '% of the viewport. ' +
+        'note: a cross-origin frame (' +
+          overlay.src +
+          ') covers ' +
+          overlay.percent +
+          '% of the viewport. ' +
           'Its contents are not in this tree. Take a screenshot and act on it by coordinate.'
       );
     }
@@ -1103,8 +1128,15 @@
     }
     const hidden = lines.length - kept.length;
     const note =
-      'note: truncated. ' + hidden + ' more node' + (hidden === 1 ? '' : 's') + ' not shown, ' +
-      lines.length + ' in total (' + full.length + ' chars). ' +
+      'note: truncated. ' +
+      hidden +
+      ' more node' +
+      (hidden === 1 ? '' : 's') +
+      ' not shown, ' +
+      lines.length +
+      ' in total (' +
+      full.length +
+      ' chars). ' +
       'Narrow with ref_id, filter or depth, or raise max_chars.';
     const withNote = kept.concat(note);
     return {
@@ -1206,10 +1238,12 @@
     // but a menu.
     // A header or footer counts as chrome only at page level. Inside an
     // article or section it is the piece's own title block.
-    const CHROME = 'nav,aside,[role="navigation"],[role="banner"],[role="contentinfo"],[role="complementary"],[role="menu"],[role="menubar"]';
+    const CHROME =
+      'nav,aside,[role="navigation"],[role="banner"],[role="contentinfo"],[role="complementary"],[role="menu"],[role="menubar"]';
     const isChrome = (el) =>
       el.matches(CHROME) ||
-      ((el.tagName === 'HEADER' || el.tagName === 'FOOTER') && !el.parentElement.closest('article,section,main,[role="main"]'));
+      ((el.tagName === 'HEADER' || el.tagName === 'FOOTER') &&
+        !el.parentElement.closest('article,section,main,[role="main"]'));
     const containerIsChrome = article !== document.body && isChrome(article);
 
     // Hidden ancestors are what getComputedStyle on the parent misses: a text
@@ -1298,14 +1332,12 @@
     const chunks = [];
     let total = 0;
     let node;
-    const BLOCK = new Set([
-      'P', 'DIV', 'SECTION', 'ARTICLE', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-      'TR', 'BLOCKQUOTE', 'PRE', 'BR', 'TD', 'TH',
-    ]);
     let lastBlock = null;
     let lastParent = null;
     let collected = 0;
-    const walkers = roots.map((r) => (r === article ? walker : document.createTreeWalker(r, NodeFilter.SHOW_TEXT, { acceptNode })));
+    const walkers = roots.map((r) =>
+      r === article ? walker : document.createTreeWalker(r, NodeFilter.SHOW_TEXT, { acceptNode })
+    );
     let walkerIndex = 0;
     const nextText = () => {
       while (walkerIndex < walkers.length) {
@@ -1329,7 +1361,8 @@
         // one. A boundary between elements gets a space unless one is there.
         const prev = chunks[chunks.length - 1];
         const t0 = node.nodeValue;
-        if (prev && !/\s$/.test(prev) && !/^\s/.test(t0) && !/^[.,;:!?)\]]/.test(t0) && !/[(\[]$/.test(prev)) chunks.push(' ');
+        if (prev && !/\s$/.test(prev) && !/^\s/.test(t0) && !/^[.,;:!?)\]]/.test(t0) && !/[([]$/.test(prev))
+          chunks.push(' ');
       }
       lastBlock = block;
       lastParent = parent;
@@ -1391,7 +1424,7 @@
       if (!hit || sameTarget(el, box, hit)) return null;
       const role = roleOf(hit);
       const name = accessibleName(hit, role, true);
-      return (name ? role + ' "' + name + '"' : role + ' <' + hit.tagName.toLowerCase() + '>');
+      return name ? role + ' "' + name + '"' : role + ' <' + hit.tagName.toLowerCase() + '>';
     } catch {
       return null;
     }
@@ -1416,10 +1449,8 @@
       if (node === document.body || node === document.documentElement) break;
       const style = getComputedStyle(node);
       if (!style) continue;
-      const scrollsY =
-        /^(auto|scroll|overlay)$/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1;
-      const scrollsX =
-        /^(auto|scroll|overlay)$/.test(style.overflowX) && node.scrollWidth > node.clientWidth + 1;
+      const scrollsY = /^(auto|scroll|overlay)$/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1;
+      const scrollsX = /^(auto|scroll|overlay)$/.test(style.overflowX) && node.scrollWidth > node.clientWidth + 1;
       if (scrollsY || scrollsX) return node;
     }
     return document.scrollingElement || document.documentElement || document.body;
@@ -1641,13 +1672,9 @@
       pageX: after.scroll.page.x - state.scroll.page.x,
       pageY: after.scroll.page.y - state.scroll.page.y,
       containerX:
-        after.scroll.container && state.scroll.container
-          ? after.scroll.container.x - state.scroll.container.x
-          : 0,
+        after.scroll.container && state.scroll.container ? after.scroll.container.x - state.scroll.container.x : 0,
       containerY:
-        after.scroll.container && state.scroll.container
-          ? after.scroll.container.y - state.scroll.container.y
-          : 0,
+        after.scroll.container && state.scroll.container ? after.scroll.container.y - state.scroll.container.y : 0,
     };
     const scrolled =
       Math.abs(scrollDelta.pageX) >= 1 ||
@@ -1814,9 +1841,7 @@
     const composerAfter =
       state.composer && state.composer.isConnected ? editableText(state.composer).trim().length : null;
     const composerEmptied =
-      state.composerBefore === null || composerAfter === null
-        ? null
-        : state.composerBefore > 0 && composerAfter === 0;
+      state.composerBefore === null || composerAfter === null ? null : state.composerBefore > 0 && composerAfter === 0;
 
     return {
       ok: true,
@@ -1946,7 +1971,14 @@
       // Without this the caret sits wherever the previous value left it (often
       // position 0), so a computer.type call right after form_input inserts in
       // the middle of the new value instead of appending to it.
-      if (type === 'text' || type === 'search' || type === 'url' || type === 'tel' || type === 'password' || tag === 'TEXTAREA') {
+      if (
+        type === 'text' ||
+        type === 'search' ||
+        type === 'url' ||
+        type === 'tel' ||
+        type === 'password' ||
+        tag === 'TEXTAREA'
+      ) {
         try {
           el.setSelectionRange(el.value.length, el.value.length);
         } catch {
@@ -2036,7 +2068,9 @@
       '.p.go{animation:r .45s ease-out}' +
       '@keyframes r{from{transform:scale(.35);opacity:.95}to{transform:scale(1.9);opacity:0}}' +
       '</style>' +
-      '<div class="c"><div class="g"></div><div class="p"></div>' + ARROW + '</div>';
+      '<div class="c"><div class="g"></div><div class="p"></div>' +
+      ARROW +
+      '</div>';
 
     document.documentElement.appendChild(host);
     cursorRoot = host;
@@ -2404,7 +2438,7 @@
     try {
       const result = handler(msg);
       if (result && typeof result.then === 'function') {
-        result.then(sendResponse, (err) => sendResponse({ error: String(err && err.message || err) }));
+        result.then(sendResponse, (err) => sendResponse({ error: String((err && err.message) || err) }));
         return true;
       }
       sendResponse(result);

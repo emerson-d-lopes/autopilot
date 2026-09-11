@@ -145,10 +145,21 @@ export async function createClient(options = {}) {
     const message = await request('tools/call', { name: tool, arguments: args }, perCall);
     const wall = Date.now() - started;
     if (message.error) {
-      return { ok: false, isError: true, text: JSON.stringify(message.error), images: [], content: [], raw: message, wall };
+      return {
+        ok: false,
+        isError: true,
+        text: JSON.stringify(message.error),
+        images: [],
+        content: [],
+        raw: message,
+        wall,
+      };
     }
     const content = (message.result && message.result.content) || [];
-    const text = content.filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
+    const text = content
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
+      .join('\n\n');
     const images = content
       .filter((b) => b.type === 'image')
       .map((b) => ({ mimeType: b.mimeType, bytes: b.data ? Math.round((b.data.length * 3) / 4) : 0 }));
@@ -192,7 +203,7 @@ export async function createClient(options = {}) {
 // --- CLI ---------------------------------------------------------------------
 
 function usage() {
-  console.error('usage: node tools/mcp-client.js <tool> \'<json args>\' [--browser <id>] [--raw] [--timeout <ms>]');
+  console.error("usage: node tools/mcp-client.js <tool> '<json args>' [--browser <id>] [--raw] [--timeout <ms>]");
   console.error('       node tools/mcp-client.js --list');
 }
 

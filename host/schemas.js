@@ -6,7 +6,7 @@
 
 const tabIdProp = {
   type: 'number',
-  description: 'Tab to act on. Must be a tab in this session\'s group. Call tabs_context first if you do not have one.',
+  description: "Tab to act on. Must be a tab in this session's group. Call tabs_context first if you do not have one.",
 };
 
 // Per-call routing. Present on every page tool so a session driving one profile
@@ -38,7 +38,7 @@ export const TOOLS = [
   },
   {
     name: 'tabs_create',
-    description: 'Open a new tab in this session\'s tab group and wait for it to load.',
+    description: "Open a new tab in this session's tab group and wait for it to load.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -49,7 +49,7 @@ export const TOOLS = [
   },
   {
     name: 'tabs_close',
-    description: 'Close a tab in this session\'s tab group.',
+    description: "Close a tab in this session's tab group.",
     inputSchema: {
       type: 'object',
       properties: { tabId: tabIdProp, browser: browserProp },
@@ -115,7 +115,11 @@ export const TOOLS = [
       'Use read_page instead when you need to interact with anything.',
     inputSchema: {
       type: 'object',
-      properties: { tabId: tabIdProp, max_chars: { type: 'number', description: 'Default 50000.' }, browser: browserProp },
+      properties: {
+        tabId: tabIdProp,
+        max_chars: { type: 'number', description: 'Default 50000.' },
+        browser: browserProp,
+      },
       required: ['tabId'],
     },
   },
@@ -183,8 +187,19 @@ export const TOOLS = [
         action: {
           type: 'string',
           enum: [
-            'left_click', 'right_click', 'double_click', 'triple_click', 'hover',
-            'type', 'key', 'screenshot', 'zoom', 'wait', 'scroll', 'scroll_to', 'left_click_drag',
+            'left_click',
+            'right_click',
+            'double_click',
+            'triple_click',
+            'hover',
+            'type',
+            'key',
+            'screenshot',
+            'zoom',
+            'wait',
+            'scroll',
+            'scroll_to',
+            'left_click_drag',
           ],
           description:
             'left_click / right_click / double_click / triple_click: click at ref or coordinate. ' +
@@ -225,11 +240,13 @@ export const TOOLS = [
         },
         perKey: {
           type: 'boolean',
-          description: 'For "type": send individual key events instead of inserting the string at once. Needed by inputs that only react to keystrokes, such as autocompletes.',
+          description:
+            'For "type": send individual key events instead of inserting the string at once. Needed by inputs that only react to keystrokes, such as autocompletes.',
         },
         replace: {
           type: 'boolean',
-          description: 'For "type": select the field\'s contents first, so the text replaces what is there instead of appending to it.',
+          description:
+            'For "type": select the field\'s contents first, so the text replaces what is there instead of appending to it.',
         },
         cadence: {
           type: 'number',
@@ -343,7 +360,8 @@ export const TOOLS = [
   },
   {
     name: 'page_state',
-    description: 'Current URL, title, scroll position, viewport size, and load state. Cheap orientation check after an action.',
+    description:
+      'Current URL, title, scroll position, viewport size, and load state. Cheap orientation check after an action.',
     inputSchema: {
       type: 'object',
       properties: { tabId: tabIdProp, browser: browserProp },
@@ -357,7 +375,11 @@ export const TOOLS = [
       'slow render, instead of a fixed sleep.',
     inputSchema: {
       type: 'object',
-      properties: { tabId: tabIdProp, timeout: { type: 'number', description: 'Milliseconds, default 15000.' }, browser: browserProp },
+      properties: {
+        tabId: tabIdProp,
+        timeout: { type: 'number', description: 'Milliseconds, default 15000.' },
+        browser: browserProp,
+      },
       required: ['tabId'],
     },
   },
@@ -521,7 +543,10 @@ export const TOOLS = [
       properties: {
         browserId: { type: 'string', description: 'Id or name from list_connected_browsers, e.g. "Edge".' },
         label: { type: 'string', description: 'The label set on the extension options page, e.g. "Work Chrome".' },
-        profile: { type: 'string', description: 'Profile directory or display name, e.g. "Default" or "Profile 2" or "Work".' },
+        profile: {
+          type: 'string',
+          description: 'Profile directory or display name, e.g. "Default" or "Profile 2" or "Work".',
+        },
         account: { type: 'string', description: 'Signed-in account email, e.g. "me@example.com".' },
         site: {
           type: 'string',
@@ -614,7 +639,7 @@ export const TOOLS = [
             type: 'object',
             properties: {
               name: { type: 'string', description: 'Tool name. browser_batch cannot be nested.' },
-              input: { type: 'object', description: 'That tool\'s arguments.' },
+              input: { type: 'object', description: "That tool's arguments." },
             },
             required: ['name', 'input'],
           },
@@ -645,8 +670,17 @@ const INPUT_SHAPE =
 
 /** Tools whose result is a read of the page and never changes it. */
 const READ_ONLY = new Set([
-  'read_page', 'get_page_text', 'find', 'page_state', 'read_console_messages', 'read_network_requests',
-  'tabs_context', 'wait_for_page', 'shortcuts_list', 'list_connected_browsers', 'declare_plan',
+  'read_page',
+  'get_page_text',
+  'find',
+  'page_state',
+  'read_console_messages',
+  'read_network_requests',
+  'tabs_context',
+  'wait_for_page',
+  'shortcuts_list',
+  'list_connected_browsers',
+  'declare_plan',
 ]);
 
 const RESULT_NOTES = {

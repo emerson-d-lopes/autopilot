@@ -42,8 +42,15 @@ const cookie = (name, extra = {}) => ({
 
 test('the table covers every site the plan names', () => {
   for (const domain of [
-    'linkedin.com', 'github.com', 'google.com', 'x.com', 'notion.so',
-    'reddit.com', 'amazon.com', 'facebook.com', 'instagram.com',
+    'linkedin.com',
+    'github.com',
+    'google.com',
+    'x.com',
+    'notion.so',
+    'reddit.com',
+    'amazon.com',
+    'facebook.com',
+    'instagram.com',
   ]) {
     assert.ok(SESSION_DOMAINS.includes(domain), domain + ' is missing from the table');
   }

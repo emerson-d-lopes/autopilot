@@ -164,7 +164,9 @@ code,
   border-radius: var(--al-radius-md);
   margin-bottom: var(--al-space-2);
   cursor: pointer;
-  transition: border-color var(--al-transition-fast), background var(--al-transition-fast);
+  transition:
+    border-color var(--al-transition-fast),
+    background var(--al-transition-fast);
 }
 
 .choice:hover {

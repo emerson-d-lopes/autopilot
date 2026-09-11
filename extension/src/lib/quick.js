@@ -190,7 +190,10 @@ export function parseScript(script, tabId) {
         return;
       default:
         throw new QuickParseError(
-          'line ' + lineNo + ': unknown command ' + JSON.stringify(command) +
+          'line ' +
+            lineNo +
+            ': unknown command ' +
+            JSON.stringify(command) +
             '. Supported: C RC DC TC H SC T TK TR K S D Z N J W F R X SS P PAUSE ST NT LT'
         );
     }

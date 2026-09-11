@@ -226,10 +226,13 @@ async function startHost(name, extraEnv = {}) {
         const hit = seen.find(predicate);
         if (hit) return resolve(hit);
         const timer = setTimeout(() => reject(new Error('the host sent no matching message')), 5000);
-        waiters.push([predicate, (m) => {
-          clearTimeout(timer);
-          resolve(m);
-        }]);
+        waiters.push([
+          predicate,
+          (m) => {
+            clearTimeout(timer);
+            resolve(m);
+          },
+        ]);
       }),
   };
 
@@ -244,7 +247,14 @@ test('a response whose socket closed is replayed to the same session id', async 
   t.after(host.stop);
 
   const first = await connect(host.socket);
-  first.send({ type: 'tool_request', id: 'mcp_1', tool: 'read_page', args: { tabId: 1 }, clientId: 'sess-1', callId: 'call_1' });
+  first.send({
+    type: 'tool_request',
+    id: 'mcp_1',
+    tool: 'read_page',
+    args: { tabId: 1 },
+    clientId: 'sess-1',
+    callId: 'call_1',
+  });
   const forwarded = await host.extension.waitFor((m) => m.type === 'tool_request');
 
   // The MCP server dies before the browser answers.
@@ -268,7 +278,7 @@ test('a response whose socket closed is replayed to the same session id', async 
   second.end();
 });
 
-test('a different session does not receive another session\'s parked response', async (t) => {
+test("a different session does not receive another session's parked response", async (t) => {
   const host = await startHost('replay-other');
   t.after(host.stop);
 
@@ -314,7 +324,14 @@ test('the correlation id travels to the extension unchanged', async (t) => {
   t.after(host.stop);
 
   const client = await connect(host.socket);
-  client.send({ type: 'tool_request', id: 'mcp_1', tool: 'find', args: { tabId: 1, query: 'x' }, clientId: 's', callId: 'call_42_abcdef' });
+  client.send({
+    type: 'tool_request',
+    id: 'mcp_1',
+    tool: 'find',
+    args: { tabId: 1, query: 'x' },
+    clientId: 's',
+    callId: 'call_42_abcdef',
+  });
   const forwarded = await host.extension.waitFor((m) => m.type === 'tool_request');
   assert.equal(forwarded.callId, 'call_42_abcdef');
   assert.notEqual(forwarded.id, 'mcp_1', 'the host renumbers its own request ids');

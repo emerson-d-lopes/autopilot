@@ -26,8 +26,7 @@ export function devBrowserId() {
   }
 }
 
-export const REGISTRY_DIR =
-  envVar('REGISTRY_DIR') || join(tmpdir(), 'autopilot-browsers');
+export const REGISTRY_DIR = envVar('REGISTRY_DIR') || join(tmpdir(), 'autopilot-browsers');
 
 function entryPath(browserId) {
   return join(REGISTRY_DIR, browserId.replace(/[^\w.-]/g, '_') + '.json');
@@ -66,9 +65,7 @@ function readAll() {
  */
 export async function listBrowsers() {
   const entries = readAll();
-  const checked = await Promise.all(
-    entries.map(async (entry) => ({ entry, alive: await probe(entry.socket, 400) }))
-  );
+  const checked = await Promise.all(entries.map(async (entry) => ({ entry, alive: await probe(entry.socket, 400) })));
 
   const live = [];
   for (const { entry, alive } of checked) {
@@ -83,7 +80,10 @@ export async function listBrowsers() {
 // Choosing among several connected browsers
 // ---------------------------------------------------------------------------
 
-const lower = (value) => String(value === undefined || value === null ? '' : value).trim().toLowerCase();
+const lower = (value) =>
+  String(value === undefined || value === null ? '' : value)
+    .trim()
+    .toLowerCase();
 
 /** Registry entries carry a host name, so a shared registry directory stays readable. */
 export function isLocal(entry) {
@@ -99,7 +99,16 @@ export function isDev(entry, devId = devBrowserId()) {
 function identityStrings(entry) {
   const profile = entry.profile || {};
   const account = entry.account || {};
-  return [entry.id, entry.name, entry.label, profile.directory, profile.name, profile.gaiaName, profile.userName, account.email]
+  return [
+    entry.id,
+    entry.name,
+    entry.label,
+    profile.directory,
+    profile.name,
+    profile.gaiaName,
+    profile.userName,
+    account.email,
+  ]
     .filter(Boolean)
     .map(lower);
 }
@@ -181,7 +190,10 @@ export function parseSelectorString(text) {
 export function selectBrowser(browsers, selector, { devId = devBrowserId() } = {}) {
   const wanted = typeof selector === 'string' ? parseSelectorString(selector) : selector;
   if (!wanted || !Object.keys(wanted).length) {
-    throw new ToolFailure('browser_unknown', 'No browser selector was given. Pass browserId, label, profile, account or site.');
+    throw new ToolFailure(
+      'browser_unknown',
+      'No browser selector was given. Pass browserId, label, profile, account or site.'
+    );
   }
 
   let matches = browsers.filter((b) => matchesSelector(b, wanted, { devId }));
@@ -198,13 +210,19 @@ export function selectBrowser(browsers, selector, { devId = devBrowserId() } = {
   if (!matches.length) {
     throw new ToolFailure(
       'browser_unknown',
-      'No connected browser matches ' + shown + '. Connected: ' +
-        (browsers.map((b) => b.id + ' (' + describeBrowser(b) + ')').join(', ') || 'none') + '.'
+      'No connected browser matches ' +
+        shown +
+        '. Connected: ' +
+        (browsers.map((b) => b.id + ' (' + describeBrowser(b) + ')').join(', ') || 'none') +
+        '.'
     );
   }
   throw new ToolFailure(
     'profile_ambiguous',
-    matches.length + ' connected browsers match ' + shown + ': ' +
+    matches.length +
+      ' connected browsers match ' +
+      shown +
+      ': ' +
       matches.map((b) => b.id + ' (' + describeBrowser(b) + ')').join(', ') +
       '. Pass browserId to say which.',
     { effects: 'none' }

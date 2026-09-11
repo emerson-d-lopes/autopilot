@@ -125,9 +125,7 @@ function formatRemoteObject(arg) {
   if (arg.unserializableValue) return String(arg.unserializableValue);
   if (arg.preview) {
     if (arg.preview.description) return arg.preview.description;
-    const props = (arg.preview.properties || [])
-      .map((p) => p.name + ': ' + p.value)
-      .join(', ');
+    const props = (arg.preview.properties || []).map((p) => p.name + ': ' + p.value).join(', ');
     return (arg.className || 'Object') + ' {' + props + '}';
   }
   return arg.description || arg.className || arg.type || '';

@@ -120,9 +120,7 @@
     stopWrapEl.hidden = !pulsing;
     pillEl.hidden = !staticPill;
     if (staticPill) {
-      pillTextEl.textContent = stopped
-        ? 'Autopilot stopped acting on this tab.'
-        : 'Autopilot is driving this tab.';
+      pillTextEl.textContent = stopped ? 'Autopilot stopped acting on this tab.' : 'Autopilot is driving this tab.';
       pillBtnEl.hidden = !stopped;
     }
   }

@@ -22,14 +22,12 @@ export async function list() {
 }
 
 export async function find(idOrName) {
-  const wanted = String(idOrName || '').trim().toLowerCase();
+  const wanted = String(idOrName || '')
+    .trim()
+    .toLowerCase();
   if (!wanted) return null;
   const all = await list();
-  return (
-    all.find((s) => s.id.toLowerCase() === wanted) ||
-    all.find((s) => s.name.toLowerCase() === wanted) ||
-    null
-  );
+  return all.find((s) => s.id.toLowerCase() === wanted) || all.find((s) => s.name.toLowerCase() === wanted) || null;
 }
 
 export async function save(shortcuts) {

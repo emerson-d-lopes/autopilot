@@ -54,17 +54,21 @@ test('/api/echo POST echoes the body back', async () => {
   });
 });
 
-test('/slow responds after roughly 4 seconds', async () => {
-  await withServer(async (base) => {
-    const started = Date.now();
-    const res = await fetch(base + '/slow');
-    const elapsed = Date.now() - started;
-    assert.equal(res.status, 200);
-    assert.ok(elapsed >= 3900, 'took ' + elapsed + 'ms, expected at least ~4000ms');
-    const body = await res.text();
-    assert.match(body, /slow page/);
-  });
-}, { timeout: 10000 });
+test(
+  '/slow responds after roughly 4 seconds',
+  async () => {
+    await withServer(async (base) => {
+      const started = Date.now();
+      const res = await fetch(base + '/slow');
+      const elapsed = Date.now() - started;
+      assert.equal(res.status, 200);
+      assert.ok(elapsed >= 3900, 'took ' + elapsed + 'ms, expected at least ~4000ms');
+      const body = await res.text();
+      assert.match(body, /slow page/);
+    });
+  },
+  { timeout: 10000 }
+);
 
 test('/big returns a 3000-row table with a button and a link per row', async () => {
   await withServer(async (base) => {

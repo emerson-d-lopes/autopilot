@@ -98,7 +98,9 @@ test('focus falling back to the body is not counted as a change', async () => {
 test('focus moving from a control onto a button is not a value change', async () => {
   // A button carries a value property, so comparing the value of whatever holds
   // focus at the end of the window reported a change on every such click.
-  const { call, window } = loadPage('<!doctype html><body><input id="a" value="kept"><button id="b">Go</button></body>');
+  const { call, window } = loadPage(
+    '<!doctype html><body><input id="a" value="kept"><button id="b">Go</button></body>'
+  );
   window.document.getElementById('a').focus();
 
   await call({ type: 'VERIFY_ARM' });
@@ -124,7 +126,9 @@ test('a value change is read from the element that was focused when the watch wa
 });
 
 test('a checkbox gaining focus does not read as a value change', async () => {
-  const { call, window } = loadPage('<!doctype html><body><input id="t" value="text"><input id="c" type="checkbox" value="on"></body>');
+  const { call, window } = loadPage(
+    '<!doctype html><body><input id="t" value="text"><input id="c" type="checkbox" value="on"></body>'
+  );
   window.document.getElementById('t').focus();
 
   await call({ type: 'VERIFY_ARM' });
@@ -462,7 +466,10 @@ test('form_input on a composer replaces what is already there', async () => {
   assert.equal(result.replaced, true);
   assert.equal(wired.editor.textContent, 'the final version', 'the draft is gone, not appended to');
   const keys = wired.commands.filter((c) => c.method === 'Input.dispatchKeyEvent');
-  assert.ok(keys.some((c) => c.params.key === 'a' && c.params.modifiers === 2), 'ctrl+a was sent first');
+  assert.ok(
+    keys.some((c) => c.params.key === 'a' && c.params.modifiers === 2),
+    'ctrl+a was sent first'
+  );
 });
 
 test('a composer write that does not land is an error naming the editor', async () => {
@@ -532,7 +539,8 @@ test('a named key and a modifier chord still take the key table', async () => {
       done();
     },
     sendCommand(_t, method, params, done) {
-      if (method === 'Input.dispatchKeyEvent') sent.push({ type: params.type, key: params.key, mods: params.modifiers });
+      if (method === 'Input.dispatchKeyEvent')
+        sent.push({ type: params.type, key: params.key, mods: params.modifiers });
       chrome.runtime.lastError = null;
       done({});
     },
@@ -542,11 +550,17 @@ test('a named key and a modifier chord still take the key table', async () => {
   await cdp.attach(52);
 
   await cdp.pressKeySequenceLoose(52, 'Enter');
-  assert.ok(sent.some((e) => e.key === 'Enter'), 'Enter still resolves through the key table');
+  assert.ok(
+    sent.some((e) => e.key === 'Enter'),
+    'Enter still resolves through the key table'
+  );
 
   sent.length = 0;
   await cdp.pressKeySequenceLoose(52, 'ctrl+a');
-  assert.ok(sent.some((e) => e.key === 'a' && e.mods === 2), 'ctrl+a keeps its modifier');
+  assert.ok(
+    sent.some((e) => e.key === 'a' && e.mods === 2),
+    'ctrl+a keeps its modifier'
+  );
 
   sent.length = 0;
   await cdp.pressKeySequenceLoose(52, '/');
@@ -652,16 +666,17 @@ function wireSubmit(page, { behaviour = 'send' } = {}) {
   const thread = window.document.getElementById('thread');
   const toast = window.document.getElementById('toast');
 
-  if (send && editor) send.addEventListener('click', (event) => {
-    event.preventDefault();
-    if (behaviour === 'nothing') return;
-    const text = editor.textContent;
-    const row = window.document.createElement('li');
-    row.textContent = text;
-    thread.appendChild(row);
-    editor.textContent = '';
-    toast.textContent = 'Message sent';
-  });
+  if (send && editor)
+    send.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (behaviour === 'nothing') return;
+      const text = editor.textContent;
+      const row = window.document.createElement('li');
+      row.textContent = text;
+      thread.appendChild(row);
+      editor.textContent = '';
+      toast.textContent = 'Message sent';
+    });
 
   // Whatever is being clicked is what the hit test finds, which is what a page
   // with nothing covering the button reports.
@@ -969,7 +984,11 @@ test('the classifier marks a submit button, a named Send, and neither for a plai
   const { window, agent } = page;
   const el = (id) => window.document.getElementById(id);
 
-  assert.equal(agent.isSubmitShaped(el('s'), 'button', 'OK'), true, 'type=submit is submit-shaped whatever it is called');
+  assert.equal(
+    agent.isSubmitShaped(el('s'), 'button', 'OK'),
+    true,
+    'type=submit is submit-shaped whatever it is called'
+  );
   assert.equal(agent.isSubmitShaped(el('named'), 'button', 'Post comment'), true);
   assert.equal(agent.isSubmitShaped(el('plain'), 'link', 'About'), false);
   assert.equal(agent.undoClass(el('named'), 'button', 'Post comment'), 'reversible');
@@ -992,7 +1011,11 @@ test('the GitHub controls that missed the window are submit-shaped', () => {
   assert.equal(agent.isSubmitShaped(el('m'), 'button', 'Comment'), true);
   assert.equal(agent.isSubmitShaped(el('x'), 'button', 'Close issue'), true);
   assert.equal(agent.isSubmitShaped(el('d'), 'menuitem', 'Delete'), true, 'the menu item, not only the modal button');
-  assert.equal(agent.isSubmitShaped(el('p'), 'button', 'Preview'), false, 'a control that writes nothing keeps the short window');
+  assert.equal(
+    agent.isSubmitShaped(el('p'), 'button', 'Preview'),
+    false,
+    'a control that writes nothing keeps the short window'
+  );
   assert.equal(agent.isSubmitShaped(el('a'), 'link', 'Read the changelog'), false);
   for (const word of ['confirm', 'remove', 'apply', 'update', 'OK', 'Done', 'Yes']) {
     assert.equal(agent.isSubmitShaped(el('c'), 'button', word), true, word + ' is submit-shaped');

@@ -209,10 +209,7 @@ export function decodeImageSize(base64) {
     return null;
   }
 
-  if (
-    bytes.length >= 24 &&
-    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
-  ) {
+  if (bytes.length >= 24 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     return { format: 'png', width: view.getUint32(16), height: view.getUint32(20) };
   }
@@ -280,9 +277,7 @@ async function encode(bitmap, width, height, format, quality) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(bitmap, 0, 0, width, height);
-  const blob = await canvas.convertToBlob(
-    format === 'jpeg' ? { type: 'image/jpeg', quality } : { type: 'image/png' }
-  );
+  const blob = await canvas.convertToBlob(format === 'jpeg' ? { type: 'image/jpeg', quality } : { type: 'image/png' });
   const buffer = await blob.arrayBuffer();
   return toBase64(new Uint8Array(buffer));
 }
@@ -307,8 +302,13 @@ export async function fitToBudget({
 
   if (format !== 'jpeg' || typeof reencode !== 'function') {
     warnings.push(
-      'the image is ' + data.length + ' base64 characters, over the ' + budget +
-        ' budget, and a ' + format + ' payload cannot be reduced by quality. Ask for format "jpeg" or a smaller scale.'
+      'the image is ' +
+        data.length +
+        ' base64 characters, over the ' +
+        budget +
+        ' budget, and a ' +
+        format +
+        ' payload cannot be reduced by quality. Ask for format "jpeg" or a smaller scale.'
     );
     return { data, quality, steps: 0, warnings };
   }
@@ -323,7 +323,10 @@ export async function fitToBudget({
   }
   if (current.length > budget) {
     warnings.push(
-      'the image is still ' + current.length + ' base64 characters at the quality floor of ' + MIN_QUALITY +
+      'the image is still ' +
+        current.length +
+        ' base64 characters at the quality floor of ' +
+        MIN_QUALITY +
         '. Take a smaller region with zoom, or pass a lower scale.'
     );
   }
@@ -407,11 +410,7 @@ export function devicePixelRatioFrom(metrics) {
  * map model-supplied coordinates back to CSS pixels.
  */
 export async function capture(tabId, options = {}) {
-  const {
-    maxTokens = DEFAULT_MAX_TOKENS,
-    region,
-    budget = MAX_BASE64_CHARS,
-  } = options;
+  const { maxTokens = DEFAULT_MAX_TOKENS, region, budget = MAX_BASE64_CHARS } = options;
   const format = normalizeFormat(options.format ?? DEFAULT_FORMAT);
   const quality = normalizeQuality(options.quality);
   const scale = clampScale(options.scale ?? 1);
@@ -496,7 +495,11 @@ export async function capture(tabId, options = {}) {
       warnings.push(
         'the clipped capture came back ' +
           (decoded ? decoded.width + 'x' + decoded.height : 'undecodable') +
-          ' instead of ' + plan.target.width + 'x' + plan.target.height + ', so it was re-rendered through the canvas'
+          ' instead of ' +
+          plan.target.width +
+          'x' +
+          plan.target.height +
+          ', so it was re-rendered through the canvas'
       );
     }
   }
@@ -530,7 +533,20 @@ export async function capture(tabId, options = {}) {
     const fitted = await fitToBudget({ data, quality, format, budget, reencode, warnings });
     bitmap.close();
     data = fitted.data;
-    return finish(tabId, { plan, data, format, width, height, sourceWidth, sourceHeight, cssWidth, cssHeight, path, warnings, quality: fitted.quality });
+    return finish(tabId, {
+      plan,
+      data,
+      format,
+      width,
+      height,
+      sourceWidth,
+      sourceHeight,
+      cssWidth,
+      cssHeight,
+      path,
+      warnings,
+      quality: fitted.quality,
+    });
   }
 
   const fitted = await fitToBudget({ data, quality, format, budget, reencode, warnings });
@@ -610,9 +626,17 @@ function finish(tabId, info) {
     // S3. A scaled image is smaller than the frame the model would otherwise
     // have read, so the frame it is reading is stated with the image.
     note: scaled
-      ? formatScale(plan.userScale) + '-scale view; coordinate frame: ' + width + 'x' + height +
+      ? formatScale(plan.userScale) +
+        '-scale view; coordinate frame: ' +
+        width +
+        'x' +
+        height +
         '. Coordinates are pixels in this image and are mapped back to the page for you. ' +
-        'Full-resolution frame: ' + plan.frame.width + 'x' + plan.frame.height + '.'
+        'Full-resolution frame: ' +
+        plan.frame.width +
+        'x' +
+        plan.frame.height +
+        '.'
       : undefined,
     estimatedTokens: estimateTokens(width, height),
     warnings: info.warnings,

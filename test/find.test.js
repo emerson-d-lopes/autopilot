@@ -131,7 +131,11 @@ test('URL attributes do not create spurious matches', () => {
 
   const matches = scoreCandidates(tree, 'the search bar');
   assert.equal(matches[0].ref, 'ref_2');
-  assert.equal(matches.some((m) => m.ref === 'ref_1'), false, 'the donate link must not match');
+  assert.equal(
+    matches.some((m) => m.ref === 'ref_1'),
+    false,
+    'the donate link must not match'
+  );
 });
 
 test('non-URL attributes still match on whole words', () => {
@@ -166,7 +170,11 @@ test('a query naming the input type outranks a generic textbox', () => {
 });
 
 test('a query made only of role words still matches an element named with one of them', () => {
-  const tree = ['link "Search" [ref_1] href=/wiki/Special:Search', 'link "Donate" [ref_2] href=/donate', 'button "Main menu" [ref_3]'].join('\n');
+  const tree = [
+    'link "Search" [ref_1] href=/wiki/Special:Search',
+    'link "Donate" [ref_2] href=/donate',
+    'button "Main menu" [ref_3]',
+  ].join('\n');
   const matches = scoreCandidates(tree, 'search box');
   assert.equal(matches[0] && matches[0].ref, 'ref_1');
 });
@@ -220,10 +228,9 @@ test('a match carries the irreversible flag so the model sees it before clicking
 // P5: when the interactive filter is the wrong scope
 // ---------------------------------------------------------------------------
 
-const TABLE_PAGE_INTERACTIVE = [
-  'link "Elemental Selenium" [ref_1] href=/',
-  'link "Fork me" [ref_2] href=/gh',
-].join('\n');
+const TABLE_PAGE_INTERACTIVE = ['link "Elemental Selenium" [ref_1] href=/', 'link "Fork me" [ref_2] href=/gh'].join(
+  '\n'
+);
 
 test('a query naming a table cell widens past the interactive filter', () => {
   const matches = scoreCandidates(TABLE_PAGE_INTERACTIVE, 'table cell containing 50.20', 20);
@@ -338,7 +345,10 @@ test('parseModelFindResponse tolerates a reply with no matching lines', () => {
 test('validateModelMatches drops a ref the model invented', () => {
   const modelMatches = [{ ref: 'ref_11' }, { ref: 'ref_9999' }];
   const { valid, hallucinated } = validateModelMatches(modelMatches, TREE);
-  assert.deepEqual(valid.map((m) => m.ref), ['ref_11']);
+  assert.deepEqual(
+    valid.map((m) => m.ref),
+    ['ref_11']
+  );
   assert.deepEqual(hallucinated, ['ref_9999']);
 });
 
@@ -363,10 +373,9 @@ test('validateModelMatches against a capped tree drops a ref that was truncated 
 // Open bug 1: an exact label on a large page
 // ---------------------------------------------------------------------------
 
-const BIG_BUTTONS = Array.from(
-  { length: 3000 },
-  (_, i) => 'button "btn ' + i + '" [ref_' + (3000 + i) + ']'
-).join('\n');
+const BIG_BUTTONS = Array.from({ length: 3000 }, (_, i) => 'button "btn ' + i + '" [ref_' + (3000 + i) + ']').join(
+  '\n'
+);
 
 test('quotedLabels reads the label out of a query', () => {
   assert.deepEqual(quotedLabels('the button labelled exactly "btn 2999"'), ['btn 2999']);
@@ -410,7 +419,7 @@ test('the exact bonus does not resurrect an unrelated node', () => {
 test('ranking a 9000 node tree stays under a few milliseconds', () => {
   const lines = [];
   for (let i = 0; i < 9000; i++) {
-    lines.push('  cell "row ' + i + ' value ' + (i * 7) + '" [ref_' + i + ']');
+    lines.push('  cell "row ' + i + ' value ' + i * 7 + '" [ref_' + i + ']');
   }
   const tree = lines.join('\n');
   const started = process.hrtime.bigint();
@@ -435,12 +444,26 @@ test('the ranking budget is large enough for the whole interactive tree of a 300
 // button "Create ( )" [ref_46]. The toolbar names are GitHub's own.
 
 const TOOLBAR = [
-  'Add heading text', 'Add bold text', 'Add italic text', 'Add a quote',
-  'Add code', 'Add a link', 'Add a bulleted list', 'Add a numbered list',
-  'Add a task list', 'Directly mention a user or team',
-  'Reference an issue, pull request, or discussion', 'Add saved reply',
-  'Attach files', 'Insert a table', 'Add a comment', 'Slash commands',
-  'Toggle preview', 'Use full screen', 'Markdown help', 'Text formatting help',
+  'Add heading text',
+  'Add bold text',
+  'Add italic text',
+  'Add a quote',
+  'Add code',
+  'Add a link',
+  'Add a bulleted list',
+  'Add a numbered list',
+  'Add a task list',
+  'Directly mention a user or team',
+  'Reference an issue, pull request, or discussion',
+  'Add saved reply',
+  'Attach files',
+  'Insert a table',
+  'Add a comment',
+  'Slash commands',
+  'Toggle preview',
+  'Use full screen',
+  'Markdown help',
+  'Text formatting help',
 ];
 
 const NEW_ISSUE = [
@@ -526,7 +549,9 @@ test('no line when nothing matched, since the empty result already says so', () 
 });
 
 test('the line counts each role it is showing instead', () => {
-  const mixed = ['link "Sign in" [ref_1] href=/in', 'link "Join" [ref_2] href=/join', 'button "Menu" [ref_3]'].join('\n');
+  const mixed = ['link "Sign in" [ref_1] href=/in', 'link "Join" [ref_2] href=/join', 'button "Menu" [ref_3]'].join(
+    '\n'
+  );
   const matches = scoreCandidates(mixed, 'sign in checkbox', 20);
   assert.equal(roleGapNote('sign in checkbox', matches), 'no checkbox matched, 1 link shown instead');
 });

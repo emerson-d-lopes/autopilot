@@ -61,7 +61,7 @@ function lzwCompress(indices, minCodeSize) {
     writer.write(prefix, codeSize);
     dict.set(key, nextCode++);
 
-    if (nextCode > (1 << codeSize)) {
+    if (nextCode > 1 << codeSize) {
       if (codeSize < 12) {
         codeSize++;
       } else {

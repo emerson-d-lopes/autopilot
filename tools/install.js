@@ -40,26 +40,66 @@ function browserTargets() {
   if (process.platform === 'win32') {
     const local = process.env.LOCALAPPDATA || join(home, 'AppData', 'Local');
     return [
-      { name: 'Chrome', dir: join(local, 'Google', 'Chrome', 'User Data'), regRoot: 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\' },
-      { name: 'Edge', dir: join(local, 'Microsoft', 'Edge', 'User Data'), regRoot: 'HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\' },
-      { name: 'Brave', dir: join(local, 'BraveSoftware', 'Brave-Browser', 'User Data'), regRoot: 'HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\' },
-      { name: 'Vivaldi', dir: join(local, 'Vivaldi', 'User Data'), regRoot: 'HKCU\\Software\\Vivaldi\\NativeMessagingHosts\\' },
+      {
+        name: 'Chrome',
+        dir: join(local, 'Google', 'Chrome', 'User Data'),
+        regRoot: 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\',
+      },
+      {
+        name: 'Edge',
+        dir: join(local, 'Microsoft', 'Edge', 'User Data'),
+        regRoot: 'HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\',
+      },
+      {
+        name: 'Brave',
+        dir: join(local, 'BraveSoftware', 'Brave-Browser', 'User Data'),
+        regRoot: 'HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\',
+      },
+      {
+        name: 'Vivaldi',
+        dir: join(local, 'Vivaldi', 'User Data'),
+        regRoot: 'HKCU\\Software\\Vivaldi\\NativeMessagingHosts\\',
+      },
     ];
   }
   if (process.platform === 'darwin') {
     const support = join(home, 'Library', 'Application Support');
     return [
-      { name: 'Chrome', dir: join(support, 'Google', 'Chrome'), manifestDir: join(support, 'Google', 'Chrome', 'NativeMessagingHosts') },
-      { name: 'Edge', dir: join(support, 'Microsoft Edge'), manifestDir: join(support, 'Microsoft Edge', 'NativeMessagingHosts') },
-      { name: 'Brave', dir: join(support, 'BraveSoftware', 'Brave-Browser'), manifestDir: join(support, 'BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts') },
+      {
+        name: 'Chrome',
+        dir: join(support, 'Google', 'Chrome'),
+        manifestDir: join(support, 'Google', 'Chrome', 'NativeMessagingHosts'),
+      },
+      {
+        name: 'Edge',
+        dir: join(support, 'Microsoft Edge'),
+        manifestDir: join(support, 'Microsoft Edge', 'NativeMessagingHosts'),
+      },
+      {
+        name: 'Brave',
+        dir: join(support, 'BraveSoftware', 'Brave-Browser'),
+        manifestDir: join(support, 'BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts'),
+      },
     ];
   }
   const config = process.env.XDG_CONFIG_HOME || join(home, '.config');
   return [
-    { name: 'Chrome', dir: join(config, 'google-chrome'), manifestDir: join(config, 'google-chrome', 'NativeMessagingHosts') },
+    {
+      name: 'Chrome',
+      dir: join(config, 'google-chrome'),
+      manifestDir: join(config, 'google-chrome', 'NativeMessagingHosts'),
+    },
     { name: 'Chromium', dir: join(config, 'chromium'), manifestDir: join(config, 'chromium', 'NativeMessagingHosts') },
-    { name: 'Edge', dir: join(config, 'microsoft-edge'), manifestDir: join(config, 'microsoft-edge', 'NativeMessagingHosts') },
-    { name: 'Brave', dir: join(config, 'BraveSoftware', 'Brave-Browser'), manifestDir: join(config, 'BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts') },
+    {
+      name: 'Edge',
+      dir: join(config, 'microsoft-edge'),
+      manifestDir: join(config, 'microsoft-edge', 'NativeMessagingHosts'),
+    },
+    {
+      name: 'Brave',
+      dir: join(config, 'BraveSoftware', 'Brave-Browser'),
+      manifestDir: join(config, 'BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts'),
+    },
   ];
 }
 
@@ -83,7 +123,8 @@ function resolveNodeBinary() {
   const ephemeral = /fnm_multishells|[\\/]\.nvm[\\/]alias|nodenv[\\/]shims|volta[\\/]bin/i;
   if (ephemeral.test(real)) {
     console.warn(
-      'Warning: node resolved to a path that may not outlive this shell:\n  ' + real +
+      'Warning: node resolved to a path that may not outlive this shell:\n  ' +
+        real +
         '\nThe native host may stop working when this terminal closes. ' +
         'Install a system-wide node, or re-run npm run install-host from a shell using one.'
     );

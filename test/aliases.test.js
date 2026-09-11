@@ -32,12 +32,18 @@ test('our own spelling wins when both are given', () => {
 });
 
 test('gif, browser and shortcut arguments are mapped', () => {
-  assert.deepEqual(normalizeCall('gif_creator', { action: 'start_recording', tabId: 1 }).input, { action: 'start', tabId: 1 });
-  assert.deepEqual(normalizeCall('gif_creator', { action: 'export', download: true, filename: 'x.gif', tabId: 1 }).input, {
-    action: 'stop',
-    filename: 'x.gif',
+  assert.deepEqual(normalizeCall('gif_creator', { action: 'start_recording', tabId: 1 }).input, {
+    action: 'start',
     tabId: 1,
   });
+  assert.deepEqual(
+    normalizeCall('gif_creator', { action: 'export', download: true, filename: 'x.gif', tabId: 1 }).input,
+    {
+      action: 'stop',
+      filename: 'x.gif',
+      tabId: 1,
+    }
+  );
   assert.equal(normalizeCall('gif_creator', { action: 'clear' }).input.action, 'cancel');
   assert.equal(normalizeCall('select_browser', { deviceId: 'abc' }).input.browserId, 'abc');
   assert.equal(normalizeCall('shortcuts_execute', { command: 'debug', tabId: 1 }).input.shortcutId, 'debug');

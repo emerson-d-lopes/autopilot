@@ -34,9 +34,7 @@ const bridge = await anyBridge();
 const bridgeUp = Boolean(bridge);
 if (bridge) process.env.AUTOPILOT_BROWSER_ID = bridge.id;
 const worker = bridgeUp ? await serviceWorker() : null;
-const options = worker
-  ? {}
-  : { skip: 'needs the development browser with its DevTools port (run: npm run browser)' };
+const options = worker ? {} : { skip: 'needs the development browser with its DevTools port (run: npm run browser)' };
 
 function mcpClient(child) {
   let buffer = '';
@@ -105,7 +103,10 @@ test('saved shortcuts', options, async (t) => {
     const content = response.result.content || [];
     return {
       isError: response.result.isError === true,
-      text: content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'),
+      text: content
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n'),
     };
   };
 
@@ -150,9 +151,7 @@ test('saved shortcuts', options, async (t) => {
     { id: 'peek', name: 'Read the page', description: '', script: 'P' },
   ];
 
-  await sw.evaluate(
-    'chrome.storage.local.set({ shortcuts: ' + JSON.stringify(seeded) + ' }).then(() => "ok")'
-  );
+  await sw.evaluate('chrome.storage.local.set({ shortcuts: ' + JSON.stringify(seeded) + ' }).then(() => "ok")');
 
   await t.test('shortcuts_list reports what is saved', async () => {
     const result = await call('shortcuts_list', {});

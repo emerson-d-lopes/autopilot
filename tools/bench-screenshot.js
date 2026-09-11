@@ -85,7 +85,10 @@ function mcpClient(child) {
 async function callTool(mcp, name, args) {
   const response = await mcp.request('tools/call', { name, arguments: args });
   const content = (response.result && response.result.content) || [];
-  const text = content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+  const text = content
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n');
   const image = content.find((b) => b.type === 'image') || null;
   return {
     isError: (response.result && response.result.isError) === true,
@@ -237,7 +240,9 @@ async function main() {
       };
       rows.push(row);
       console.log(
-        '  ' + page.key.padEnd(6) + variant.key.padEnd(11) +
+        '  ' +
+          page.key.padEnd(6) +
+          variant.key.padEnd(11) +
           (row.width + 'x' + row.height).padEnd(12) +
           kb(row.medianBytes).padEnd(9) +
           ('~' + row.tokens + ' tok').padEnd(12) +
@@ -256,14 +261,27 @@ async function main() {
   console.log('');
   const col = (v, w) => String(v).padEnd(w);
   console.log(
-    col('page', 8) + col('variant', 11) + col('size', 12) + col('payload', 10) + col('tokens', 9) +
-      col('median ms', 12) + col('total ms', 10) + col('path', 8) + 'coordinate frame'
+    col('page', 8) +
+      col('variant', 11) +
+      col('size', 12) +
+      col('payload', 10) +
+      col('tokens', 9) +
+      col('median ms', 12) +
+      col('total ms', 10) +
+      col('path', 8) +
+      'coordinate frame'
   );
   for (const row of rows) {
     console.log(
-      col(row.page, 8) + col(row.variant, 11) + col(row.width + 'x' + row.height, 12) +
-        col(kb(row.medianBytes), 10) + col('~' + row.tokens, 9) + col(row.medianMs, 12) +
-        col(row.totalMs, 10) + col(row.path || '?', 8) + (row.frame || '')
+      col(row.page, 8) +
+        col(row.variant, 11) +
+        col(row.width + 'x' + row.height, 12) +
+        col(kb(row.medianBytes), 10) +
+        col('~' + row.tokens, 9) +
+        col(row.medianMs, 12) +
+        col(row.totalMs, 10) +
+        col(row.path || '?', 8) +
+        (row.frame || '')
     );
   }
 
@@ -272,13 +290,21 @@ async function main() {
   if (jpegFull && pngFull) {
     console.log('');
     console.log(
-      'index page, JPEG against PNG at the same size: ' + kb(jpegFull.medianBytes) + ' against ' +
-        kb(pngFull.medianBytes) + ', ' + (pngFull.medianBytes / jpegFull.medianBytes).toFixed(1) + 'x smaller'
+      'index page, JPEG against PNG at the same size: ' +
+        kb(jpegFull.medianBytes) +
+        ' against ' +
+        kb(pngFull.medianBytes) +
+        ', ' +
+        (pngFull.medianBytes / jpegFull.medianBytes).toFixed(1) +
+        'x smaller'
     );
   }
   if (jpegFull) {
     console.log(
-      '10 screenshots, JPEG at scale 1: ' + jpegFull.totalMs + ' ms total, median ' + jpegFull.medianMs +
+      '10 screenshots, JPEG at scale 1: ' +
+        jpegFull.totalMs +
+        ' ms total, median ' +
+        jpegFull.medianMs +
         ' ms per capture (Phase 5 target: under 6000 ms for ten)'
     );
   }
@@ -287,7 +313,13 @@ async function main() {
   const path = join(ROOT, '.bench', new Date().toISOString().slice(0, 10) + '-screenshot.jsonl');
   appendFileSync(
     path,
-    JSON.stringify({ timestamp: new Date().toISOString(), extensionVersion: version, browser: bridge.id, runs: RUNS, rows }) + '\n'
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      extensionVersion: version,
+      browser: bridge.id,
+      runs: RUNS,
+      rows,
+    }) + '\n'
   );
   console.log('');
   console.log('appended to ' + path);

@@ -34,7 +34,10 @@ test('decodes several messages in one buffer', async () => {
   const h = harness();
   h.input.write(Buffer.concat([frame({ a: 1 }), frame({ a: 2 }), frame({ a: 3 })]));
   await tick();
-  assert.deepEqual(h.received.map((m) => m.a), [1, 2, 3]);
+  assert.deepEqual(
+    h.received.map((m) => m.a),
+    [1, 2, 3]
+  );
 });
 
 test('decodes a message split across writes', async () => {
@@ -203,7 +206,13 @@ test('an error envelope carries the whole contract error object', async () => {
 
 test('a replayed response is marked as such and keeps its original id', async () => {
   const h = harness();
-  const envelope = { type: 'tool_response', id: 'mcp_1', replayed: true, generation: 5, result: { ok: true, effects: 'none' } };
+  const envelope = {
+    type: 'tool_response',
+    id: 'mcp_1',
+    replayed: true,
+    generation: 5,
+    result: { ok: true, effects: 'none' },
+  };
   h.input.write(frame(envelope));
   await tick();
   assert.equal(h.received[0].replayed, true);

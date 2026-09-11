@@ -24,7 +24,9 @@ export function socketPathFor(browserId) {
   // Lets a test run a private bridge without colliding with the user's live one.
   const override = envVar('SOCKET');
   if (override) return override;
-  const suffix = String(browserId || 'default').replace(/[^\w-]/g, '').slice(0, 32);
+  const suffix = String(browserId || 'default')
+    .replace(/[^\w-]/g, '')
+    .slice(0, 32);
   if (process.platform === 'win32') {
     const user = (process.env.USERNAME || 'user').replace(/[^\w-]/g, '');
     return '\\\\.\\pipe\\' + NAME + '-' + user + '-' + suffix;

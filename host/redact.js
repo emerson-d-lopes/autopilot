@@ -31,7 +31,8 @@ function clipTo(text, max) {
 // ---------------------------------------------------------------------------
 
 /** Key names whose value is a credential whatever it looks like. */
-export const SENSITIVE_KEY = /password|passwd|secret|api[_-]?key|credential|private[_-]?key|access[_-]?key|bearer|oauth/i;
+export const SENSITIVE_KEY =
+  /password|passwd|secret|api[_-]?key|credential|private[_-]?key|access[_-]?key|bearer|oauth/i;
 
 /** Cookies get their own check so a key called exactly "cookie" is caught. */
 export function isCookieKey(key) {
@@ -82,7 +83,10 @@ export function looksLikeBase64Blob(s) {
 export function looksLikeCookieString(s) {
   if (s.length > 8192) return false;
   if (!/;/.test(s)) return false;
-  const pairs = s.split(';').map((p) => p.trim()).filter(Boolean);
+  const pairs = s
+    .split(';')
+    .map((p) => p.trim())
+    .filter(Boolean);
   if (pairs.length < 2) return false;
   return pairs.every((p) => /^[\w.%-]+=[^;]*$/.test(p));
 }

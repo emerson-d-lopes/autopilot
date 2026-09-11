@@ -4,14 +4,59 @@
     <meta charset="utf-8" />
     <title>Autopilot edge cases</title>
     <style>
-      body { font: 15px/1.5 system-ui, sans-serif; margin: 24px; }
-      #cover-zone { position: relative; height: 110px; margin: 12px 0; }
-      #overlay { position: absolute; left: 20px; top: 0; width: 260px; height: 90px; background: rgba(0,0,0,.75); color: #fff; z-index: 10; display: flex; align-items: center; justify-content: center; }
-      #covered { position: absolute; left: 30px; top: 20px; width: 200px; height: 50px; }
-      .scroller { height: 120px; overflow: auto; border: 1px solid #ccc; width: 320px; }
-      .scroller div { height: 60px; }
-      iframe { width: 320px; height: 120px; border: 1px solid #999; display: block; margin: 8px 0; }
-      #sticky { position: sticky; top: 0; background: #ffd; padding: 4px; }
+      body {
+        font:
+          15px/1.5 system-ui,
+          sans-serif;
+        margin: 24px;
+      }
+      #cover-zone {
+        position: relative;
+        height: 110px;
+        margin: 12px 0;
+      }
+      #overlay {
+        position: absolute;
+        left: 20px;
+        top: 0;
+        width: 260px;
+        height: 90px;
+        background: rgba(0, 0, 0, 0.75);
+        color: #fff;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #covered {
+        position: absolute;
+        left: 30px;
+        top: 20px;
+        width: 200px;
+        height: 50px;
+      }
+      .scroller {
+        height: 120px;
+        overflow: auto;
+        border: 1px solid #ccc;
+        width: 320px;
+      }
+      .scroller div {
+        height: 60px;
+      }
+      iframe {
+        width: 320px;
+        height: 120px;
+        border: 1px solid #999;
+        display: block;
+        margin: 8px 0;
+      }
+      #sticky {
+        position: sticky;
+        top: 0;
+        background: #ffd;
+        padding: 4px;
+      }
     </style>
   </head>
   <body>
@@ -72,19 +117,31 @@
     <script>
       const $ = (id) => document.getElementById(id);
 
-      $('unicode-btn').addEventListener('click', () => { $('unicode-out').textContent = 'clicked'; });
-      $('unicode-in').addEventListener('input', (e) => { $('unicode-out').textContent = e.target.value; });
+      $('unicode-btn').addEventListener('click', () => {
+        $('unicode-out').textContent = 'clicked';
+      });
+      $('unicode-in').addEventListener('input', (e) => {
+        $('unicode-out').textContent = e.target.value;
+      });
 
-      $('under').addEventListener('click', () => { $('unicode-out').textContent = 'under was clicked'; });
-      $('overlay').addEventListener('click', () => { $('unicode-out').textContent = 'overlay was clicked'; });
+      $('under').addEventListener('click', () => {
+        $('unicode-out').textContent = 'under was clicked';
+      });
+      $('overlay').addEventListener('click', () => {
+        $('unicode-out').textContent = 'overlay was clicked';
+      });
 
       $('slow').addEventListener('click', () => {
         const end = Date.now() + 1200;
-        while (Date.now() < end) { /* block the main thread */ }
+        while (Date.now() < end) {
+          /* block the main thread */
+        }
         $('slow-out').textContent = 'slow done';
       });
 
-      $('detacher').addEventListener('click', (e) => { e.target.remove(); });
+      $('detacher').addEventListener('click', (e) => {
+        e.target.remove();
+      });
 
       // Open shadow root
       const open = $('host-open').attachShadow({ mode: 'open' });

@@ -7,9 +7,38 @@
 // accessible name resolves the same element.
 
 const STOPWORDS = new Set([
-  'the', 'a', 'an', 'to', 'for', 'of', 'on', 'in', 'at', 'with', 'that', 'this',
-  'and', 'or', 'my', 'me', 'i', 'is', 'are', 'be', 'it', 'its', 'please', 'find',
-  'click', 'get', 'element', 'containing', 'contains', 'named', 'called', 'labeled',
+  'the',
+  'a',
+  'an',
+  'to',
+  'for',
+  'of',
+  'on',
+  'in',
+  'at',
+  'with',
+  'that',
+  'this',
+  'and',
+  'or',
+  'my',
+  'me',
+  'i',
+  'is',
+  'are',
+  'be',
+  'it',
+  'its',
+  'please',
+  'find',
+  'click',
+  'get',
+  'element',
+  'containing',
+  'contains',
+  'named',
+  'called',
+  'labeled',
 ]);
 
 /** Words in a query that imply a role rather than a name. */
@@ -134,8 +163,18 @@ function contentTokens(tokens) {
  * they are as often part of a label as a request for a role.
  */
 const STRONG_ROLE_WORDS = new Set([
-  'field', 'input', 'box', 'textbox', 'textarea', 'button', 'link',
-  'checkbox', 'menu', 'dropdown', 'select', 'tab',
+  'field',
+  'input',
+  'box',
+  'textbox',
+  'textarea',
+  'button',
+  'link',
+  'checkbox',
+  'menu',
+  'dropdown',
+  'select',
+  'tab',
 ]);
 
 /**
@@ -145,8 +184,19 @@ const STRONG_ROLE_WORDS = new Set([
  * `add` and `continue` label half the toolbar on a page like that.
  */
 const SUBMIT_INTENT_WORDS = new Set([
-  'submit', 'send', 'post', 'save', 'create', 'publish', 'apply',
-  'confirm', 'update', 'comment', 'done', 'ok', 'finish',
+  'submit',
+  'send',
+  'post',
+  'save',
+  'create',
+  'publish',
+  'apply',
+  'confirm',
+  'update',
+  'comment',
+  'done',
+  'ok',
+  'finish',
 ]);
 
 /** Score for a control labelled as the one that completes what the query names. */
@@ -369,7 +419,9 @@ export function scoreCandidates(treeText, query, limit = 20) {
   const rawTokens = tokenize(query);
   const terms = contentTokens(rawTokens);
   const { roles, strongRoles, consumed } = roleHintsFor(rawTokens);
-  const phrase = String(query || '').toLowerCase().trim();
+  const phrase = String(query || '')
+    .toLowerCase()
+    .trim();
   const exactLabels = quotedLabels(query);
   const submitIntent = rawTokens.some((t) => SUBMIT_INTENT_WORDS.has(t));
 
@@ -377,15 +429,19 @@ export function scoreCandidates(treeText, query, limit = 20) {
   // page has one, everything else is off the list rather than one point behind
   // it. When nothing on the page carries it, the filter is dropped and the
   // ranking is the ordinary one, with roleGapNote saying so.
-  const candidates = strongRoles.size
-    ? nodes.filter((n) => strongRoles.has(n.role) || typeNamed(n, terms))
-    : nodes;
+  const candidates = strongRoles.size ? nodes.filter((n) => strongRoles.has(n.role) || typeNamed(n, terms)) : nodes;
   const ranked = candidates.length ? candidates : nodes;
 
   const scored = [];
   for (const node of ranked) {
     const score = scoreNode(node, {
-      phrase, terms, roles, consumed, queryTokens: rawTokens, exactLabels, submitIntent,
+      phrase,
+      terms,
+      roles,
+      consumed,
+      queryTokens: rawTokens,
+      exactLabels,
+      submitIntent,
     });
     if (score > 0.5) scored.push({ ...node, score: Math.round(score * 100) / 100 });
   }
@@ -474,8 +530,21 @@ export function roleGapNote(query, matches) {
  * dismiss control outside the filter.
  */
 const STRUCTURAL_QUERY_WORDS = [
-  'cell', 'row', 'column', 'table', 'heading', 'title', 'text', 'paragraph',
-  'label', 'caption', 'value', 'price', 'containing', 'contains', 'says',
+  'cell',
+  'row',
+  'column',
+  'table',
+  'heading',
+  'title',
+  'text',
+  'paragraph',
+  'label',
+  'caption',
+  'value',
+  'price',
+  'containing',
+  'contains',
+  'says',
 ];
 
 export function shouldWiden({ query, matches, searched }) {
@@ -558,7 +627,13 @@ export function parseModelFindResponse(text) {
     if (!MODEL_LINE_RE.test(trimmed)) continue;
     const parts = trimmed.split('|').map((p) => p.trim());
     const [ref, role, name, type, ...rest] = parts;
-    out.push({ ref, role: role || undefined, name: name || undefined, type: type || undefined, reason: rest.join('|').trim() || undefined });
+    out.push({
+      ref,
+      role: role || undefined,
+      name: name || undefined,
+      type: type || undefined,
+      reason: rest.join('|').trim() || undefined,
+    });
   }
   return out;
 }

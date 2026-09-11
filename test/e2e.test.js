@@ -99,8 +99,7 @@ function makeMcpClient(child) {
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
     return promise;
   };
-  const notify = (method, params) =>
-    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
+  const notify = (method, params) => child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
 
   return { request, notify };
 }
@@ -109,7 +108,11 @@ function makeMcpClient(child) {
 
 async function startStack(name, handleToolRequest) {
   const socket = testSocket(name);
-  const env = { ...process.env, AUTOPILOT_SOCKET: socket, AUTOPILOT_LOG_DIR: path.join(os.tmpdir(), 'autopilot-test-journal') };
+  const env = {
+    ...process.env,
+    AUTOPILOT_SOCKET: socket,
+    AUTOPILOT_LOG_DIR: path.join(os.tmpdir(), 'autopilot-test-journal'),
+  };
 
   const host = spawn(process.execPath, [join(ROOT, 'host', 'native-host.js')], {
     env,
@@ -375,7 +378,10 @@ test('an unknown tool is rejected without reaching the browser', async (t) => {
     arguments: {},
   });
   assert.equal(response.result.isError, true);
-  assert.equal(stack.seen.some((m) => m.type === 'tool_request'), false);
+  assert.equal(
+    stack.seen.some((m) => m.type === 'tool_request'),
+    false
+  );
 });
 
 test('the host answers keepalive pings to hold the service worker open', async (t) => {
@@ -389,20 +395,34 @@ test('the host answers keepalive pings to hold the service worker open', async (
 
 test('tool calls fail cleanly when the extension is not attached', async (t) => {
   const socket = testSocket('detached');
-  const env = { ...process.env, AUTOPILOT_SOCKET: socket, AUTOPILOT_LOG_DIR: path.join(os.tmpdir(), 'autopilot-test-journal') };
+  const env = {
+    ...process.env,
+    AUTOPILOT_SOCKET: socket,
+    AUTOPILOT_LOG_DIR: path.join(os.tmpdir(), 'autopilot-test-journal'),
+  };
 
-  const host = spawn(process.execPath, [join(ROOT, 'host', 'native-host.js')], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const host = spawn(process.execPath, [join(ROOT, 'host', 'native-host.js')], {
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   await new Promise((r) => setTimeout(r, 300));
   // Deliberately never send hello, so the host has no browser behind it.
 
-  const server = spawn(process.execPath, [join(ROOT, 'host', 'mcp-server.js')], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const server = spawn(process.execPath, [join(ROOT, 'host', 'mcp-server.js')], {
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   const mcp = makeMcpClient(server);
   t.after(() => {
     server.kill();
     host.kill();
   });
 
-  await mcp.request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } });
+  await mcp.request('initialize', {
+    protocolVersion: '2024-11-05',
+    capabilities: {},
+    clientInfo: { name: 'e2e', version: '1' },
+  });
   mcp.notify('notifications/initialized', {});
 
   const response = await mcp.request('tools/call', { name: 'read_page', arguments: { tabId: 1 } });
@@ -412,11 +432,18 @@ test('tool calls fail cleanly when the extension is not attached', async (t) => 
 
 test('tools/list works with no bridge running at all', async (t) => {
   const env = { ...process.env, AUTOPILOT_SOCKET: testSocket('nobridge') };
-  const server = spawn(process.execPath, [join(ROOT, 'host', 'mcp-server.js')], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const server = spawn(process.execPath, [join(ROOT, 'host', 'mcp-server.js')], {
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   const mcp = makeMcpClient(server);
   t.after(() => server.kill());
 
-  await mcp.request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } });
+  await mcp.request('initialize', {
+    protocolVersion: '2024-11-05',
+    capabilities: {},
+    clientInfo: { name: 'e2e', version: '1' },
+  });
   mcp.notify('notifications/initialized', {});
 
   const listed = await mcp.request('tools/list', {});
@@ -585,7 +612,10 @@ test('a javascript result is redacted by shape and capped', async (t) => {
     extension.send({
       type: 'tool_response',
       id: message.id,
-      result: { result: { cookie: 'a=1; b=2', href: 'https://x.test/?q=1&r=2', big: 'x'.repeat(200000) }, type: 'object' },
+      result: {
+        result: { cookie: 'a=1; b=2', href: 'https://x.test/?q=1&r=2', big: 'x'.repeat(200000) },
+        type: 'object',
+      },
     });
   });
   t.after(stack.stop);

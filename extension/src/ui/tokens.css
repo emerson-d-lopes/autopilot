@@ -114,7 +114,7 @@
   }
 }
 
-[data-theme="dark"] {
+[data-theme='dark'] {
   color-scheme: dark;
   --al-color-bg: #161616;
   --al-color-surface: #1a1a1a;
@@ -150,7 +150,7 @@
   --al-shadow-md: 0 4px 12px #00000060;
 }
 
-[data-theme="light"] {
+[data-theme='light'] {
   color-scheme: light;
   --al-color-bg: #eeeeee;
   --al-color-surface: #f0f0f0;

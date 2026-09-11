@@ -38,7 +38,11 @@ check('manifest carries the pinned key', Boolean(extId), extId ? 'id ' + extId :
 // 2. Native messaging host manifest
 const hostManifestPath = join(ROOT, 'host', HOST_NAME + '.json');
 const hasHostManifest = existsSync(hostManifestPath);
-check('native host manifest written', hasHostManifest, hasHostManifest ? hostManifestPath : 'run: npm run install-host');
+check(
+  'native host manifest written',
+  hasHostManifest,
+  hasHostManifest ? hostManifestPath : 'run: npm run install-host'
+);
 
 let wrapperPath = null;
 if (hasHostManifest) {
@@ -48,7 +52,11 @@ if (hasHostManifest) {
   check('host wrapper exists', wrapperExists, wrapperPath);
 
   const originOk = hostManifest.allowed_origins?.[0] === 'chrome-extension://' + extId + '/';
-  check('manifest allows this extension id', originOk, originOk ? null : 'allowed_origins does not match .keys/extension-id.txt; re-run npm run install-host');
+  check(
+    'manifest allows this extension id',
+    originOk,
+    originOk ? null : 'allowed_origins does not match .keys/extension-id.txt; re-run npm run install-host'
+  );
 
   if (wrapperExists && process.platform === 'win32') {
     const content = readFileSync(wrapperPath, 'utf8');
@@ -160,7 +168,11 @@ for (const browser of browsers) {
       link.on('message', (message) => {
         if (message.id !== 'doctor_sessions') return;
         clearTimeout(timer);
-        resolve(message.error || message.type !== 'sessions_response' ? null : (message.result && message.result.sessions) || []);
+        resolve(
+          message.error || message.type !== 'sessions_response'
+            ? null
+            : (message.result && message.result.sessions) || []
+        );
       });
       try {
         link.send({ type: 'sessions', id: 'doctor_sessions' });
@@ -177,24 +189,38 @@ for (const browser of browsers) {
       browser.name + ' extension is attached',
       Boolean(status && status.connected),
       status && status.connected
-        ? 'extension v' + (status.extensionVersion || '?') + ', ' + status.tools.length + ' handlers, ' + TOOL_NAMES.length + ' tools advertised'
+        ? 'extension v' +
+            (status.extensionVersion || '?') +
+            ', ' +
+            status.tools.length +
+            ' handlers, ' +
+            TOOL_NAMES.length +
+            ' tools advertised'
         : 'reload the extension at chrome://extensions'
     );
 
     const profile = browser.profile || {};
     console.log(
-      '         profile ' + (profile.directory || 'unknown') +
+      '         profile ' +
+        (profile.directory || 'unknown') +
         (profile.name ? ' "' + profile.name + '"' : '') +
-        '  account ' + ((browser.account && browser.account.email) || profile.userName || 'not signed in') +
-        '  label ' + (browser.label || 'none') +
-        '  local ' + isLocal(browser) + '  dev ' + isDev(browser, devId)
+        '  account ' +
+        ((browser.account && browser.account.email) || profile.userName || 'not signed in') +
+        '  label ' +
+        (browser.label || 'none') +
+        '  local ' +
+        isLocal(browser) +
+        '  dev ' +
+        isDev(browser, devId)
     );
     if (profile.reason) console.log('         profile detail missing: ' + profile.reason);
     console.log(
       '         sessions ' +
         (sessions === null
           ? 'not reported (reload the extension so it picks up the cookies permission)'
-          : sessions.length ? sessions.join(', ') : 'none detected')
+          : sessions.length
+            ? sessions.join(', ')
+            : 'none detected')
     );
   } catch (err) {
     check(browser.name + ' extension is attached', false, err.message);
@@ -220,8 +246,17 @@ const size = journalSize();
 console.log('\nJournal: ' + JOURNAL_DIR + '\n  ' + size.files + ' file(s), ' + Math.round(size.bytes / 1024) + ' KB');
 for (const { browser, journal } of hostJournals) {
   console.log(
-    '  host for ' + browser.name + ' (' + browser.id + '): retention ' + journal.retentionDays + ' days, ' +
-      'redaction ' + (journal.redact ? 'on' : 'off') + ', dir ' + journal.dir
+    '  host for ' +
+      browser.name +
+      ' (' +
+      browser.id +
+      '): retention ' +
+      journal.retentionDays +
+      ' days, ' +
+      'redaction ' +
+      (journal.redact ? 'on' : 'off') +
+      ', dir ' +
+      journal.dir
   );
 }
 if (!hostJournals.length) {
@@ -231,8 +266,12 @@ if (!hostJournals.length) {
   );
 }
 console.log(
-  '  this shell: retention ' + retentionDays() + ' days (AUTOPILOT_JOURNAL_DAYS), ' +
-    'redaction ' + (redactionOn() ? 'on' : 'off') + ' (AUTOPILOT_JOURNAL_REDACT). ' +
+  '  this shell: retention ' +
+    retentionDays() +
+    ' days (AUTOPILOT_JOURNAL_DAYS), ' +
+    'redaction ' +
+    (redactionOn() ? 'on' : 'off') +
+    ' (AUTOPILOT_JOURNAL_REDACT). ' +
     'The host writes the journal, so its line above is the one that counts.'
 );
 

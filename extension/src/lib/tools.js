@@ -75,12 +75,16 @@ export async function hideForCapture(tabId, label, queue = cdp) {
 function describePageError(text, tabId) {
   if (/Cannot access|Extension manifest must request permission|chrome:\/\//i.test(text)) {
     return (
-      'Cannot read tab ' + tabId + '. Chrome blocks extensions on chrome://, edge://, the Web Store, ' +
+      'Cannot read tab ' +
+      tabId +
+      '. Chrome blocks extensions on chrome://, edge://, the Web Store, ' +
       'and other restricted pages. Navigate to a normal page first.'
     );
   }
   if (/Receiving end does not exist/i.test(text)) {
-    return 'Page agent is not present in tab ' + tabId + '. The page may still be loading, or it may be a restricted URL.';
+    return (
+      'Page agent is not present in tab ' + tabId + '. The page may still be loading, or it may be a restricted URL.'
+    );
   }
   return text;
 }
@@ -395,9 +399,7 @@ async function waitForPaint(tabId) {
     const result = await pageCall(tabId, { type: 'AWAIT_PAINT', ceiling: shot.PAINT_CEILING_MS }).catch(() => null);
     return { path: 'animationFrame', painted: Boolean(result && result.painted), waitedMs: result && result.waitedMs };
   }
-  const frame = await cdp
-    .screencastFrameAfter(tabId, since, { timeout: shot.PAINT_CEILING_MS })
-    .catch(() => null);
+  const frame = await cdp.screencastFrameAfter(tabId, since, { timeout: shot.PAINT_CEILING_MS }).catch(() => null);
   return { path: 'screencastFrame', painted: Boolean(frame && frame.painted) };
 }
 
@@ -546,7 +548,8 @@ function applySubmitEvidence(result, submit, outcome) {
   if (outcome.effects === 'applied') {
     result.effects = 'applied';
     result.warnings = quiet(result.warnings).concat(
-      'the page changed within ' + SUBMIT_WINDOW_MS +
+      'the page changed within ' +
+        SUBMIT_WINDOW_MS +
         'ms but no submit evidence fired, so this may have opened a step rather than completed one'
     );
     return result;
@@ -598,8 +601,12 @@ export async function confirmGate({ tabId, url, control, irreversible, confirm, 
   if (answer === 'timeout') {
     throw new ToolError(
       'confirmation_required',
-      'The browser was asked to confirm pressing ' + JSON.stringify(control) + ' on ' + origin +
-        ' and nobody answered within ' + Math.round(perms.ASK_IN_BROWSER_TIMEOUT_MS / 1000) +
+      'The browser was asked to confirm pressing ' +
+        JSON.stringify(control) +
+        ' on ' +
+        origin +
+        ' and nobody answered within ' +
+        Math.round(perms.ASK_IN_BROWSER_TIMEOUT_MS / 1000) +
         ' seconds. The notification was closed and nothing was clicked.',
       {
         hint:
@@ -627,12 +634,19 @@ export async function confirmGate({ tabId, url, control, irreversible, confirm, 
   const token = perms.createConfirmation({ tabId, origin, control, screenshotId });
   throw new ToolError(
     'confirmation_required',
-    'Pressing ' + JSON.stringify(control) + ' on ' + origin + ' is irreversible and needs confirmation first. ' +
+    'Pressing ' +
+      JSON.stringify(control) +
+      ' on ' +
+      origin +
+      ' is irreversible and needs confirmation first. ' +
       'Nothing was clicked.',
     {
       hint:
-        'Show the user what is about to happen, then repeat this exact call with confirm set to ' + token +
-        ' within ' + Math.round(perms.CONFIRM_TTL_MS / 1000) + ' seconds. The token works once, on this tab, ' +
+        'Show the user what is about to happen, then repeat this exact call with confirm set to ' +
+        token +
+        ' within ' +
+        Math.round(perms.CONFIRM_TTL_MS / 1000) +
+        ' seconds. The token works once, on this tab, ' +
         'origin and control.',
       effects: 'none',
       details: { token, control, origin, screenshotId },
@@ -717,7 +731,9 @@ async function resolvePoint(tabId, { ref, coordinate }, { requireHit = false, pa
     if (requireHit && resolved.disabled) {
       throw new ToolError(
         'element_disabled',
-        'Element ' + ref + ' is disabled, so a click on it does nothing. ' +
+        'Element ' +
+          ref +
+          ' is disabled, so a click on it does nothing. ' +
           'Enable it first, or act on whatever controls it.'
       );
     }
@@ -725,7 +741,11 @@ async function resolvePoint(tabId, { ref, coordinate }, { requireHit = false, pa
     if (requireHit && resolved.occludedBy) {
       throw new ToolError(
         'ref_covered',
-        'Element ' + ref + ' is covered by ' + resolved.occludedBy + ' at the point a click would land, ' +
+        'Element ' +
+          ref +
+          ' is covered by ' +
+          resolved.occludedBy +
+          ' at the point a click would land, ' +
           'so the click would go to that instead. Dismiss or scroll past it first. No click was sent.'
       );
     }
@@ -746,7 +766,14 @@ async function resolvePoint(tabId, { ref, coordinate }, { requireHit = false, pa
     if (mapped.x < 0 || mapped.y < 0 || mapped.x > width || mapped.y > height) {
       throw new ToolError(
         'bad_request',
-        'Coordinate ' + mapped.x + ',' + mapped.y + ' is outside the ' + width + 'x' + height +
+        'Coordinate ' +
+          mapped.x +
+          ',' +
+          mapped.y +
+          ' is outside the ' +
+          width +
+          'x' +
+          height +
           ' viewport. Take a screenshot and read the coordinate from it, or target an element by ref.'
       );
     }
@@ -792,7 +819,9 @@ async function computerTool(ctx, input) {
         if (!held) {
           throw new ToolError(
             'bad_request',
-            'No stored image with id ' + JSON.stringify(id) + '. Ids come from a confirmation_required error and ' +
+            'No stored image with id ' +
+              JSON.stringify(id) +
+              '. Ids come from a confirmation_required error and ' +
               'are kept for the ten most recent writes in this browser.',
             { effects: 'none', hint: 'Repeat the call that was refused to get a fresh token and a fresh image id.' }
           );
@@ -816,14 +845,21 @@ async function computerTool(ctx, input) {
         });
         const warnings = [...(image.warnings || [])];
         if (paint && !paint.painted) {
-          warnings.push('no paint was observed within ' + shot.PAINT_CEILING_MS + 'ms of the last input, so this image may predate it');
+          warnings.push(
+            'no paint was observed within ' +
+              shot.PAINT_CEILING_MS +
+              'ms of the last input, so this image may predate it'
+          );
         }
         return {
           image,
           saveToDisk: Boolean(input.save_to_disk),
           pageState: await pageCall(tabId, { type: 'PAGE_STATE' }),
           effects: 'none',
-          evidence: { paint, capture: { path: image.path, format: image.format, quality: image.quality, scale: image.scale } },
+          evidence: {
+            paint,
+            capture: { path: image.path, format: image.format, quality: image.quality, scale: image.scale },
+          },
           warnings,
         };
       } finally {
@@ -848,7 +884,10 @@ async function computerTool(ctx, input) {
           image,
           saveToDisk: Boolean(input.save_to_disk),
           effects: 'none',
-          evidence: { paint, capture: { path: image.path, format: image.format, quality: image.quality, scale: image.scale } },
+          evidence: {
+            paint,
+            capture: { path: image.path, format: image.format, quality: image.quality, scale: image.scale },
+          },
           warnings: [...(image.warnings || [])],
         };
       } finally {
@@ -1038,11 +1077,21 @@ async function computerTool(ctx, input) {
       // either. Measured on a GitHub repository page: "t" opens the file finder
       // and leaves focus on a button, so the text that followed went nowhere
       // and the call still reported ok.
-      if (text.length && report && report.ok && !report.valueTracked && report.focusedEditable === false && !report.changed) {
+      if (
+        text.length &&
+        report &&
+        report.ok &&
+        !report.valueTracked &&
+        report.focusedEditable === false &&
+        !report.changed
+      ) {
         throw new ToolError(
           'no_effect',
-          'Typed ' + text.length + ' characters with ' +
-            (field ? JSON.stringify(field) : 'nothing that accepts text') + ' focused, and nothing changed.',
+          'Typed ' +
+            text.length +
+            ' characters with ' +
+            (field ? JSON.stringify(field) : 'nothing that accepts text') +
+            ' focused, and nothing changed.',
           {
             cause: 'no text field or editable element had focus when the text was sent',
             hint: 'Click the field by ref first, or set it with form_input.',
@@ -1055,8 +1104,11 @@ async function computerTool(ctx, input) {
       if (text.length && report && report.ok && report.valueTracked && !report.valueChanged) {
         throw new ToolError(
           'no_effect',
-          'Typed ' + text.length + ' characters and the value of ' +
-            (field ? JSON.stringify(field) : 'the focused field') + ' did not change.',
+          'Typed ' +
+            text.length +
+            ' characters and the value of ' +
+            (field ? JSON.stringify(field) : 'the focused field') +
+            ' did not change.',
           {
             cause: input.perKey
               ? 'the field did not accept per-key input'
@@ -1172,8 +1224,12 @@ async function computerTool(ctx, input) {
       // A CDP wheel event does nothing on a virtualized list, an overflow
       // hidden body, or a container that only handles its own wheel events, and
       // reports success either way.
-      if (Math.abs(delta.pageX) < 5 && Math.abs(delta.pageY) < 5 &&
-          Math.abs(delta.containerX) < 5 && Math.abs(delta.containerY) < 5) {
+      if (
+        Math.abs(delta.pageX) < 5 &&
+        Math.abs(delta.pageY) < 5 &&
+        Math.abs(delta.containerX) < 5 &&
+        Math.abs(delta.containerY) < 5
+      ) {
         fallback = await pageCall(tabId, {
           type: 'SCROLL_BY',
           x: point.x,
@@ -1188,10 +1244,14 @@ async function computerTool(ctx, input) {
       }
       await recordFrame(tabId, { action: 'scroll', point });
 
-      const finalAfter = fallback && fallback.after ? { page: fallback.after.page, container: fallback.after.container } : after;
+      const finalAfter =
+        fallback && fallback.after ? { page: fallback.after.page, container: fallback.after.container } : after;
       const total = offsetDelta(before, finalAfter);
-      const moved = Math.abs(total.pageX) >= 1 || Math.abs(total.pageY) >= 1 ||
-        Math.abs(total.containerX) >= 1 || Math.abs(total.containerY) >= 1;
+      const moved =
+        Math.abs(total.pageX) >= 1 ||
+        Math.abs(total.pageY) >= 1 ||
+        Math.abs(total.containerX) >= 1 ||
+        Math.abs(total.containerY) >= 1;
       // Measured rather than assumed: the page offsets and the nearest
       // scrollable container both stayed where they were.
       if (!moved) warnings.push('no observable change within 120ms');
@@ -1268,9 +1328,7 @@ async function editorInput(input, target) {
 
   const after = await pageCall(tabId, { type: 'REF_TEXT', ref: input.ref }).catch(() => null);
   const landed = Boolean(
-    after &&
-      after.ok &&
-      (after.sensitive ? after.length === value.length : String(after.text || '').includes(value))
+    after && after.ok && (after.sensitive ? after.length === value.length : String(after.text || '').includes(value))
   );
   if (!landed) {
     throw new ToolError(
@@ -1411,8 +1469,7 @@ export const handlers = {
 
       if (errorText) {
         throw new Error(
-          'Navigation to ' + url + ' failed: ' + errorText +
-            '. The tab is showing an error page, not the site.'
+          'Navigation to ' + url + ' failed: ' + errorText + '. The tab is showing an error page, not the site.'
         );
       }
     }
@@ -1474,8 +1531,13 @@ export const handlers = {
       },
       warnings: result.truncated
         ? [
-            'output truncated at ' + maxChars + ' characters, ' + (result.hiddenNodes || 0) +
-              ' of ' + result.nodes + ' nodes not shown',
+            'output truncated at ' +
+              maxChars +
+              ' characters, ' +
+              (result.hiddenNodes || 0) +
+              ' of ' +
+              result.nodes +
+              ' nodes not shown',
           ]
         : [],
     };
@@ -1495,8 +1557,13 @@ export const handlers = {
     }
     if (!result.text) {
       warnings.push(
-        'no text was collected: ' + result.textNodes + ' text nodes accepted, ' +
-          result.rejectedHidden + ' rejected as hidden, ' + result.rejectedEmpty + ' as empty'
+        'no text was collected: ' +
+          result.textNodes +
+          ' text nodes accepted, ' +
+          result.rejectedHidden +
+          ' rejected as hidden, ' +
+          result.rejectedEmpty +
+          ' as empty'
       );
     }
     return {
@@ -1551,15 +1618,22 @@ export const handlers = {
         warnings.push('widened the search to every node because ' + widenedBecause);
         if (tree.nodes && interactiveNodes / tree.nodes < NARROW_SCOPE_RATIO) {
           warnings.push(
-            'the interactive filter covered ' + interactiveNodes + ' of ' + tree.nodes +
-              ' nodes on this page, under ' + Math.round(NARROW_SCOPE_RATIO * 100) + ' percent'
+            'the interactive filter covered ' +
+              interactiveNodes +
+              ' of ' +
+              tree.nodes +
+              ' nodes on this page, under ' +
+              Math.round(NARROW_SCOPE_RATIO * 100) +
+              ' percent'
           );
         }
       }
     }
 
     if (tree.truncated) {
-      warnings.push('the tree was truncated at ' + tree.shownNodes + ' of ' + tree.nodes + ' nodes, so the match may be outside it');
+      warnings.push(
+        'the tree was truncated at ' + tree.shownNodes + ' of ' + tree.nodes + ' nodes, so the match may be outside it'
+      );
     }
 
     // The query named a role and nothing on the page has it, so the list below
@@ -1575,7 +1649,12 @@ export const handlers = {
       widened: Boolean(widenedBecause) || undefined,
       truncated: tree.truncated || false,
       effects: 'none',
-      evidence: { scope, searched: tree.nodes, widenedBecause: widenedBecause || undefined, roleGap: roleGap || undefined },
+      evidence: {
+        scope,
+        searched: tree.nodes,
+        widenedBecause: widenedBecause || undefined,
+        roleGap: roleGap || undefined,
+      },
       warnings,
     };
   },
@@ -1718,11 +1797,9 @@ export const handlers = {
         'element ' + ref + ' is a ' + resolved.tag + ' with no size, and is not a file input'
       );
     }
-    const outcome = await dispatchVerified(
-      tabId,
-      () => cdp.dropFiles(tabId, geo.centerX, geo.centerY, paths),
-      { point: { x: geo.centerX, y: geo.centerY } }
-    );
+    const outcome = await dispatchVerified(tabId, () => cdp.dropFiles(tabId, geo.centerX, geo.centerY, paths), {
+      point: { x: geo.centerX, y: geo.centerY },
+    });
     return {
       ok: true,
       mode: 'drop',
@@ -1766,7 +1843,7 @@ export const handlers = {
     await ensureAttached(input.tabId);
     const result = await cdp.evaluate(input.tabId, input.code);
     return {
-      result: result.value !== undefined ? result.value : result.description ?? null,
+      result: result.value !== undefined ? result.value : (result.description ?? null),
       type: result.type,
     };
   },
@@ -1916,22 +1993,34 @@ export const handlers = {
     const viewport = state.viewport;
     let matched = 'neither';
     if (nearSize(outer.width, requested.width) && nearSize(outer.height, requested.height)) matched = 'outer';
-    else if (nearSize(viewport.width, requested.width) && nearSize(viewport.height, requested.height)) matched = 'viewport';
+    else if (nearSize(viewport.width, requested.width) && nearSize(viewport.height, requested.height))
+      matched = 'viewport';
 
     const warnings = [];
     const dpr = state.devicePixelRatio;
     if (matched === 'neither') {
       warnings.push(
-        'the window ended at ' + outer.width + 'x' + outer.height + ' outer and ' +
-          viewport.width + 'x' + viewport.height + ' viewport, neither of which is the requested size'
+        'the window ended at ' +
+          outer.width +
+          'x' +
+          outer.height +
+          ' outer and ' +
+          viewport.width +
+          'x' +
+          viewport.height +
+          ' viewport, neither of which is the requested size'
       );
       // A request written in device pixels lands short by exactly the ratio, so
       // saying which reading does match tells the caller what to ask for.
       if (typeof dpr === 'number' && dpr !== 1) {
-        if (nearSize(Math.round(outer.width * dpr), requested.width) && nearSize(Math.round(outer.height * dpr), requested.height)) {
+        if (
+          nearSize(Math.round(outer.width * dpr), requested.width) &&
+          nearSize(Math.round(outer.height * dpr), requested.height)
+        ) {
           warnings.push(
             'the outer size in device pixels is the requested size: this display has a device pixel ratio of ' +
-              dpr + ', and chrome.windows.update takes CSS pixels'
+              dpr +
+              ', and chrome.windows.update takes CSS pixels'
           );
         }
       }
@@ -1939,10 +2028,14 @@ export const handlers = {
         warnings.push('the window is minimized, which is left alone rather than restored in front of the user');
       }
     }
-    const changed = Boolean(
-      before && (before.outerWidth !== state.outerWidth || before.outerHeight !== state.outerHeight ||
-        before.viewport.width !== viewport.width || before.viewport.height !== viewport.height)
-    ) || Boolean(after && (boundsBefore.width !== after.width || boundsBefore.height !== after.height));
+    const changed =
+      Boolean(
+        before &&
+        (before.outerWidth !== state.outerWidth ||
+          before.outerHeight !== state.outerHeight ||
+          before.viewport.width !== viewport.width ||
+          before.viewport.height !== viewport.height)
+      ) || Boolean(after && (boundsBefore.width !== after.width || boundsBefore.height !== after.height));
 
     return {
       ...state,
@@ -1960,7 +2053,9 @@ export const handlers = {
             : 'neither: the window manager or device pixel ratio changed the result',
       effects: changed ? 'applied' : 'none',
       evidence: {
-        before: before ? { outerWidth: before.outerWidth, outerHeight: before.outerHeight, viewport: before.viewport } : undefined,
+        before: before
+          ? { outerWidth: before.outerWidth, outerHeight: before.outerHeight, viewport: before.viewport }
+          : undefined,
         after: { outerWidth: outer.width, outerHeight: outer.height, viewport },
         devicePixelRatio: state.devicePixelRatio,
         // What Chrome says the window is, read back after the update rather

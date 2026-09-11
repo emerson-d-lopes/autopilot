@@ -55,13 +55,17 @@ test('required parameters are declared in properties', () => {
 
 test('every page-acting tool takes a tabId', () => {
   // declare_plan names origins for the whole session, so it has no tab either.
-  const sessionScoped = ['tabs_context', 'tabs_create', 'browser_batch', 'shortcuts_list', 'declare_plan', ...SERVER_TOOLS];
+  const sessionScoped = [
+    'tabs_context',
+    'tabs_create',
+    'browser_batch',
+    'shortcuts_list',
+    'declare_plan',
+    ...SERVER_TOOLS,
+  ];
   for (const tool of TOOLS) {
     if (sessionScoped.includes(tool.name)) continue;
-    assert.ok(
-      (tool.inputSchema.required || []).includes('tabId'),
-      tool.name + ' should require tabId'
-    );
+    assert.ok((tool.inputSchema.required || []).includes('tabId'), tool.name + ' should require tabId');
   }
 });
 
@@ -78,7 +82,9 @@ test('read-only classification covers every advertised tool', () => {
 test('the schema list matches what the extension reports to the host', () => {
   // The service worker sends TOOL_NAMES in its hello message; a mismatch there
   // means the host would advertise tools the browser cannot run.
-  const extensionNames = Object.keys(handlers).concat([...ROUTER_TOOLS], [...SERVER_TOOLS]).sort();
+  const extensionNames = Object.keys(handlers)
+    .concat([...ROUTER_TOOLS], [...SERVER_TOOLS])
+    .sort();
   assert.deepEqual(extensionNames, [...TOOL_NAMES].sort());
 });
 

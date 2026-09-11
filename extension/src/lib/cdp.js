@@ -70,18 +70,26 @@ const ZOOM_CHORD_KEYS = new Set(['+', '-', '=', '0']);
 
 /** True when a key combo is a ctrl/cmd page-zoom chord (P10). */
 function isZoomChord(combo) {
-  const parts = String(combo).toLowerCase().split('+').map((p) => p.trim()).filter(Boolean);
+  const parts = String(combo)
+    .toLowerCase()
+    .split('+')
+    .map((p) => p.trim())
+    .filter(Boolean);
   if (parts.length < 2) return false;
   const keyName = parts[parts.length - 1];
   const mods = parts.slice(0, -1);
-  const hasZoomMod = mods.some((m) => m === 'ctrl' || m === 'control' || m === 'cmd' || m === 'meta' || m === 'command');
+  const hasZoomMod = mods.some(
+    (m) => m === 'ctrl' || m === 'control' || m === 'cmd' || m === 'meta' || m === 'command'
+  );
   return hasZoomMod && ZOOM_CHORD_KEYS.has(keyName);
 }
 
 function assertNotZoomChord(combo) {
   if (isZoomChord(combo)) {
     throw new CdpError(
-      'ctrl/cmd+' + String(combo).split('+').pop() + ' is a browser zoom chord and is refused. Use the zoom action instead.'
+      'ctrl/cmd+' +
+        String(combo).split('+').pop() +
+        ' is a browser zoom chord and is refused. Use the zoom action instead.'
     );
   }
 }
@@ -392,7 +400,9 @@ export async function attach(tabId, { recover = true } = {}) {
     if (/already attached/i.test(err.message)) {
       throw new ToolError(
         'attach_refused',
-        'chrome.debugger.attach refused on tab ' + tabId + ': another debugger is attached. Close DevTools on that tab.',
+        'chrome.debugger.attach refused on tab ' +
+          tabId +
+          ': another debugger is attached. Close DevTools on that tab.',
         { cause: err.message, effects: 'none', retryable: false }
       );
     }
@@ -418,8 +428,13 @@ async function attachAfterRefusal(tabId, firstError) {
         await rawAttach(tabId);
         attachments.set(tabId, { attached: true, refs: 1 });
         const detail =
-          (removed.length ? 'removed ' + removed.length + ' extension iframe' + (removed.length === 1 ? '' : 's') + ' and ' : '') +
-          're-attached after ' + attempt + ' attempt' + (attempt === 1 ? '' : 's');
+          (removed.length
+            ? 'removed ' + removed.length + ' extension iframe' + (removed.length === 1 ? '' : 's') + ' and '
+            : '') +
+          're-attached after ' +
+          attempt +
+          ' attempt' +
+          (attempt === 1 ? '' : 's');
         note({
           kind: 'warning',
           code: 'attach_recovered',
@@ -630,7 +645,13 @@ function settlesWithin(promise, ms) {
   const timed = new Promise((resolve) => {
     timer = setTimeout(() => resolve(false), ms);
   });
-  return Promise.race([promise.then(() => true, () => true), timed]).then((won) => {
+  return Promise.race([
+    promise.then(
+      () => true,
+      () => true
+    ),
+    timed,
+  ]).then((won) => {
     if (timer) clearTimeout(timer);
     return won;
   });
@@ -667,7 +688,14 @@ async function queuedSend(tabId, method, params, timeout = timeoutFor(method)) {
   await waitForTurn(tabId, method, timeout);
   const promise = rawSend(tabId, method, params, timeout);
   if (!(timeout > 0)) return promise;
-  const entry = { method, startedAt: Date.now(), done: promise.then(() => {}, () => {}) };
+  const entry = {
+    method,
+    startedAt: Date.now(),
+    done: promise.then(
+      () => {},
+      () => {}
+    ),
+  };
   inFlight.set(tabId, entry);
   try {
     return await promise;
@@ -723,16 +751,23 @@ async function describeFrames(tabId) {
     const frames = await chrome.webNavigation.getAllFrames({ tabId });
     if (!frames) return '';
     const own = chrome.runtime.id;
-    const foreign = frames.filter((f) => /^chrome-extension:\/\//.test(f.url) && !f.url.startsWith('chrome-extension://' + own));
+    const foreign = frames.filter(
+      (f) => /^chrome-extension:\/\//.test(f.url) && !f.url.startsWith('chrome-extension://' + own)
+    );
     const list = frames.map((f) => (f.parentFrameId === -1 ? 'top' : 'frame ' + f.frameId) + ' ' + f.url).join('; ');
     const blame = foreign.length
-      ? ' Another extension (' + [...new Set(foreign.map((f) => new URL(f.url).host))].join(', ') + ') has a frame in this tab, and Chrome refuses debugger commands on the whole tab while it is there. Disable that extension for this profile, or drive the page from a profile without it.'
+      ? ' Another extension (' +
+        [...new Set(foreign.map((f) => new URL(f.url).host))].join(', ') +
+        ') has a frame in this tab, and Chrome refuses debugger commands on the whole tab while it is there. Disable that extension for this profile, or drive the page from a profile without it.'
       : '';
     let targets = '';
     try {
       const all = await chrome.debugger.getTargets();
-      const mine = all.filter((t) => t.tabId === tabId || (t.type !== 'page' && /^chrome-extension:/.test(t.url || '')));
-      targets = ' Debugger targets: ' + mine.map((t) => t.type + (t.tabId === tabId ? '' : '*') + ' ' + t.url).join('; ') + '.';
+      const mine = all.filter(
+        (t) => t.tabId === tabId || (t.type !== 'page' && /^chrome-extension:/.test(t.url || ''))
+      );
+      targets =
+        ' Debugger targets: ' + mine.map((t) => t.type + (t.tabId === tabId ? '' : '*') + ' ' + t.url).join('; ') + '.';
     } catch {
       /* getTargets is best effort */
     }
@@ -782,8 +817,11 @@ export function takeBeforeunloadDialog(tabId) {
 export function dialogOpenError(tabId, url, dialog) {
   return new ToolError(
     'dialog_open',
-    'Navigation to ' + url + ' was cancelled by the page: ' +
-      JSON.stringify(dialog.message || '') + ' was shown as a beforeunload dialog and dismissed, so the tab stayed put.',
+    'Navigation to ' +
+      url +
+      ' was cancelled by the page: ' +
+      JSON.stringify(dialog.message || '') +
+      ' was shown as a beforeunload dialog and dismissed, so the tab stayed put.',
     {
       hint: 'Call navigate again with force: true to leave the page and lose unsaved input.',
       effects: 'none',
@@ -813,7 +851,8 @@ export function installDialogListener() {
     const tabId = source.tabId;
     const type = (params && params.type) || 'alert';
     const message = (params && params.message) || '';
-    const accept = type === 'alert' ? true : type === 'beforeunload' ? beforeunloadPolicy.get(tabId) === 'accept' : false;
+    const accept =
+      type === 'alert' ? true : type === 'beforeunload' ? beforeunloadPolicy.get(tabId) === 'accept' : false;
     const record = { type, message, handled: accept ? 'accepted' : 'dismissed', at: Date.now() };
     lastDialog.set(tabId, record);
     note({ kind: 'dialog', dialog: { type, message, handled: record.handled } });
@@ -863,7 +902,7 @@ export async function send(tabId, method, params = {}, options = {}) {
       return await rawSend(tabId, method, params);
     } catch (again) {
       if (/chrome-extension/i.test((again && again.message) || '')) {
-        throw new CdpError(again.message + await describeFrames(tabId));
+        throw new CdpError(again.message + (await describeFrames(tabId)));
       }
       throw again;
     }
@@ -1096,15 +1135,7 @@ async function movePointerTo(tabId, x, y, { modifiers = 0, buttons = 0, onMove, 
  * The move is a path rather than a jump (D4), dispatched inside that same gap.
  */
 export async function mouseClick(tabId, x, y, options = {}) {
-  const {
-    button = 'left',
-    clickCount = 1,
-    modifiers = 0,
-    hoverDelay = 100,
-    onMove,
-    onPress,
-    onRelease,
-  } = options;
+  const { button = 'left', clickCount = 1, modifiers = 0, hoverDelay = 100, onMove, onPress, onRelease } = options;
 
   // The pointer travels to the target first, then presses, so an observer sees
   // the same order of events the page does.
@@ -1196,7 +1227,11 @@ export async function typeKeys(tabId, text, cadence) {
  */
 export async function pressKey(tabId, combo) {
   assertNotZoomChord(combo);
-  const parts = String(combo).toLowerCase().split('+').map((p) => p.trim()).filter(Boolean);
+  const parts = String(combo)
+    .toLowerCase()
+    .split('+')
+    .map((p) => p.trim())
+    .filter(Boolean);
   const keyName = parts.pop();
   const modifiers = modifiersToMask(parts.join('+'));
   const spec = KEYS[keyName];
@@ -1235,7 +1270,9 @@ export async function pressKey(tabId, combo) {
  * name that counts as a submit cannot drift apart.
  */
 export function isEnterKeyName(name) {
-  const key = String(name === undefined || name === null ? '' : name).trim().toLowerCase();
+  const key = String(name === undefined || name === null ? '' : name)
+    .trim()
+    .toLowerCase();
   if (key === '\n' || key === '\r') return true;
   const spec = KEYS[key];
   return Boolean(spec && spec.vk === 13);
@@ -1258,7 +1295,10 @@ export function pressesEnter(text) {
     .split(/\s+/)
     .filter(Boolean)
     .some((combo) => {
-      const parts = combo.split('+').map((p) => p.trim()).filter(Boolean);
+      const parts = combo
+        .split('+')
+        .map((p) => p.trim())
+        .filter(Boolean);
       return isEnterKeyName(parts[parts.length - 1]);
     });
 }
@@ -1321,7 +1361,10 @@ function screencastFrame(tabId, { format, quality, maxWidth, maxHeight, timeout 
       sendNoWait(tabId, 'Page.screencastFrameAck', { sessionId: params.sessionId });
       finish(null, params.data);
     };
-    const timer = setTimeout(() => finish(new CdpError('the hidden tab produced no frame within ' + timeout + 'ms')), timeout);
+    const timer = setTimeout(
+      () => finish(new CdpError('the hidden tab produced no frame within ' + timeout + 'ms')),
+      timeout
+    );
     chrome.debugger.onEvent.addListener(listener);
     const params = { format, maxWidth, maxHeight, everyNthFrame: 1 };
     if (quality !== undefined && format === 'jpeg') params.quality = quality;
@@ -1420,7 +1463,9 @@ async function settledScreencastFrame(tabId, { format, quality, maxWidth, maxHei
   // as timeout rather than a bare CdpError puts it under the read retry policy,
   // which is what turns it back into a screenshot.
   throw new ToolError('timeout', 'The hidden tab produced no frame within ' + timeout + 'ms.', {
-    cause: 'the compositor had nothing drawn for this tab and did not redraw while the capture waited',
+    cause:
+      'the compositor had nothing drawn for this tab and did not redraw while the capture waited' +
+      (lastError ? ' (last attempt: ' + lastError.message + ')' : ''),
     hint: 'Take the screenshot again. If it repeats, reload the tab with navigate.',
     effects: 'none',
   });
@@ -1547,7 +1592,10 @@ async function captureHidden(tabId, { format, quality, clip, scroll, screencastT
     h
   );
   bitmap.close();
-  const blob = await canvas.convertToBlob({ type: 'image/' + format, quality: quality !== undefined ? quality / 100 : undefined });
+  const blob = await canvas.convertToBlob({
+    type: 'image/' + format,
+    quality: quality !== undefined ? quality / 100 : undefined,
+  });
   return bytesToBase64(blob);
 }
 
@@ -1614,12 +1662,22 @@ export async function wake(tabId, { force = false } = {}) {
   // wakeOnTimeout is off on both: waking is what the timeout path calls, and it
   // must not call itself.
   try {
-    await send(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: true }, { retry: false, timeout: 5000, wakeOnTimeout: false });
+    await send(
+      tabId,
+      'Emulation.setFocusEmulationEnabled',
+      { enabled: true },
+      { retry: false, timeout: 5000, wakeOnTimeout: false }
+    );
   } catch {
     /* an older Chrome without the method still gets the lifecycle state */
   }
   try {
-    await send(tabId, 'Page.setWebLifecycleState', { state: 'active' }, { retry: false, timeout: 5000, wakeOnTimeout: false });
+    await send(
+      tabId,
+      'Page.setWebLifecycleState',
+      { state: 'active' },
+      { retry: false, timeout: 5000, wakeOnTimeout: false }
+    );
   } catch {
     /* not supported on this target */
   }
@@ -1727,9 +1785,18 @@ export function printableKeySpec(ch) {
   else if (/[0-9]/.test(ch)) code = 'Digit' + ch;
   else {
     const PUNCT = {
-      ' ': 'Space', '-': 'Minus', '=': 'Equal', '[': 'BracketLeft', ']': 'BracketRight',
-      '\\': 'Backslash', ';': 'Semicolon', "'": 'Quote', ',': 'Comma', '.': 'Period',
-      '/': 'Slash', '`': 'Backquote',
+      ' ': 'Space',
+      '-': 'Minus',
+      '=': 'Equal',
+      '[': 'BracketLeft',
+      ']': 'BracketRight',
+      '\\': 'Backslash',
+      ';': 'Semicolon',
+      "'": 'Quote',
+      ',': 'Comma',
+      '.': 'Period',
+      '/': 'Slash',
+      '`': 'Backquote',
     };
     code = PUNCT[ch] || '';
   }
@@ -1737,8 +1804,18 @@ export function printableKeySpec(ch) {
   // rides on the text payload alone, which is what an IME-produced character
   // does too.
   const VK = {
-    ' ': 32, '-': 189, '=': 187, '[': 219, ']': 221, '\\': 220, ';': 186,
-    "'": 222, ',': 188, '.': 190, '/': 191, '`': 192,
+    ' ': 32,
+    '-': 189,
+    '=': 187,
+    '[': 219,
+    ']': 221,
+    '\\': 220,
+    ';': 186,
+    "'": 222,
+    ',': 188,
+    '.': 190,
+    '/': 191,
+    '`': 192,
   };
   const vk = /[A-Z0-9]/.test(upper) ? codePoint : VK[ch] || 0;
   return { vk, code, key: ch, text: ch };
@@ -1800,7 +1877,9 @@ const WORD_PAUSE_MAX = 3;
  * Pure and seedable, so the distribution can be asserted without a browser.
  */
 export function typingDelays(text, cadence = TYPE_CADENCE_MS, rand = Math.random) {
-  const mean = Number.isFinite(Number(cadence)) ? Math.min(TYPE_CADENCE_MAX, Math.max(0, Number(cadence))) : TYPE_CADENCE_MS;
+  const mean = Number.isFinite(Number(cadence))
+    ? Math.min(TYPE_CADENCE_MAX, Math.max(0, Number(cadence)))
+    : TYPE_CADENCE_MS;
   const chars = Array.isArray(text) ? text : [...String(text)];
   return chars.map((ch, index) => {
     if (mean === 0) return 0;
@@ -1855,7 +1934,10 @@ export async function pressKeyLoose(tabId, combo) {
   // combination.
   if ([...raw].length === 1 && !/[a-z0-9]/i.test(raw)) return pressPrintable(tabId, raw);
 
-  const parts = raw.split('+').map((p) => p.trim()).filter(Boolean);
+  const parts = raw
+    .split('+')
+    .map((p) => p.trim())
+    .filter(Boolean);
   const keyName = parts[parts.length - 1];
   const printable = keyName && [...keyName].length === 1 && !/[a-z0-9]/i.test(keyName);
   if (!printable) return pressKey(tabId, combo);

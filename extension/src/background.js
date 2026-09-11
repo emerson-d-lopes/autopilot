@@ -214,7 +214,12 @@ function applyNotes(result, notes) {
     if (entry.kind === 'dialog') {
       dialogs.push(entry.dialog);
       warnings.push(
-        'a ' + entry.dialog.type + ' dialog was ' + entry.dialog.handled + ': ' + JSON.stringify(entry.dialog.message || '')
+        'a ' +
+          entry.dialog.type +
+          ' dialog was ' +
+          entry.dialog.handled +
+          ': ' +
+          JSON.stringify(entry.dialog.message || '')
       );
     } else if (entry.message) {
       warnings.push(entry.message);
@@ -277,9 +282,19 @@ async function runTool(name, input, ctx) {
 // ---------------------------------------------------------------------------
 
 const COMPUTER_ACTIONS = new Set([
-  'screenshot', 'zoom', 'wait', 'scroll_to', 'hover',
-  'left_click', 'right_click', 'double_click', 'triple_click',
-  'left_click_drag', 'type', 'key', 'scroll',
+  'screenshot',
+  'zoom',
+  'wait',
+  'scroll_to',
+  'hover',
+  'left_click',
+  'right_click',
+  'double_click',
+  'triple_click',
+  'left_click_drag',
+  'type',
+  'key',
+  'scroll',
 ]);
 
 /**
@@ -399,12 +414,23 @@ export async function validateBatch(actions, ctx) {
     if (seenRefs.get(key)) continue;
     return new ToolError(
       'batch_invalid',
-      'Batch not run: ' + describeItem(check.index, check.raw) + ' names ' + check.ref +
-        ', which is no longer on the page in tab ' + check.tabId + '.',
+      'Batch not run: ' +
+        describeItem(check.index, check.raw) +
+        ' names ' +
+        check.ref +
+        ', which is no longer on the page in tab ' +
+        check.tabId +
+        '.',
       {
         effects: 'none',
         hint: 'Read the page again to get current refs, then send the batch. Nothing ran.',
-        details: { index: check.index, lineNo: check.raw.lineNo, name: check.raw.name, ref: check.ref, tabId: check.tabId },
+        details: {
+          index: check.index,
+          lineNo: check.raw.lineNo,
+          name: check.raw.name,
+          ref: check.ref,
+          tabId: check.tabId,
+        },
       }
     );
   }
@@ -455,7 +481,7 @@ export async function runBatch(actions, ctx) {
   if (!tabsLib.isStopped(ctx.clientId)) await armConsoleReads(actions);
 
   const results = [];
-  let lastCreatedTab = null;
+  const lastCreatedTab = null;
   // R4. Coordinates inside a batch were written against the screenshot the
   // caller had before it ran, so a capture mid-batch holds its new frame until
   // the batch is over rather than remapping them against an unseen image.
@@ -475,9 +501,13 @@ async function runSteps(actions, ctx, results, lastCreatedTab) {
     // mid-sequence. The step that was about to run does not, and everything
     // already run stands.
     if (tabsLib.isStopped(ctx.clientId)) {
-      const err = new ToolError('stopped', 'The user stopped this session before ' + describeItem(i, actions[i]) + ' ran.', {
-        effects: 'none',
-      });
+      const err = new ToolError(
+        'stopped',
+        'The user stopped this session before ' + describeItem(i, actions[i]) + ' ran.',
+        {
+          effects: 'none',
+        }
+      );
       results.push({ index: i, name, lineNo, command, ok: false, error: serializeError(err) });
       return { results, stoppedAt: i, completed: false };
     }
@@ -485,7 +515,14 @@ async function runSteps(actions, ctx, results, lastCreatedTab) {
     //  stands for it. That is what lets quick's NT be followed by actions.
     if (input && input.tabId === '$last') {
       if (lastCreatedTab === null) {
-        results.push({ index: i, name, lineNo, command, ok: false, error: { message: 'no tab was created earlier in this batch for $last to refer to' } });
+        results.push({
+          index: i,
+          name,
+          lineNo,
+          command,
+          ok: false,
+          error: { message: 'no tab was created earlier in this batch for $last to refer to' },
+        });
         return { results, stoppedAt: i, completed: false };
       }
       input.tabId = lastCreatedTab;
@@ -527,7 +564,9 @@ async function runShortcut(args, ctx) {
   if (!shortcut) {
     const all = await shortcuts.list();
     throw new Error(
-      'No shortcut named ' + JSON.stringify(args.shortcutId) + '. ' +
+      'No shortcut named ' +
+        JSON.stringify(args.shortcutId) +
+        '. ' +
         (all.length ? 'Available: ' + all.map((s) => s.id + ' (' + s.name + ')').join(', ') : 'None are saved yet.')
     );
   }
@@ -624,7 +663,8 @@ async function handleMessage(message) {
       // A listing call changes nothing and would only see its own hourglass,
       // so it leaves the mark as the last real call set it.
       const marks = tool !== 'tabs_context';
-      const mark = (status) => (marks ? tabsLib.setGroupStatus(ctx.clientId, status).catch(() => {}) : Promise.resolve());
+      const mark = (status) =>
+        marks ? tabsLib.setGroupStatus(ctx.clientId, status).catch(() => {}) : Promise.resolve();
       mark('working');
       // F4: shows the pulsing border and Stop button on the tab this call
       // acts on, and the static "driving this tab" pill on the session's
@@ -697,7 +737,8 @@ async function ensureOffscreen() {
       await chrome.offscreen.createDocument({
         url: OFFSCREEN_PATH,
         reasons: ['BLOBS'],
-        justification: 'Keeps the service worker alive so a queued tool call is answered without waiting for a restart.',
+        justification:
+          'Keeps the service worker alive so a queued tool call is answered without waiting for a restart.',
       });
       return true;
     } catch (err) {
@@ -734,14 +775,26 @@ Promise.resolve()
 
 function remember(tool, args, ok, error, tab) {
   const detail =
-    tool === 'navigate' && args && args.url ? String(args.url).slice(0, 60)
-    : tool === 'computer' && args ? String(args.action || '')
-    : tool === 'browser_batch' && args && Array.isArray(args.actions) ? args.actions.length + ' steps'
-    : tab && tab.title ? String(tab.title).slice(0, 40)
-    : '';
-  recent.push({ at: Date.now(), tool, detail, ok, error: error ? String(error.message || error).slice(0, 200) : undefined });
+    tool === 'navigate' && args && args.url
+      ? String(args.url).slice(0, 60)
+      : tool === 'computer' && args
+        ? String(args.action || '')
+        : tool === 'browser_batch' && args && Array.isArray(args.actions)
+          ? args.actions.length + ' steps'
+          : tab && tab.title
+            ? String(tab.title).slice(0, 40)
+            : '';
+  recent.push({
+    at: Date.now(),
+    tool,
+    detail,
+    ok,
+    error: error ? String(error.message || error).slice(0, 200) : undefined,
+  });
   while (recent.length > 20) recent.shift();
-  Promise.resolve().then(() => chrome.storage.session.set({ recent })).catch(() => {});
+  Promise.resolve()
+    .then(() => chrome.storage.session.set({ recent }))
+    .catch(() => {});
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -767,12 +820,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           })),
           recent,
         }),
-      () => sendResponse({ version: chrome.runtime.getManifest().version, connected: Boolean(port), working: inFlight > 0, sessions: [], recent })
+      () =>
+        sendResponse({
+          version: chrome.runtime.getManifest().version,
+          connected: Boolean(port),
+          working: inFlight > 0,
+          sessions: [],
+          recent,
+        })
     );
     return true;
   }
   if (message.type === 'reveal_session') {
-    tabsLib.revealSession(message.clientId).then((ok) => sendResponse({ ok }), () => sendResponse({ ok: false }));
+    tabsLib.revealSession(message.clientId).then(
+      (ok) => sendResponse({ ok }),
+      () => sendResponse({ ok: false })
+    );
     return true;
   }
   if (message.type === 'close_empty_tabs') {
@@ -792,7 +855,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // a popup has no tab of its own).
   if (message.type === 'stop') {
     (async () => {
-      const clientId = sender.tab ? (await tabsLib.sessionForTab(sender.tab.id) || {}).clientId : message.clientId;
+      const clientId = sender.tab ? ((await tabsLib.sessionForTab(sender.tab.id)) || {}).clientId : message.clientId;
       if (!clientId) return sendResponse({ ok: false });
       await tabsLib.stopSession(clientId);
       sendResponse({ ok: true });
@@ -801,7 +864,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === 'resume') {
     (async () => {
-      const clientId = sender.tab ? (await tabsLib.sessionForTab(sender.tab.id) || {}).clientId : message.clientId;
+      const clientId = sender.tab ? ((await tabsLib.sessionForTab(sender.tab.id)) || {}).clientId : message.clientId;
       if (!clientId) return sendResponse({ ok: false });
       await tabsLib.resumeSession(clientId);
       sendResponse({ ok: true });

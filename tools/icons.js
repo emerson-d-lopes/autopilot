@@ -22,7 +22,10 @@ if (!v) {
   process.exit(1);
 }
 const browser = await CdpSession.open(v.webSocketDebuggerUrl);
-const html = '<!doctype html><html style="overflow:hidden"><body style="margin:0;overflow:hidden;background:transparent">' + svg.replace('<svg ', '<svg style="display:block" ') + '</body></html>';
+const html =
+  '<!doctype html><html style="overflow:hidden"><body style="margin:0;overflow:hidden;background:transparent">' +
+  svg.replace('<svg ', '<svg style="display:block" ') +
+  '</body></html>';
 const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank', newWindow: false });
 const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true });
 const send = (m, p) => browser.send(m, p, sessionId);
@@ -32,7 +35,12 @@ await new Promise((r) => setTimeout(r, 800));
 await send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
 
 for (const size of SIZES) {
-  await send('Emulation.setDeviceMetricsOverride', { width: 128, height: 128, deviceScaleFactor: size / 128, mobile: false });
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: 128,
+    height: 128,
+    deviceScaleFactor: size / 128,
+    mobile: false,
+  });
   await new Promise((r) => setTimeout(r, 150));
   const { data } = await send('Page.captureScreenshot', {
     format: 'png',

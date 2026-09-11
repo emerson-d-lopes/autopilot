@@ -51,7 +51,10 @@ export function missingRequired(tool, input = {}) {
 /** The sentence a refusal carries, naming what to add. */
 export function missingRequiredMessage(tool, missing) {
   return (
-    tool + ' needs ' + missing.join(' and ') + '. The call was refused before anything ran, so the tab was ' +
+    tool +
+    ' needs ' +
+    missing.join(' and ') +
+    '. The call was refused before anything ran, so the tab was ' +
     'not touched.'
   );
 }

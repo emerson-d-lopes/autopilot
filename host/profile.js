@@ -193,7 +193,11 @@ export function defaultUserDataDir(browser, { platform = process.platform, env =
  * signed-in email and `gaia_name` the account's own display name. Any of the
  * three can be absent on a profile that was never signed in.
  */
-export function readLocalState(userDataDir, profileDirectory, { readFile = readFileSync, platform = process.platform } = {}) {
+export function readLocalState(
+  userDataDir,
+  profileDirectory,
+  { readFile = readFileSync, platform = process.platform } = {}
+) {
   if (!userDataDir) return { name: null, userName: null, gaiaName: null, reason: 'no user data dir' };
   const join = platform === 'win32' ? path.win32.join : path.posix.join;
   const file = join(userDataDir, 'Local State');

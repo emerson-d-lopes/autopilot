@@ -267,7 +267,10 @@ export async function checkDomainTransition({ clientId = 'default', url, tool, n
   if (!exempt && policy.mode === MODES.ASK && !policy.grants[origin]) {
     throw new ToolError(
       'origin_blocked',
-      'This session last acted on ' + previous + ' and this call acts on ' + origin +
+      'This session last acted on ' +
+        previous +
+        ' and this call acts on ' +
+        origin +
         '. A move to another origin needs its own grant.',
       {
         hint: 'Grant ' + origin + ' in the extension options, or switch the mode to allow.',
@@ -283,7 +286,10 @@ export async function checkDomainTransition({ clientId = 'default', url, tool, n
     origin,
     previous,
     warning:
-      'this call acts on ' + origin + ', and the session last acted on ' + previous +
+      'this call acts on ' +
+      origin +
+      ', and the session last acted on ' +
+      previous +
       '. Confirm the new origin is the one you meant before acting further.',
   };
 }
@@ -563,7 +569,8 @@ export async function checkPermission({ tool, url, toolUseId, clientId = 'defaul
 
   if (isBlocked && !isExplicitlyAllowed) {
     throw new PermissionDenied(
-      'Blocked origin: ' + hostname +
+      'Blocked origin: ' +
+        hostname +
         '. This host is on the extension blocklist (financial and payment sites are blocked by default). ' +
         'Remove it in the extension options if you intend to allow it.',
       { hostname, tool }
@@ -581,9 +588,13 @@ export async function checkPermission({ tool, url, toolUseId, clientId = 'defaul
       const plan = planFor(clientId);
       throw new ToolError(
         'origin_blocked',
-        (plan
-          ? 'This session declared ' + (plan.origins.join(', ') || 'no origins') + ' and ' + planned + ' is not among them.'
-          : 'The extension is in plan mode and this session has not declared the origins it will act on.'),
+        plan
+          ? 'This session declared ' +
+              (plan.origins.join(', ') || 'no origins') +
+              ' and ' +
+              planned +
+              ' is not among them.'
+          : 'The extension is in plan mode and this session has not declared the origins it will act on.',
         {
           hint: 'Call declare_plan with every origin the task needs, including ' + planned + '.',
           effects: 'none',
@@ -620,7 +631,8 @@ export async function checkPermission({ tool, url, toolUseId, clientId = 'defaul
   const grant = policy.grants[origin];
   if (!grant) {
     throw new PermissionDenied(
-      'No permission grant for ' + origin +
+      'No permission grant for ' +
+        origin +
         '. The extension is in "ask" mode. Grant access in the extension options, or switch the mode to "allow".',
       { origin, tool }
     );
@@ -663,7 +675,11 @@ export async function verifyOriginUnchanged(tabId, expectedUrl) {
   const after = hostnameOf(tab.url);
   if (before && after && before !== after) {
     throw new PermissionDenied(
-      'Tab navigated from ' + before + ' to ' + after + ' before the action ran. ' +
+      'Tab navigated from ' +
+        before +
+        ' to ' +
+        after +
+        ' before the action ran. ' +
         'The action was not performed. Re-read the page and retry if this navigation was expected.',
       { before, after }
     );

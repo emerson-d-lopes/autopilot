@@ -1,83 +1,273 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Bridge test page</title>
-<style>
-body{font-family:sans-serif;margin:20px;max-width:900px}
-section{border:1px solid #ccc;padding:10px;margin:10px 0}
-#menu{position:relative;display:inline-block}#menu ul{display:none;position:absolute;background:#eee;padding:8px;list-style:none;margin:0}
-#menu:hover ul{display:block}
-.box{width:100px;height:60px;border:2px solid #333;display:inline-block;margin:5px;text-align:center;line-height:60px}
-#drop{border:2px dashed #888;padding:20px;margin:5px}
-#far{margin-top:2500px}
-#slider{width:300px}
-#log li{font-size:12px}
-</style></head><body>
-<h1>Bridge test page</h1>
-<section id="probe"><h2>Probe</h2>
-<div>webdriver: <span id="wd"></span></div>
-<div>cdp getter fired: <span id="cdp">no</span></div>
-<div>visibility: <span id="vis"></span> / hasFocus: <span id="focus"></span></div>
-<div>events: <ol id="log"></ol></div>
-</section>
-<section id="form"><h2>Form</h2>
-<form id="f" onsubmit="event.preventDefault();document.getElementById('out').textContent=JSON.stringify(Object.fromEntries(new FormData(this)))">
-<label>Name <input name="name" id="name"></label>
-<label>Email <input type="email" name="email" id="email"></label>
-<label>Country <select name="country" id="country"><option value="">--</option><option value="br">Brazil</option><option value="pt">Portugal</option></select></label>
-<label><input type="checkbox" name="agree" id="agree" value="yes"> Agree</label>
-<label><input type="radio" name="plan" value="free" id="free"> Free</label>
-<label><input type="radio" name="plan" value="pro" id="pro"> Pro</label>
-<label>Notes <textarea name="notes" id="notes"></textarea></label>
-<label>Disabled <input id="dis" name="dis" disabled value="x"></label>
-<label>Readonly <input id="ro" name="ro" readonly value="y"></label>
-<label>Keydown-only <input id="kd" name="kd" placeholder="counts keydown"></label> <span id="kdcount">0</span>
-<label>Controlled <input id="ctl" name="ctl" placeholder="reacts to input events"></label> <span id="ctlval"></span>
-<button type="submit" id="submit">Submit</button>
-</form><pre id="out"></pre></section>
-<section><h2>Shadow DOM</h2><div id="open-host"></div><div id="closed-host"></div><span id="shadow-out"></span></section>
-<section><h2>Iframes</h2>
-<iframe id="same" srcdoc="<button id='ib' onclick='document.getElementById(&quot;r&quot;).textContent=&quot;iframe clicked&quot;'>Inside iframe</button><span id='r'></span>" width="300" height="60"></iframe>
-<iframe id="cross" src="https://example.com" width="300" height="60"></iframe>
-</section>
-<section><h2>Contenteditable</h2><div id="ce" contenteditable style="border:1px solid #999;padding:6px;min-height:30px">edit me</div></section>
-<section><h2>Hover menu</h2><div id="menu"><button>Menu</button><ul><li><a href="#hovered" id="hoverlink">Hidden link</a></li></ul></div> <span id="hoverout"></span></section>
-<section><h2>Drag and drop</h2>
-<div class="box" id="A" draggable="true">A</div><div class="box" id="B">B</div><span id="dndout"></span>
-<br><input type="range" id="slider" min="0" max="100" value="0"> <span id="sliderval">0</span>
-</section>
-<section><h2>Upload</h2><input type="file" id="file" multiple><span id="fileout"></span>
-<div><label>Second file input <input type="file" id="file2"></label> <span id="file2out"></span></div>
-<div id="drop">Drop zone</div><span id="dropout"></span></section>
-<section><h2>Dynamic</h2><button id="load">Load items</button><ul id="items"></ul>
-<button id="newtab" onclick="window.open('https://example.com','_blank')">Open new tab</button>
-<a href="https://example.com" target="_blank" id="blanklink">blank link</a>
-<div>shortcut: <span id="short"></span></div>
-</section>
-<section><h2>Network</h2><button id="fetchok">fetch ok</button><button id="fetch404">fetch 404</button><button id="post">post</button><span id="netout"></span></section>
-<section><h2>Popup-free dialog</h2><button id="dlg" onclick="document.getElementById('dlgout').textContent='dialog would open'">Pseudo dialog</button><span id="dlgout"></span></section>
-<div id="far"><button id="farbtn" onclick="this.textContent='far clicked'">Far button</button></div>
-<script>
-const log=(e)=>{const li=document.createElement('li');li.textContent=e.type+' '+(e.target.id||e.target.tagName)+' trusted='+e.isTrusted+(e.pointerType?' ptr='+e.pointerType:'')+(e.key?' key='+e.key:'');document.getElementById('log').appendChild(li);console.log('[evt]',li.textContent)};
-['click','keydown','input','pointerdown','drop'].forEach(t=>document.addEventListener(t,log,true));
-document.getElementById('wd').textContent=String(navigator.webdriver);
-document.getElementById('vis').textContent=document.visibilityState;
-document.getElementById('focus').textContent=document.hasFocus();
-const trap={};Object.defineProperty(trap,'id',{get(){document.getElementById('cdp').textContent='YES';return 1}});console.log('cdp-trap',trap);
-console.log('page loaded');console.warn('a warning');console.error('an error at load');
-setTimeout(()=>{throw new Error('uncaught boom')},300);
-document.getElementById('kd').addEventListener('keydown',()=>{document.getElementById('kdcount').textContent=+document.getElementById('kdcount').textContent+1});
-const ctl=document.getElementById('ctl');
-ctl.addEventListener('input',e=>{document.getElementById('ctlval').textContent='input:'+e.target.value+' inputType='+e.inputType});
-const oh=document.getElementById('open-host').attachShadow({mode:'open'});oh.innerHTML='<button id="ob">Open shadow button</button>';oh.querySelector('button').onclick=()=>document.getElementById('shadow-out').textContent='open shadow clicked';
-const ch=document.getElementById('closed-host').attachShadow({mode:'closed'});ch.innerHTML='<button id="cb">Closed shadow button</button>';ch.querySelector('button').onclick=()=>document.getElementById('shadow-out').textContent='closed shadow clicked';
-document.getElementById('hoverlink').onclick=e=>{e.preventDefault();document.getElementById('hoverout').textContent='hover link clicked'};
-const A=document.getElementById('A'),B=document.getElementById('B');
-A.addEventListener('dragstart',e=>e.dataTransfer.setData('text','A'));B.addEventListener('dragover',e=>e.preventDefault());B.addEventListener('drop',e=>{e.preventDefault();document.getElementById('dndout').textContent='dropped '+e.dataTransfer.getData('text')+' on B'});
-document.getElementById('slider').oninput=e=>document.getElementById('sliderval').textContent=e.target.value;
-document.getElementById('file').onchange=e=>document.getElementById('fileout').textContent=[...e.target.files].map(f=>f.name+':'+f.size).join(',');
-document.getElementById('file2').onchange=e=>document.getElementById('file2out').textContent=[...e.target.files].map(f=>f.name+':'+f.size).join(',');
-const dz=document.getElementById('drop');dz.ondragover=e=>e.preventDefault();dz.ondrop=e=>{e.preventDefault();document.getElementById('dropout').textContent='dropped '+[...e.dataTransfer.files].map(f=>f.name+':'+f.size).join(',')};
-document.getElementById('load').onclick=()=>setTimeout(()=>{for(let i=1;i<=5;i++){const li=document.createElement('li');li.textContent='item '+i;document.getElementById('items').appendChild(li)}},1500);
-document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='k'){e.preventDefault();document.getElementById('short').textContent='ctrl+k fired'}});
-document.getElementById('fetchok').onclick=()=>fetch('/api/ok').then(r=>r.json()).then(j=>document.getElementById('netout').textContent=JSON.stringify(j));
-document.getElementById('fetch404').onclick=()=>fetch('/api/missing').then(r=>document.getElementById('netout').textContent='status '+r.status);
-document.getElementById('post').onclick=()=>fetch('/api/echo',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({a:1})}).then(r=>r.json()).then(j=>document.getElementById('netout').textContent='posted '+JSON.stringify(j));
-</script></body></html>
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Bridge test page</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 20px;
+        max-width: 900px;
+      }
+      section {
+        border: 1px solid #ccc;
+        padding: 10px;
+        margin: 10px 0;
+      }
+      #menu {
+        position: relative;
+        display: inline-block;
+      }
+      #menu ul {
+        display: none;
+        position: absolute;
+        background: #eee;
+        padding: 8px;
+        list-style: none;
+        margin: 0;
+      }
+      #menu:hover ul {
+        display: block;
+      }
+      .box {
+        width: 100px;
+        height: 60px;
+        border: 2px solid #333;
+        display: inline-block;
+        margin: 5px;
+        text-align: center;
+        line-height: 60px;
+      }
+      #drop {
+        border: 2px dashed #888;
+        padding: 20px;
+        margin: 5px;
+      }
+      #far {
+        margin-top: 2500px;
+      }
+      #slider {
+        width: 300px;
+      }
+      #log li {
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Bridge test page</h1>
+    <section id="probe">
+      <h2>Probe</h2>
+      <div>webdriver: <span id="wd"></span></div>
+      <div>cdp getter fired: <span id="cdp">no</span></div>
+      <div>visibility: <span id="vis"></span> / hasFocus: <span id="focus"></span></div>
+      <div>
+        events:
+        <ol id="log"></ol>
+      </div>
+    </section>
+    <section id="form">
+      <h2>Form</h2>
+      <form
+        id="f"
+        onsubmit="
+          event.preventDefault();
+          document.getElementById('out').textContent = JSON.stringify(Object.fromEntries(new FormData(this)));
+        "
+      >
+        <label>Name <input name="name" id="name" /></label>
+        <label>Email <input type="email" name="email" id="email" /></label>
+        <label
+          >Country
+          <select name="country" id="country">
+            <option value="">--</option>
+            <option value="br">Brazil</option>
+            <option value="pt">Portugal</option>
+          </select></label
+        >
+        <label><input type="checkbox" name="agree" id="agree" value="yes" /> Agree</label>
+        <label><input type="radio" name="plan" value="free" id="free" /> Free</label>
+        <label><input type="radio" name="plan" value="pro" id="pro" /> Pro</label>
+        <label>Notes <textarea name="notes" id="notes"></textarea></label>
+        <label>Disabled <input id="dis" name="dis" disabled value="x" /></label>
+        <label>Readonly <input id="ro" name="ro" readonly value="y" /></label>
+        <label>Keydown-only <input id="kd" name="kd" placeholder="counts keydown" /></label> <span id="kdcount">0</span>
+        <label>Controlled <input id="ctl" name="ctl" placeholder="reacts to input events" /></label>
+        <span id="ctlval"></span>
+        <button type="submit" id="submit">Submit</button>
+      </form>
+      <pre id="out"></pre>
+    </section>
+    <section>
+      <h2>Shadow DOM</h2>
+      <div id="open-host"></div>
+      <div id="closed-host"></div>
+      <span id="shadow-out"></span>
+    </section>
+    <section>
+      <h2>Iframes</h2>
+      <iframe
+        id="same"
+        srcdoc="<button id='ib' onclick='document.getElementById(&quot;r&quot;).textContent=&quot;iframe clicked&quot;'>Inside iframe</button><span id='r'></span>"
+        width="300"
+        height="60"
+      ></iframe>
+      <iframe id="cross" src="https://example.com" width="300" height="60"></iframe>
+    </section>
+    <section>
+      <h2>Contenteditable</h2>
+      <div id="ce" contenteditable style="border: 1px solid #999; padding: 6px; min-height: 30px">edit me</div>
+    </section>
+    <section>
+      <h2>Hover menu</h2>
+      <div id="menu">
+        <button>Menu</button>
+        <ul>
+          <li><a href="#hovered" id="hoverlink">Hidden link</a></li>
+        </ul>
+      </div>
+      <span id="hoverout"></span>
+    </section>
+    <section>
+      <h2>Drag and drop</h2>
+      <div class="box" id="A" draggable="true">A</div>
+      <div class="box" id="B">B</div>
+      <span id="dndout"></span> <br /><input type="range" id="slider" min="0" max="100" value="0" />
+      <span id="sliderval">0</span>
+    </section>
+    <section>
+      <h2>Upload</h2>
+      <input type="file" id="file" multiple /><span id="fileout"></span>
+      <div>
+        <label>Second file input <input type="file" id="file2" /></label> <span id="file2out"></span>
+      </div>
+      <div id="drop">Drop zone</div>
+      <span id="dropout"></span>
+    </section>
+    <section>
+      <h2>Dynamic</h2>
+      <button id="load">Load items</button>
+      <ul id="items"></ul>
+      <button id="newtab" onclick="window.open('https://example.com', '_blank')">Open new tab</button>
+      <a href="https://example.com" target="_blank" id="blanklink">blank link</a>
+      <div>shortcut: <span id="short"></span></div>
+    </section>
+    <section>
+      <h2>Network</h2>
+      <button id="fetchok">fetch ok</button><button id="fetch404">fetch 404</button><button id="post">post</button
+      ><span id="netout"></span>
+    </section>
+    <section>
+      <h2>Popup-free dialog</h2>
+      <button id="dlg" onclick="document.getElementById('dlgout').textContent = 'dialog would open'">
+        Pseudo dialog</button
+      ><span id="dlgout"></span>
+    </section>
+    <div id="far"><button id="farbtn" onclick="this.textContent = 'far clicked'">Far button</button></div>
+    <script>
+      const log = (e) => {
+        const li = document.createElement('li');
+        li.textContent =
+          e.type +
+          ' ' +
+          (e.target.id || e.target.tagName) +
+          ' trusted=' +
+          e.isTrusted +
+          (e.pointerType ? ' ptr=' + e.pointerType : '') +
+          (e.key ? ' key=' + e.key : '');
+        document.getElementById('log').appendChild(li);
+        console.log('[evt]', li.textContent);
+      };
+      ['click', 'keydown', 'input', 'pointerdown', 'drop'].forEach((t) => document.addEventListener(t, log, true));
+      document.getElementById('wd').textContent = String(navigator.webdriver);
+      document.getElementById('vis').textContent = document.visibilityState;
+      document.getElementById('focus').textContent = document.hasFocus();
+      const trap = {};
+      Object.defineProperty(trap, 'id', {
+        get() {
+          document.getElementById('cdp').textContent = 'YES';
+          return 1;
+        },
+      });
+      console.log('cdp-trap', trap);
+      console.log('page loaded');
+      console.warn('a warning');
+      console.error('an error at load');
+      setTimeout(() => {
+        throw new Error('uncaught boom');
+      }, 300);
+      document.getElementById('kd').addEventListener('keydown', () => {
+        document.getElementById('kdcount').textContent = +document.getElementById('kdcount').textContent + 1;
+      });
+      const ctl = document.getElementById('ctl');
+      ctl.addEventListener('input', (e) => {
+        document.getElementById('ctlval').textContent = 'input:' + e.target.value + ' inputType=' + e.inputType;
+      });
+      const oh = document.getElementById('open-host').attachShadow({ mode: 'open' });
+      oh.innerHTML = '<button id="ob">Open shadow button</button>';
+      oh.querySelector('button').onclick = () =>
+        (document.getElementById('shadow-out').textContent = 'open shadow clicked');
+      const ch = document.getElementById('closed-host').attachShadow({ mode: 'closed' });
+      ch.innerHTML = '<button id="cb">Closed shadow button</button>';
+      ch.querySelector('button').onclick = () =>
+        (document.getElementById('shadow-out').textContent = 'closed shadow clicked');
+      document.getElementById('hoverlink').onclick = (e) => {
+        e.preventDefault();
+        document.getElementById('hoverout').textContent = 'hover link clicked';
+      };
+      const A = document.getElementById('A'),
+        B = document.getElementById('B');
+      A.addEventListener('dragstart', (e) => e.dataTransfer.setData('text', 'A'));
+      B.addEventListener('dragover', (e) => e.preventDefault());
+      B.addEventListener('drop', (e) => {
+        e.preventDefault();
+        document.getElementById('dndout').textContent = 'dropped ' + e.dataTransfer.getData('text') + ' on B';
+      });
+      document.getElementById('slider').oninput = (e) =>
+        (document.getElementById('sliderval').textContent = e.target.value);
+      document.getElementById('file').onchange = (e) =>
+        (document.getElementById('fileout').textContent = [...e.target.files]
+          .map((f) => f.name + ':' + f.size)
+          .join(','));
+      document.getElementById('file2').onchange = (e) =>
+        (document.getElementById('file2out').textContent = [...e.target.files]
+          .map((f) => f.name + ':' + f.size)
+          .join(','));
+      const dz = document.getElementById('drop');
+      dz.ondragover = (e) => e.preventDefault();
+      dz.ondrop = (e) => {
+        e.preventDefault();
+        document.getElementById('dropout').textContent =
+          'dropped ' + [...e.dataTransfer.files].map((f) => f.name + ':' + f.size).join(',');
+      };
+      document.getElementById('load').onclick = () =>
+        setTimeout(() => {
+          for (let i = 1; i <= 5; i++) {
+            const li = document.createElement('li');
+            li.textContent = 'item ' + i;
+            document.getElementById('items').appendChild(li);
+          }
+        }, 1500);
+      document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.key === 'k') {
+          e.preventDefault();
+          document.getElementById('short').textContent = 'ctrl+k fired';
+        }
+      });
+      document.getElementById('fetchok').onclick = () =>
+        fetch('/api/ok')
+          .then((r) => r.json())
+          .then((j) => (document.getElementById('netout').textContent = JSON.stringify(j)));
+      document.getElementById('fetch404').onclick = () =>
+        fetch('/api/missing').then((r) => (document.getElementById('netout').textContent = 'status ' + r.status));
+      document.getElementById('post').onclick = () =>
+        fetch('/api/echo', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ a: 1 }),
+        })
+          .then((r) => r.json())
+          .then((j) => (document.getElementById('netout').textContent = 'posted ' + JSON.stringify(j)));
+    </script>
+  </body>
+</html>

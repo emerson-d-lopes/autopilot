@@ -84,11 +84,24 @@ test('an unrecognised action falls back to the default delay', () => {
 });
 
 test('every entry in the table is accounted for', () => {
-  assert.deepEqual(Object.keys(ACTION_DELAYS).sort(), [
-    'double_click', 'key', 'left_click', 'left_click_drag', 'navigate',
-    'right_click', 'scroll', 'scroll_to', 'screenshot', 'triple_click',
-    'type', 'wait', 'zoom',
-  ].sort());
+  assert.deepEqual(
+    Object.keys(ACTION_DELAYS).sort(),
+    [
+      'double_click',
+      'key',
+      'left_click',
+      'left_click_drag',
+      'navigate',
+      'right_click',
+      'scroll',
+      'scroll_to',
+      'screenshot',
+      'triple_click',
+      'type',
+      'wait',
+      'zoom',
+    ].sort()
+  );
 });
 
 test('click and drag actions are classified for the retroactive marker frame', () => {
@@ -125,8 +138,14 @@ test('a click ring is drawn at the scaled coordinate', () => {
   const ring = drawClickRing(ctx, 100, 200, 0.5);
   assert.equal(ring.x, 50);
   assert.equal(ring.y, 100);
-  assert.ok(calls.some((c) => c[0] === 'arc' && c[1] === 50 && c[2] === 100), 'the ring is centred on the scaled point');
-  assert.ok(calls.some((c) => c[0] === 'stroke'), 'the ring is stroked');
+  assert.ok(
+    calls.some((c) => c[0] === 'arc' && c[1] === 50 && c[2] === 100),
+    'the ring is centred on the scaled point'
+  );
+  assert.ok(
+    calls.some((c) => c[0] === 'stroke'),
+    'the ring is stroked'
+  );
 });
 
 test('a drag path connects the scaled start and end points', () => {
@@ -157,7 +176,7 @@ test('drawActionLabel does nothing for an empty action', () => {
   assert.equal(drawActionLabel(makeCtxStub().ctx, { action: '', canvasWidth: 480 }), null);
 });
 
-test('the progress bar fills to the recording\'s share of the frame cap', () => {
+test("the progress bar fills to the recording's share of the frame cap", () => {
   const { ctx, calls } = makeCtxStub();
   const bar = drawProgressBar(ctx, 9, 10, 480, 270);
   assert.equal(bar.ratio, 1);
@@ -393,18 +412,25 @@ test('a frame is captured with the overlay hidden and puts it back afterwards', 
     sent.map((m) => m.type),
     ['HIDE_FOR_TOOL_USE', 'SHOW_AFTER_TOOL_USE']
   );
-  assert.deepEqual(sent.map((m) => m.tabId), [41, 41]);
+  assert.deepEqual(
+    sent.map((m) => m.tabId),
+    [41, 41]
+  );
 });
 
 test('a capture that throws still restores the overlay', async () => {
   const sent = recordMessages();
   await assert.rejects(
-    () => withOverlayHidden(42, async () => {
-      throw new Error('no frame');
-    }),
+    () =>
+      withOverlayHidden(42, async () => {
+        throw new Error('no frame');
+      }),
     /no frame/
   );
-  assert.deepEqual(sent.map((m) => m.type), ['HIDE_FOR_TOOL_USE', 'SHOW_AFTER_TOOL_USE']);
+  assert.deepEqual(
+    sent.map((m) => m.type),
+    ['HIDE_FOR_TOOL_USE', 'SHOW_AFTER_TOOL_USE']
+  );
 });
 
 test('a page with no content script does not fail the frame', async () => {

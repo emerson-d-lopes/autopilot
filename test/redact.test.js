@@ -35,7 +35,17 @@ test('keys that name a credential are blanked whatever the value looks like', ()
     secretSauce: 'vwx',
   });
   assert.equal(value.username, 'ana');
-  for (const key of ['password', 'apiKey', 'api_key', 'accessKey', 'private_key', 'oauthToken', 'bearer', 'credentials', 'secretSauce']) {
+  for (const key of [
+    'password',
+    'apiKey',
+    'api_key',
+    'accessKey',
+    'private_key',
+    'oauthToken',
+    'bearer',
+    'credentials',
+    'secretSauce',
+  ]) {
     assert.equal(value[key], '[redacted]', key + ' was not redacted');
   }
   assert.ok(warnings.some((w) => w.includes('"password"')));
@@ -106,7 +116,10 @@ test('a 200000-character string of one letter is truncated, never blocked', () =
   assert.notEqual(prepared.value, '[redacted]');
   assert.ok(String(prepared.value).startsWith('xxxx'), 'the real value is still there');
   assert.ok(String(prepared.value).length < 200000);
-  assert.ok(prepared.warnings.some((w) => w.includes('200000')), 'the warning names the full size');
+  assert.ok(
+    prepared.warnings.some((w) => w.includes('200000')),
+    'the warning names the full size'
+  );
 });
 
 test('a 200000-character string of one hex letter is also truncated, not redacted', () => {
@@ -116,7 +129,12 @@ test('a 200000-character string of one hex letter is also truncated, not redacte
 });
 
 test('redaction walks arrays and nested objects', () => {
-  const { value } = redactValue({ users: [{ name: 'a', password: 'p' }, { name: 'b', token: 'ok to keep' }] });
+  const { value } = redactValue({
+    users: [
+      { name: 'a', password: 'p' },
+      { name: 'b', token: 'ok to keep' },
+    ],
+  });
   assert.equal(value.users[0].password, '[redacted]');
   assert.equal(value.users[0].name, 'a');
   assert.equal(value.users[1].token, 'ok to keep', 'token alone is too common a word to blank');
@@ -158,7 +176,10 @@ test('a small value comes back whole', () => {
 });
 
 test('applyCaps redacts and caps a javascript result in place', () => {
-  const { result, warnings } = applyCaps('javascript', { result: { cookie: 'a=1; b=2', page: 'https://x.test/?q=1' }, type: 'object' });
+  const { result, warnings } = applyCaps('javascript', {
+    result: { cookie: 'a=1; b=2', page: 'https://x.test/?q=1' },
+    type: 'object',
+  });
   assert.equal(result.result.cookie, '[redacted]');
   assert.equal(result.result.page, 'https://x.test/?q=1');
   assert.equal(result.type, 'object', 'existing fields survive');
@@ -170,7 +191,10 @@ test('applyCaps redacts and caps a javascript result in place', () => {
 test('network URLs are clipped to 300 characters and total is reported', () => {
   const long = 'https://cdn.example.com/' + 'p'.repeat(600);
   const { result, warnings } = applyCaps('read_network_requests', {
-    requests: [{ url: long, status: 200 }, { url: 'https://a.test/x', status: 404 }],
+    requests: [
+      { url: long, status: 200 },
+      { url: 'https://a.test/x', status: 404 },
+    ],
     total: 500,
     returned: 2,
   });
@@ -186,7 +210,10 @@ test('network URLs are clipped to 300 characters and total is reported', () => {
 test('console messages are clipped to 500 characters and total is reported', () => {
   const long = 'e'.repeat(4000);
   const { result, warnings } = applyCaps('read_console_messages', {
-    entries: [{ level: 'error', text: long }, { level: 'log', text: 'short' }],
+    entries: [
+      { level: 'error', text: long },
+      { level: 'log', text: 'short' },
+    ],
     total: 42,
     returned: 2,
   });
@@ -218,7 +245,11 @@ test('a clipped network read reports the count, the cap and the longest URL', ()
   const long = 'https://cdn.example.com/' + 'p'.repeat(600);
   const longer = 'https://cdn.example.com/' + 'q'.repeat(900);
   const { result, warnings } = applyCaps('read_network_requests', {
-    requests: [{ url: long, status: 200 }, { url: longer, status: 200 }, { url: 'https://a.test/x', status: 404 }],
+    requests: [
+      { url: long, status: 200 },
+      { url: longer, status: 200 },
+      { url: 'https://a.test/x', status: 404 },
+    ],
     total: 3,
     returned: 3,
   });
@@ -247,7 +278,10 @@ test('an unclipped network read still reports how many rows there were', () => {
 test('a clipped console read reports the count, the cap and the longest message', () => {
   const long = 'e'.repeat(4210);
   const { result, warnings } = applyCaps('read_console_messages', {
-    entries: [{ level: 'error', text: long }, { level: 'log', text: 'short' }],
+    entries: [
+      { level: 'error', text: long },
+      { level: 'log', text: 'short' },
+    ],
     total: 9,
     returned: 2,
   });

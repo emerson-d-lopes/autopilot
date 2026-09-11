@@ -1,10 +1,23 @@
 const STORAGE_KEY = 'permissionPolicy';
 
 const DEFAULT_BLOCKED = [
-  '*.chase.com', '*.bankofamerica.com', '*.wellsfargo.com', '*.citi.com', '*.paypal.com',
-  '*.coinbase.com', '*.binance.com', '*.robinhood.com', '*.fidelity.com', '*.schwab.com',
-  '*.vanguard.com', '*.itau.com.br', '*.bb.com.br', '*.nubank.com.br', '*.santander.com.br',
-  '*.bradesco.com.br', '*.caixa.gov.br',
+  '*.chase.com',
+  '*.bankofamerica.com',
+  '*.wellsfargo.com',
+  '*.citi.com',
+  '*.paypal.com',
+  '*.coinbase.com',
+  '*.binance.com',
+  '*.robinhood.com',
+  '*.fidelity.com',
+  '*.schwab.com',
+  '*.vanguard.com',
+  '*.itau.com.br',
+  '*.bb.com.br',
+  '*.nubank.com.br',
+  '*.santander.com.br',
+  '*.bradesco.com.br',
+  '*.caixa.gov.br',
 ];
 
 const DEFAULTS = {
@@ -17,7 +30,11 @@ const DEFAULTS = {
 };
 
 const $ = (id) => document.getElementById(id);
-const lines = (value) => value.split('\n').map((s) => s.trim()).filter(Boolean);
+const lines = (value) =>
+  value
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
 
 async function load() {
   const stored = await chrome.storage.local.get(STORAGE_KEY);

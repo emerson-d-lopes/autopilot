@@ -12,7 +12,15 @@ import { NativeMessaging } from './protocol.js';
 import { socketPathFor, listen } from './ipc.js';
 import { writeEntry, removeEntry } from './registry.js';
 import { detectProfile } from './profile.js';
-import { record as journal, makeEntry, noteEntry, pruneJournal, JOURNAL_DIR, redactionOn, retentionDays } from './journal.js';
+import {
+  record as journal,
+  makeEntry,
+  noteEntry,
+  pruneJournal,
+  JOURNAL_DIR,
+  redactionOn,
+  retentionDays,
+} from './journal.js';
 import { ResponseQueue } from './response-queue.js';
 import { envVar, deprecatedEnvNames } from './env.js';
 
@@ -60,12 +68,15 @@ let generation = 0;
 function noteDropped(dropped) {
   for (const entry of dropped) {
     log('parked response dropped:', entry.reason, 'session', entry.sessionId, 'tool', entry.tool || '?');
-    journal(browser.id, makeEntry({
-      request: { tool: entry.tool || 'unknown', args: {}, clientId: entry.sessionId },
-      response: { error: { message: 'parked response dropped: ' + entry.reason, code: 'host_lost' } },
-      startedAt: entry.parkedAt,
-      finishedAt: Date.now(),
-    }));
+    journal(
+      browser.id,
+      makeEntry({
+        request: { tool: entry.tool || 'unknown', args: {}, clientId: entry.sessionId },
+        response: { error: { message: 'parked response dropped: ' + entry.reason, code: 'host_lost' } },
+        startedAt: entry.parkedAt,
+        finishedAt: Date.now(),
+      })
+    );
   }
 }
 
@@ -99,12 +110,32 @@ chrome.on('message', (message) => {
       // its number keeps both sides on one sequence. A build that does not send
       // one gets a locally incremented value so the field is always present.
       generation = Number.isFinite(message.generation) ? message.generation : generation + 1;
-      log('extension connected:', browser.name, browser.version, 'id', browser.id, 'tools', extensionTools.length, 'generation', generation, 'journal', JOURNAL_DIR);
+      log(
+        'extension connected:',
+        browser.name,
+        browser.version,
+        'id',
+        browser.id,
+        'tools',
+        extensionTools.length,
+        'generation',
+        generation,
+        'journal',
+        JOURNAL_DIR
+      );
       // The pipe name depends on which browser this is, so listening only starts
       // once the extension has said who it is.
       startListening();
       pruneJournalOnce();
-      broadcast({ type: 'browser_status', connected: true, tools: extensionTools, browser, extensionVersion, generation, journal: journalStatus() });
+      broadcast({
+        type: 'browser_status',
+        connected: true,
+        tools: extensionTools,
+        browser,
+        extensionVersion,
+        generation,
+        journal: journalStatus(),
+      });
       return;
 
     case 'pong':
@@ -127,7 +158,10 @@ chrome.on('message', (message) => {
       clearTimeout(entry.timer);
       pending.delete(message.id);
       if (entry.request && message.type === 'tool_response') {
-        journal(browser.id, makeEntry({ request: entry.request, response: message, startedAt: entry.startedAt, finishedAt: Date.now() }));
+        journal(
+          browser.id,
+          makeEntry({ request: entry.request, response: message, startedAt: entry.startedAt, finishedAt: Date.now() })
+        );
       }
       deliver(entry, message);
       return;
@@ -221,7 +255,15 @@ function replayFor(client, sessionId) {
 function onConnection(client) {
   clients.add(client);
   log('mcp client connected, total', clients.size);
-  client.send({ type: 'browser_status', connected: extensionReady, tools: extensionTools, browser, extensionVersion, generation, journal: journalStatus() });
+  client.send({
+    type: 'browser_status',
+    connected: extensionReady,
+    tools: extensionTools,
+    browser,
+    extensionVersion,
+    generation,
+    journal: journalStatus(),
+  });
 
   // The session id only arrives with the first message, so a replay cannot
   // happen before then.
@@ -255,20 +297,20 @@ function onConnection(client) {
       const stale = pending.get(id);
       pending.delete(id);
       if (stale && stale.request) {
-        journal(browser.id, makeEntry({
-          request: stale.request,
-          response: { error: { message: 'no response within ' + REQUEST_TIMEOUT / 1000 + 's' } },
-          startedAt,
-          finishedAt: Date.now(),
-        }));
+        journal(
+          browser.id,
+          makeEntry({
+            request: stale.request,
+            response: { error: { message: 'no response within ' + REQUEST_TIMEOUT / 1000 + 's' } },
+            startedAt,
+            finishedAt: Date.now(),
+          })
+        );
       }
-      deliver(
-        stale || { socket: client, outgoingId: message.id, clientId: message.clientId || null, request: null },
-        {
-          type: message.type === 'tool_request' ? 'tool_response' : message.type,
-          error: { message: 'Browser did not respond within ' + REQUEST_TIMEOUT / 1000 + 's.', kind: 'timeout' },
-        }
-      );
+      deliver(stale || { socket: client, outgoingId: message.id, clientId: message.clientId || null, request: null }, {
+        type: message.type === 'tool_request' ? 'tool_response' : message.type,
+        error: { message: 'Browser did not respond within ' + REQUEST_TIMEOUT / 1000 + 's.', kind: 'timeout' },
+      });
     }, REQUEST_TIMEOUT);
 
     pending.set(id, {

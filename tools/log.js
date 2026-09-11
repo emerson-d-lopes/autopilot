@@ -50,7 +50,9 @@ for (const dir of dirs) {
   for (const browser of readdirSync(dir)) {
     const file = join(dir, browser, date + (json ? '.jsonl' : '.md'));
     if (!existsSync(file)) continue;
-    let lines = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim());
+    let lines = readFileSync(file, 'utf8')
+      .split('\n')
+      .filter((l) => l.trim());
     if (tail) lines = lines.slice(-tail);
     console.log('# ' + browser + '  (' + file + ')');
     console.log(lines.join('\n'));
@@ -64,7 +66,12 @@ for (const dir of dirs) {
         console.log('## Writes');
         for (const entry of writes) {
           console.log(
-            '- ' + entry.at.slice(11, 19) + '  ' + entry.tool.padEnd(9) + '  ' + formatWrite(entry.write) +
+            '- ' +
+              entry.at.slice(11, 19) +
+              '  ' +
+              entry.tool.padEnd(9) +
+              '  ' +
+              formatWrite(entry.write) +
               (entry.callId ? '  id=' + entry.callId : '')
           );
         }

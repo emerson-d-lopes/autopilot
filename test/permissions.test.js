@@ -195,9 +195,15 @@ test('the write allow-list exempts an origin from confirmation', async () => {
 test('a token is spent once and only for the tab, origin and control it names', async () => {
   const token = perms.createConfirmation({ tabId: 5, origin: 'https://example.com', control: 'Send' });
 
-  assert.equal(perms.consumeConfirmation(token, { tabId: 6, origin: 'https://example.com', control: 'Send' }).ok, false);
+  assert.equal(
+    perms.consumeConfirmation(token, { tabId: 6, origin: 'https://example.com', control: 'Send' }).ok,
+    false
+  );
   assert.equal(perms.consumeConfirmation(token, { tabId: 5, origin: 'https://other.com', control: 'Send' }).ok, false);
-  assert.equal(perms.consumeConfirmation(token, { tabId: 5, origin: 'https://example.com', control: 'Delete' }).ok, false);
+  assert.equal(
+    perms.consumeConfirmation(token, { tabId: 5, origin: 'https://example.com', control: 'Delete' }).ok,
+    false
+  );
 
   const spent = perms.consumeConfirmation(token, { tabId: 5, origin: 'https://example.com', control: 'Send' });
   assert.equal(spent.ok, true);
@@ -279,7 +285,11 @@ test('acting on a new origin is a warning in allow mode', async () => {
     assert.equal(second.transition.changed, true);
     assert.match(second.transition.warning, /b\.example/);
     assert.match(second.transition.warning, /a\.example/);
-    assert.equal(perms.lastActedOrigin('t1'), 'https://b.example', 'the new origin becomes what the next call is compared against');
+    assert.equal(
+      perms.lastActedOrigin('t1'),
+      'https://b.example',
+      'the new origin becomes what the next call is compared against'
+    );
     perms.forgetActedOrigin('t1');
   });
 });
@@ -350,12 +360,13 @@ test('a pre-move check still refuses an ungranted origin in ask mode', async () 
     await perms.grant('https://a.example', 'always');
     await perms.checkPermission({ tool: 'computer', url: 'https://a.example/', clientId: 't6' });
     await assert.rejects(
-      () => perms.checkPermission({
-        tool: 'navigate',
-        url: 'https://c.example/',
-        clientId: 't6',
-        noteTransition: false,
-      }),
+      () =>
+        perms.checkPermission({
+          tool: 'navigate',
+          url: 'https://c.example/',
+          clientId: 't6',
+          noteTransition: false,
+        }),
       /grant/
     );
     perms.forgetActedOrigin('t6');
@@ -429,14 +440,15 @@ test('an unanswered confirmation comes back naming the browser, not the renderer
   const { confirmGate } = await import('../extension/src/lib/tools.js');
   await withPolicy({ mode: perms.MODES.CONFIRM, confirmNotifications: true }, async () => {
     await assert.rejects(
-      () => confirmGate({
-        tabId: 1,
-        url: 'https://example.com/thread',
-        control: 'Send',
-        irreversible: true,
-        screenshotId: 'write_1_ab3d',
-        askTimeoutMs: 25,
-      }),
+      () =>
+        confirmGate({
+          tabId: 1,
+          url: 'https://example.com/thread',
+          control: 'Send',
+          irreversible: true,
+          screenshotId: 'write_1_ab3d',
+          askTimeoutMs: 25,
+        }),
       (err) => {
         assert.equal(err.code, 'confirmation_required');
         assert.equal(err.effects, 'none');

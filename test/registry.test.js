@@ -108,10 +108,13 @@ test('a bare domain falls back to a site match', () => {
 
 test('two keys have to match together', () => {
   assert.equal(selectBrowser(ALL, { profile: 'Work', account: 'work@example.com' }, opts).id, 'bwork0001');
-  assert.throws(() => selectBrowser(ALL, { profile: 'Work', account: 'me@gmail.com' }, opts), (err) => {
-    assert.equal(err.error.code, 'browser_unknown');
-    return true;
-  });
+  assert.throws(
+    () => selectBrowser(ALL, { profile: 'Work', account: 'me@gmail.com' }, opts),
+    (err) => {
+      assert.equal(err.error.code, 'browser_unknown');
+      return true;
+    }
+  );
 });
 
 test('a site with two candidates is profile_ambiguous and names both', () => {
@@ -144,25 +147,34 @@ test('the development browser is never chosen by site, but is reachable by id', 
   // dev holds a linkedin session, personal does too. Excluding dev leaves one.
   assert.equal(selectBrowser([personal, dev], { site: 'linkedin.com' }, opts).id, 'bpersonal');
   assert.equal(selectBrowser([dev], { browserId: DEV_ID }, opts).id, DEV_ID);
-  assert.throws(() => selectBrowser([dev], { site: 'linkedin.com' }, opts), (err) => {
-    assert.equal(err.error.code, 'browser_unknown');
-    return true;
-  });
+  assert.throws(
+    () => selectBrowser([dev], { site: 'linkedin.com' }, opts),
+    (err) => {
+      assert.equal(err.error.code, 'browser_unknown');
+      return true;
+    }
+  );
 });
 
 test('an empty selector is browser_unknown rather than a default', () => {
-  assert.throws(() => selectBrowser(ALL, {}, opts), (err) => {
-    assert.equal(err.error.code, 'browser_unknown');
-    return true;
-  });
+  assert.throws(
+    () => selectBrowser(ALL, {}, opts),
+    (err) => {
+      assert.equal(err.error.code, 'browser_unknown');
+      return true;
+    }
+  );
 });
 
 test('two browsers sharing a label are ambiguous', () => {
   const twin = browser({ id: 'btwin0001', label: 'Personal' });
-  assert.throws(() => selectBrowser([personal, twin], { label: 'Personal' }, opts), (err) => {
-    assert.equal(err.error.code, 'profile_ambiguous');
-    return true;
-  });
+  assert.throws(
+    () => selectBrowser([personal, twin], { label: 'Personal' }, opts),
+    (err) => {
+      assert.equal(err.error.code, 'profile_ambiguous');
+      return true;
+    }
+  );
 });
 
 test('parseSelectorString reads the named forms and the bare form', () => {

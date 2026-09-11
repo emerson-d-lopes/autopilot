@@ -80,7 +80,10 @@ async function callTool(mcp, name, args) {
   return {
     isError: response.result.isError === true,
     content,
-    text: content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'),
+    text: content
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
+      .join('\n'),
     image: content.find((b) => b.type === 'image'),
   };
 }

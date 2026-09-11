@@ -146,7 +146,11 @@ test('a detach reported by Chrome clears the attachment so the next call re-atta
   onDetach({ tabId: 6 }, 'target_closed');
   assert.equal(cdp.isAttached(6), false, 'the map no longer claims the tab is attached');
   await cdp.attach(6);
-  assert.equal(calls.filter((c) => c === 'attach').length, 2, 'attach went to Chrome again rather than bumping a refcount');
+  assert.equal(
+    calls.filter((c) => c === 'attach').length,
+    2,
+    'attach went to Chrome again rather than bumping a refcount'
+  );
   await cdp.detachAll();
 });
 
@@ -182,7 +186,9 @@ test('a refused attach names the frames and debugger targets in the tab', async 
   };
   await assert.rejects(
     () => cdp.attach(8),
-    (err) => /Frames: top https:\/\/example\.com/.test(err.message) && /other\* chrome-extension:\/\/qrstuvwxyzabcdef/.test(err.message)
+    (err) =>
+      /Frames: top https:\/\/example\.com/.test(err.message) &&
+      /other\* chrome-extension:\/\/qrstuvwxyzabcdef/.test(err.message)
   );
   assert.equal(cdp.isAttached(8), false);
   delete chrome.webNavigation;
@@ -200,7 +206,11 @@ test('wake sets focus emulation and an active lifecycle state once per attachmen
   await cdp.detachAll();
   await cdp.attach(9);
   await cdp.wake(9);
-  assert.equal(calls.filter((c) => c === 'Emulation.setFocusEmulationEnabled').length, 3, 'a new attachment is woken again');
+  assert.equal(
+    calls.filter((c) => c === 'Emulation.setFocusEmulationEnabled').length,
+    3,
+    'a new attachment is woken again'
+  );
   await cdp.detachAll();
 });
 
@@ -262,7 +272,11 @@ test('a hidden tab falls back to a screencast frame when the renderer capture is
       assert.equal(params.maxHeight, 600);
       chrome.runtime.lastError = null;
       done({});
-      setTimeout(() => listeners.slice().forEach((fn) => fn({ tabId: 12 }, 'Page.screencastFrame', { data: 'FRAME', sessionId: 1 })), 5);
+      setTimeout(
+        () =>
+          listeners.slice().forEach((fn) => fn({ tabId: 12 }, 'Page.screencastFrame', { data: 'FRAME', sessionId: 1 })),
+        5
+      );
       return;
     }
     plainSend(target, method, params, done);
@@ -315,7 +329,13 @@ test('a screencast that produces no frame is retried once after a forced wake', 
       // Everything after the forced wake answers, and two matching frames end
       // the settle loop.
       if (starts > 1) {
-        setTimeout(() => listeners.slice().forEach((fn) => fn({ tabId: 13 }, 'Page.screencastFrame', { data: 'SECOND', sessionId: 1 })), 5);
+        setTimeout(
+          () =>
+            listeners
+              .slice()
+              .forEach((fn) => fn({ tabId: 13 }, 'Page.screencastFrame', { data: 'SECOND', sessionId: 1 })),
+          5
+        );
       }
       return;
     }
@@ -763,7 +783,10 @@ test('500 characters stay inside 1.5 times the measured 0.1.7 duration', () => {
   assert.equal(text.length, 500);
   let worst = 0;
   for (let run = 0; run < 200; run++) {
-    worst = Math.max(worst, cdp.typingDelays(text, 60).reduce((a, b) => a + b, 0));
+    worst = Math.max(
+      worst,
+      cdp.typingDelays(text, 60).reduce((a, b) => a + b, 0)
+    );
   }
   assert.ok(worst < 30911 * 1.5, 'worst of 200 runs was ' + worst + ' ms');
 });
@@ -830,10 +853,22 @@ test('a path has between 3 and 6 points and ends on the target', () => {
 
 test('every point on a path is closer to the target than the one before it', () => {
   const pairs = [
-    [{ x: 0, y: 0 }, { x: 900, y: 500 }],
-    [{ x: 900, y: 500 }, { x: 0, y: 0 }],
-    [{ x: 400, y: 300 }, { x: 410, y: 700 }],
-    [{ x: 12, y: 640 }, { x: 1200, y: 12 }],
+    [
+      { x: 0, y: 0 },
+      { x: 900, y: 500 },
+    ],
+    [
+      { x: 900, y: 500 },
+      { x: 0, y: 0 },
+    ],
+    [
+      { x: 400, y: 300 },
+      { x: 410, y: 700 },
+    ],
+    [
+      { x: 12, y: 640 },
+      { x: 1200, y: 12 },
+    ],
   ];
   for (const [from, to] of pairs) {
     for (let run = 0; run < 100; run++) {
@@ -1032,10 +1067,15 @@ test('a drag sends force on the press and on every move while the button is held
   await cdp.mouseDragDwell(41, [0, 0], [30, 0], 0, {}, { steps: 2, stepDelay: 0, pressDwell: 0, releaseDwell: 0 });
 
   const pressed = calls.find((c) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mousePressed');
-  const moves = calls.filter((c) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mouseMoved' && c.params.buttons === 1);
+  const moves = calls.filter(
+    (c) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mouseMoved' && c.params.buttons === 1
+  );
   assert.equal(pressed.params.force, 0.5);
   assert.ok(moves.length > 0, 'the drag produced at least one held-button move');
-  assert.ok(moves.every((m) => m.params.force === 0.5), 'every held-button move carries force');
+  assert.ok(
+    moves.every((m) => m.params.force === 0.5),
+    'every held-button move carries force'
+  );
   await cdp.detachAll();
 });
 
@@ -1075,7 +1115,10 @@ test('a plain 0, and ctrl held with an unrelated key, are not refused', async ()
   await cdp.attach(46);
   await cdp.pressKey(46, '0');
   await cdp.pressKey(46, 'ctrl+a');
-  assert.ok(calls.some((c) => c.method === 'Input.dispatchKeyEvent'), 'ordinary keys still dispatch');
+  assert.ok(
+    calls.some((c) => c.method === 'Input.dispatchKeyEvent'),
+    'ordinary keys still dispatch'
+  );
   await cdp.detachAll();
 });
 
@@ -1211,7 +1254,10 @@ test('the same original tab is replaced once per cause, not once per call', asyn
     return { oldTabId: tabId, newTabId: 4400, url: 'https://x.test/home' };
   });
 
-  await assert.rejects(() => cdp.attach(50), (err) => err.code === 'tab_replaced');
+  await assert.rejects(
+    () => cdp.attach(50),
+    (err) => err.code === 'tab_replaced'
+  );
   await assert.rejects(
     () => cdp.attach(50),
     (err) => {
@@ -1237,7 +1283,10 @@ test('a replacement refused for a different cause is still replaced once', async
     return { oldTabId: tabId, newTabId: 4500 + asked.length, url: 'https://x.test/home' };
   });
 
-  await assert.rejects(() => cdp.attach(60), (err) => err.code === 'tab_replaced');
+  await assert.rejects(
+    () => cdp.attach(60),
+    (err) => err.code === 'tab_replaced'
+  );
 
   // A second extension, so the refusal on the replacement is not the one that
   // killed the tab it replaced.
@@ -1245,7 +1294,10 @@ test('a replacement refused for a different cause is still replaced once', async
     refusals: 99,
     message: 'Cannot access a chrome-extension://abcdefghijklmnopqrst/ URL of different extension',
   });
-  await assert.rejects(() => cdp.attach(4501), (err) => err.code === 'tab_replaced');
+  await assert.rejects(
+    () => cdp.attach(4501),
+    (err) => err.code === 'tab_replaced'
+  );
 
   assert.deepEqual(asked, [60, 4501], 'a new cause earns one more replacement');
   cdp.setSessionReplacer(null);
@@ -1362,7 +1414,10 @@ test('input dispatch is not tracked, so a missing acknowledgement blocks nothing
     (err) => err.code === 'timeout'
   );
   assert.ok(Date.now() - started < 400, 'it went out and timed out on its own, rather than queueing');
-  assert.ok(calls.some((c) => c.method === 'DOM.getDocument'), 'the command was dispatched');
+  assert.ok(
+    calls.some((c) => c.method === 'DOM.getDocument'),
+    'the command was dispatched'
+  );
   await cdp.detachAll();
 });
 

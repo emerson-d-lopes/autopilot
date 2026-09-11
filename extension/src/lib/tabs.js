@@ -676,13 +676,13 @@ export async function assertTabInSession(clientId, tabId) {
   try {
     tab = await chrome.tabs.get(tabId);
   } catch {
-    throw new Error(
-      'No tab with id ' + tabId + '. It may have been closed. Call tabs_context to list current tabs.'
-    );
+    throw new Error('No tab with id ' + tabId + '. It may have been closed. Call tabs_context to list current tabs.');
   }
   if (groupId === null || tab.groupId !== groupId) {
     throw new Error(
-      'Tab ' + tabId + ' is not in this session\'s tab group. ' +
+      'Tab ' +
+        tabId +
+        " is not in this session's tab group. " +
         'Call tabs_context to list the tabs this session owns, or tabs_create to open one.'
     );
   }
@@ -779,9 +779,7 @@ function noteRecentOpen(tabId, openerTabId, at = Date.now()) {
  * `adopted`, and a caller that finds none is not left holding a stale id.
  */
 export function openedSince(since, now = Date.now()) {
-  return recentOpens
-    .filter((r) => r.at >= since && now - r.at <= RECENT_OPEN_MS)
-    .map((r) => r.tabId);
+  return recentOpens.filter((r) => r.at >= since && now - r.at <= RECENT_OPEN_MS).map((r) => r.tabId);
 }
 
 /** Drops every recorded open. Tests only. */

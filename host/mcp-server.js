@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { statSync, accessSync, constants, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve as resolvePath, join as joinPath } from 'node:path';
 import { tmpdir } from 'node:os';
-import { socketPathFor, connect } from './ipc.js';
+import { connect } from './ipc.js';
 import {
   listBrowsers,
   pickDefault,
@@ -219,7 +219,9 @@ async function resolveBrowser() {
 
   const names = browsers.map((b) => '  ' + b.id + '  ' + describeBrowser(b)).join('\n');
   throw new Error(
-    browsers.length + ' browsers are connected, so this session needs to pick one:\n' + names +
+    browsers.length +
+      ' browsers are connected, so this session needs to pick one:\n' +
+      names +
       '\n\nCall select_browser with one of those ids, or with {profile}, {account} or {site}.'
   );
 }
@@ -454,8 +456,12 @@ async function runFindEscalation({ query, tabId, scope, route, findResult, seman
   const capped = capTreeForModel(treeText, MODEL_TREE_CHAR_CAP);
 
   const prompt =
-    'You are helping find elements on a web page. The user wants to find: "' + query + '"\n\n' +
-    'Here is the accessibility tree of the page:\n' + capped.text + '\n\n' +
+    'You are helping find elements on a web page. The user wants to find: "' +
+    query +
+    '"\n\n' +
+    'Here is the accessibility tree of the page:\n' +
+    capped.text +
+    '\n\n' +
     "Find ALL elements that match the user's query. Return up to 20 most relevant matches, ordered by relevance.\n\n" +
     'Return your findings in this exact format (one line per matching element):\n\n' +
     'FOUND: <total_number_of_matching_elements>\nSHOWING: <number_shown_up_to_20>\n---\n' +
@@ -468,7 +474,10 @@ async function runFindEscalation({ query, tabId, scope, route, findResult, seman
       maxTokens: 800,
     });
   } catch (err) {
-    return { escalated: false, warning: 'the model call failed (' + (err && err.message) + '); returning the local result' };
+    return {
+      escalated: false,
+      warning: 'the model call failed (' + (err && err.message) + '); returning the local result',
+    };
   }
 
   const text = response && response.content && response.content.type === 'text' ? response.content.text : '';
@@ -494,7 +503,9 @@ async function runFindEscalation({ query, tabId, scope, route, findResult, seman
   }
   if (capped.capped) {
     warnings.push(
-      'the tree sent to the model was capped at ' + MODEL_TREE_CHAR_CAP + ' chars' +
+      'the tree sent to the model was capped at ' +
+        MODEL_TREE_CHAR_CAP +
+        ' chars' +
         (capped.droppedOffscreen ? ' (' + capped.droppedOffscreen + ' offscreen line(s) dropped first)' : '')
     );
   }
@@ -526,8 +537,13 @@ function formatTreeResult(result) {
   let body = result.text || '(no matching elements)';
   if (result.truncated) {
     body +=
-      '\n\n[truncated: showing ' + (result.shownNodes ?? '?') + ' of ' + result.nodes + ' nodes, ' +
-      result.totalChars + ' chars total. Narrow with ref_id to read one subtree, or lower depth.]';
+      '\n\n[truncated: showing ' +
+      (result.shownNodes ?? '?') +
+      ' of ' +
+      result.nodes +
+      ' nodes, ' +
+      result.totalChars +
+      ' chars total. Narrow with ref_id to read one subtree, or lower depth.]';
   }
   return [textBlock(header + '\n\n' + body)];
 }
@@ -549,8 +565,14 @@ function clipNote(result, unit, part) {
   parts.push(returned < total ? 'showing ' + returned + ' of ' + total + ' ' + unit : returned + ' ' + unit);
   if (result.clipped) {
     parts.push(
-      result.clipped + ' ' + part + (result.clipped === 1 ? '' : 's') + ' clipped to ' + result.clippedTo +
-        ' characters' + (result.longestClipped ? ', the longest was ' + result.longestClipped : '')
+      result.clipped +
+        ' ' +
+        part +
+        (result.clipped === 1 ? '' : 's') +
+        ' clipped to ' +
+        result.clippedTo +
+        ' characters' +
+        (result.longestClipped ? ', the longest was ' + result.longestClipped : '')
     );
   }
   return '\n\n[' + parts.join(', ') + ']';
@@ -581,7 +603,11 @@ function formatFind(result) {
   if (!result.matches.length) {
     return [
       textBlock(
-        'No elements matched ' + JSON.stringify(result.query) + ' among ' + result.searched + ' searched. ' +
+        'No elements matched ' +
+          JSON.stringify(result.query) +
+          ' among ' +
+          result.searched +
+          ' searched. ' +
           'Try read_page with filter "interactive", or a shorter query.'
       ),
     ];
@@ -596,8 +622,11 @@ function formatFind(result) {
     if (m.source === 'model') parts.push('(model' + (m.reason ? ': ' + m.reason : '') + ')');
     return parts.join(' ');
   });
-  const header = result.matches.length + ' match(es)' +
-    (result.escalatedBecause ? ', from a model call (' + result.escalatedBecause + ')' : '') + ':';
+  const header =
+    result.matches.length +
+    ' match(es)' +
+    (result.escalatedBecause ? ', from a model call (' + result.escalatedBecause + ')' : '') +
+    ':';
   return [textBlock(header + '\n' + lines.join('\n'))];
 }
 
@@ -607,8 +636,17 @@ function formatFind(result) {
  * a long script does not spend tokens confirming that clicks clicked.
  */
 const INLINE_IN_SEQUENCE = new Set([
-  'read_page', 'get_page_text', 'find', 'page_state', 'javascript', 'tabs_context', 'tabs_create', 'wait_for_page',
-  'read_console_messages', 'read_network_requests', 'gif_creator',
+  'read_page',
+  'get_page_text',
+  'find',
+  'page_state',
+  'javascript',
+  'tabs_context',
+  'tabs_create',
+  'wait_for_page',
+  'read_console_messages',
+  'read_network_requests',
+  'gif_creator',
 ]);
 
 function formatSequence(result, { quick = false } = {}) {
@@ -616,13 +654,19 @@ function formatSequence(result, { quick = false } = {}) {
   const summary = [];
 
   for (const step of result.results) {
-    const label = quick && step.lineNo ? 'line ' + step.lineNo + ' ' + step.command : '[' + step.index + '] ' + step.name;
+    const label =
+      quick && step.lineNo ? 'line ' + step.lineNo + ' ' + step.command : '[' + step.index + '] ' + step.name;
     if (!step.ok) {
       summary.push(label + ' FAILED: ' + step.error.message);
       if (step.error.code) {
         summary.push(
-          '  [ok=false code=' + step.error.code + ' effects=' + step.error.effects +
-            ' retryable=' + step.error.retryable + ']'
+          '  [ok=false code=' +
+            step.error.code +
+            ' effects=' +
+            step.error.effects +
+            ' retryable=' +
+            step.error.retryable +
+            ']'
         );
       }
       continue;
@@ -645,7 +689,8 @@ function formatSequence(result, { quick = false } = {}) {
   if (!result.completed) {
     const stopped = result.results[result.results.length - 1];
     summary.push(
-      '\nStopped at ' + (quick && stopped?.lineNo ? 'line ' + stopped.lineNo : 'action ' + result.stoppedAt) +
+      '\nStopped at ' +
+        (quick && stopped?.lineNo ? 'line ' + stopped.lineNo : 'action ' + result.stoppedAt) +
         '. Later actions did not run.'
     );
   }
@@ -659,19 +704,29 @@ function formatGif(result, filename) {
   try {
     mkdirSync(SHOT_DIR, { recursive: true });
     const wanted = filename ? String(filename).replace(/[\\/:*?"<>|]/g, '_') : '';
-    const name = wanted ? (/\.gif$/i.test(wanted) ? wanted : wanted + '.gif') : 'recording-' + new Date().toISOString().replace(/[:.]/g, '-') + '.gif';
+    const name = wanted
+      ? /\.gif$/i.test(wanted)
+        ? wanted
+        : wanted + '.gif'
+      : 'recording-' + new Date().toISOString().replace(/[:.]/g, '-') + '.gif';
     const file = joinPath(SHOT_DIR, name);
     writeFileSync(file, encodeGif(result));
     // recordedMs is the span the recording covered. It is deliberately not
     // called durationMs, which every result carries as the calling tool's own
     // latency and which used to overwrite this number.
-    const span = Number.isFinite(result.recordedMs)
-      ? ' over ' + (result.recordedMs / 1000).toFixed(1) + 's'
-      : '';
+    const span = Number.isFinite(result.recordedMs) ? ' over ' + (result.recordedMs / 1000).toFixed(1) + 's' : '';
     return [
       textBlock(
-        'Recorded ' + result.frames.length + ' frames' + span + ' at ' +
-          result.width + 'x' + result.height + '.\nsaved: ' + file
+        'Recorded ' +
+          result.frames.length +
+          ' frames' +
+          span +
+          ' at ' +
+          result.width +
+          'x' +
+          result.height +
+          '.\nsaved: ' +
+          file
       ),
     ];
   } catch (err) {
@@ -712,21 +767,23 @@ function browserReport(entry, devId) {
   const head = entry.id + (entry.label ? '  ' + entry.label : '') + selectionMark(entry);
   const lines = [head];
   lines.push(
-    '  browser: ' + entry.name + ' ' + entry.version +
-      '  local: ' + isLocal(entry) +
-      '  dev: ' + isDev(entry, devId)
+    '  browser: ' + entry.name + ' ' + entry.version + '  local: ' + isLocal(entry) + '  dev: ' + isDev(entry, devId)
   );
   lines.push(
-    '  profile: ' + (profile.directory || 'unknown') +
+    '  profile: ' +
+      (profile.directory || 'unknown') +
       (profile.name ? ' "' + profile.name + '"' : '') +
-      '  account: ' + (email || 'not signed in')
+      '  account: ' +
+      (email || 'not signed in')
   );
   if (profile.reason) lines.push('  profile detail missing: ' + profile.reason);
   lines.push(
     '  sessions: ' +
       (!entry.sessionsReported
         ? 'not reported (reload the extension so it picks up the cookies permission)'
-        : entry.sessions.length ? entry.sessions.join(', ') : 'none detected')
+        : entry.sessions.length
+          ? entry.sessions.join(', ')
+          : 'none detected')
   );
   return lines.join('\n');
 }
@@ -775,7 +832,9 @@ async function handleBrowserTool(name, args) {
     const enriched = await withSessions(browsers);
     return [
       textBlock(
-        enriched.length + ' connected:\n' + enriched.map((b) => browserReport(b, devId)).join('\n\n') +
+        enriched.length +
+          ' connected:\n' +
+          enriched.map((b) => browserReport(b, devId)).join('\n\n') +
           '\n\nselect_browser takes any of browserId, label, profile, account or site.'
       ),
     ];
@@ -784,7 +843,8 @@ async function handleBrowserTool(name, args) {
   // select_browser and switch_browser are the same operation.
   const selector = {};
   for (const key of ['browserId', 'id', 'label', 'profile', 'account', 'site']) {
-    if (args[key] !== undefined && String(args[key]).trim()) selector[key === 'id' ? 'browserId' : key] = String(args[key]).trim();
+    if (args[key] !== undefined && String(args[key]).trim())
+      selector[key === 'id' ? 'browserId' : key] = String(args[key]).trim();
   }
   if (!Object.keys(selector).length) {
     return [
@@ -899,7 +959,10 @@ function formatResult(toolName, result, args = {}) {
     case 'get_page_text':
       return [
         textBlock(
-          'url: ' + result.url + '\n\n' + (result.text || '(no text)') +
+          'url: ' +
+            result.url +
+            '\n\n' +
+            (result.text || '(no text)') +
             (result.truncated ? '\n\n[truncated: ' + result.totalChars + ' chars total]' : '')
         ),
       ];
@@ -939,8 +1002,14 @@ function formatResult(toolName, result, args = {}) {
     }
     blocks.push(
       textBlock(
-        'screenshot ' + result.image.width + 'x' + result.image.height +
-          ' (~' + result.image.estimatedTokens + ' tokens) id: ' + imageId +
+        'screenshot ' +
+          result.image.width +
+          'x' +
+          result.image.height +
+          ' (~' +
+          result.image.estimatedTokens +
+          ' tokens) id: ' +
+          imageId +
           (result.image.note ? '\n' + result.image.note : '') +
           (result.pageState ? '\nurl: ' + result.pageState.url + '\nscroll: ' + result.pageState.scrollY : '') +
           saved
@@ -964,8 +1033,15 @@ function formatResult(toolName, result, args = {}) {
  * prose would only cost tokens.
  */
 const PROSE_RESULTS = new Set([
-  'read_page', 'get_page_text', 'find', 'read_console_messages', 'read_network_requests',
-  'gif_creator', 'browser_batch', 'quick', 'shortcuts_execute',
+  'read_page',
+  'get_page_text',
+  'find',
+  'read_console_messages',
+  'read_network_requests',
+  'gif_creator',
+  'browser_batch',
+  'quick',
+  'shortcuts_execute',
 ]);
 
 /** True when the contract fields need a line of their own. */
@@ -977,10 +1053,7 @@ function needsContractLine(toolName, result) {
 // Server
 // ---------------------------------------------------------------------------
 
-const server = new Server(
-  { name: 'autopilot', version: '0.2.0' },
-  { capabilities: { tools: {} } }
-);
+const server = new Server({ name: 'autopilot', version: '0.2.0' }, { capabilities: { tools: {} } });
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
@@ -1011,7 +1084,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           formatError(
             toError('bad_request', {
               message:
-                name + ' needs ' + missing.join(' and ') +
+                name +
+                ' needs ' +
+                missing.join(' and ') +
                 '. The call was refused here, so nothing was sent to the browser.',
               hint: 'Add ' + missing.join(' and ') + ' and call again.',
               details: { tool: name, missing },
@@ -1057,7 +1132,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         path = materializeImage(String(args.imageId), args.filename);
         if (!path) {
           return {
-            content: [textBlock('No screenshot with id ' + args.imageId + ' in this session. Ids are printed under each screenshot. Known: ' + ([...capturedImages.keys()].join(', ') || 'none') + '.')],
+            content: [
+              textBlock(
+                'No screenshot with id ' +
+                  args.imageId +
+                  ' in this session. Ids are printed under each screenshot. Known: ' +
+                  ([...capturedImages.keys()].join(', ') || 'none') +
+                  '.'
+              ),
+            ],
             isError: true,
           };
         }

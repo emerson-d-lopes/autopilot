@@ -39,9 +39,25 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // The nineteen codes Phase 1 names, plus the three this track added.
 const PLAN_CODES = [
-  'tab_gone', 'tab_replaced', 'attach_refused', 'attach_recovered', 'renderer_throttled', 'dialog_open',
-  'ref_stale', 'ref_covered', 'element_disabled', 'no_effect', 'nav_failed', 'origin_changed', 'origin_blocked',
-  'confirmation_required', 'host_lost', 'timeout', 'output_truncated', 'browser_unknown', 'profile_ambiguous',
+  'tab_gone',
+  'tab_replaced',
+  'attach_refused',
+  'attach_recovered',
+  'renderer_throttled',
+  'dialog_open',
+  'ref_stale',
+  'ref_covered',
+  'element_disabled',
+  'no_effect',
+  'nav_failed',
+  'origin_changed',
+  'origin_blocked',
+  'confirmation_required',
+  'host_lost',
+  'timeout',
+  'output_truncated',
+  'browser_unknown',
+  'profile_ambiguous',
 ];
 
 test('the catalogue carries every code the plan names', () => {
@@ -82,16 +98,28 @@ test('an unlisted code lands on internal and says which code was asked for', () 
 test('the matcher table maps the messages the extension produces today', () => {
   const cases = [
     ['ref ref_9 is no longer on the page. Re-read the page.', 'ref_stale'],
-    ['Element ref_3 is covered by div.overlay at the point a click would land, so the click would go to that instead.', 'ref_covered'],
+    [
+      'Element ref_3 is covered by div.overlay at the point a click would land, so the click would go to that instead.',
+      'ref_covered',
+    ],
     ['Element ref_4 is disabled, so a click on it does nothing. Enable it first.', 'element_disabled'],
     ['No tab with id 12. It may have been closed. Call tabs_context to list current tabs.', 'tab_gone'],
     ["Tab 12 is not in this session's tab group. Call tabs_context to list the tabs this session owns.", 'tab_foreign'],
-    ['Navigation to https://a.example failed: net::ERR_NAME_NOT_RESOLVED. The tab is showing an error page, not the site.', 'nav_failed'],
+    [
+      'Navigation to https://a.example failed: net::ERR_NAME_NOT_RESOLVED. The tab is showing an error page, not the site.',
+      'nav_failed',
+    ],
     ['Cannot access a chrome-extension:// URL of different extension', 'attach_refused'],
-    ['Cannot read tab 3. Chrome blocks extensions on chrome://, edge://, the Web Store, and other restricted pages.', 'origin_blocked'],
+    [
+      'Cannot read tab 3. Chrome blocks extensions on chrome://, edge://, the Web Store, and other restricted pages.',
+      'origin_blocked',
+    ],
     // Chrome's own wording, seen from read_page on chrome://settings.
     ['Cannot access a chrome:// URL', 'origin_blocked'],
-    ['Cannot access contents of url "chrome://settings/". Extension manifest must request permission to access this host.', 'origin_blocked'],
+    [
+      'Cannot access contents of url "chrome://settings/". Extension manifest must request permission to access this host.',
+      'origin_blocked',
+    ],
     ['Browser did not respond within 120s.', 'timeout'],
     ['Connection to the browser bridge closed.', 'host_lost'],
     ['computer requires an action', 'bad_request'],
@@ -111,7 +139,10 @@ test('a thrown error keeps its message and gains a code', () => {
 });
 
 test('a bridge rejection object maps through its kind', () => {
-  const error = fromThrown({ message: 'Connection to the browser bridge closed.', kind: 'disconnected' }, { id: 'call_1' });
+  const error = fromThrown(
+    { message: 'Connection to the browser bridge closed.', kind: 'disconnected' },
+    { id: 'call_1' }
+  );
   assert.equal(error.code, 'host_lost');
   assert.equal(error.id, 'call_1');
   assert.match(error.cause, /disconnected/);
@@ -134,7 +165,10 @@ test('a read result defaults to effects none, an input result to unknown', () =>
 });
 
 test('wrapResult adds the contract without removing existing fields', () => {
-  const wrapped = wrapResult({ url: 'https://a/', title: 'A', nodes: 12, durationMs: 4 }, { tool: 'read_page', id: 'call_9' });
+  const wrapped = wrapResult(
+    { url: 'https://a/', title: 'A', nodes: 12, durationMs: 4 },
+    { tool: 'read_page', id: 'call_9' }
+  );
   assert.equal(wrapped.ok, true);
   assert.equal(wrapped.effects, 'none');
   assert.deepEqual(wrapped.evidence, {});
@@ -168,7 +202,10 @@ test('wrapResult normalizes a handler that returned nothing', () => {
 });
 
 test('wrapResult passes a failure through with the error shape intact', () => {
-  const wrapped = wrapResult({ ok: false, error: { message: 'ref ref_1 is no longer on the page' } }, { tool: 'computer', id: 'call_5' });
+  const wrapped = wrapResult(
+    { ok: false, error: { message: 'ref ref_1 is no longer on the page' } },
+    { tool: 'computer', id: 'call_5' }
+  );
   assert.equal(wrapped.ok, false);
   assert.equal(wrapped.error.code, 'ref_stale');
   assert.equal(wrapped.error.id, 'call_5');
@@ -196,7 +233,11 @@ test('a read retries up to three attempts on the transient codes', () => {
 test('a read retries on timeout and host_lost even though their effects are unknown', () => {
   // A read cannot have changed anything, so unknown effects do not bar a repeat.
   for (const code of ['timeout', 'host_lost']) {
-    const decision = retryDecision({ tool: 'get_page_text', error: { code, effects: 'none', retryable: true }, attempt: 1 });
+    const decision = retryDecision({
+      tool: 'get_page_text',
+      error: { code, effects: 'none', retryable: true },
+      attempt: 1,
+    });
     assert.equal(decision.retry, true, code);
   }
 });
@@ -218,7 +259,10 @@ test('a timeout the renderer caused is not retried by a read', () => {
 test('a timeout from anywhere else is still retried by a read', () => {
   const slow = { code: 'timeout', effects: 'none', retryable: true, hint: CODES.timeout.hint };
   assert.equal(retryDecision({ tool: 'read_page', error: slow, attempt: 1 }).retry, true);
-  assert.equal(retryDecision({ tool: 'get_page_text', error: { code: 'timeout', effects: 'none' }, attempt: 1 }).retry, true);
+  assert.equal(
+    retryDecision({ tool: 'get_page_text', error: { code: 'timeout', effects: 'none' }, attempt: 1 }).retry,
+    true
+  );
 });
 
 test('isRendererFrozen reads the hint and only on a timeout', () => {
@@ -255,7 +299,12 @@ test('an input never retries when the effects are unknown or applied', () => {
 });
 
 test('a call carrying confirm is never retried', () => {
-  const decision = retryDecision({ tool: 'computer', args: { action: 'left_click', confirm: 'tok_1' }, error: throttled, attempt: 1 });
+  const decision = retryDecision({
+    tool: 'computer',
+    args: { action: 'left_click', confirm: 'tok_1' },
+    error: throttled,
+    attempt: 1,
+  });
   assert.equal(decision.retry, false);
   assert.match(decision.reason, /confirm|irreversible/);
 });
@@ -267,7 +316,10 @@ test('a call flagged irreversible is never retried, read or not', () => {
 
 test('the retry table has a row for reads, one for inputs and one for what is never retried', () => {
   const rows = retryTable();
-  assert.deepEqual(rows.map((r) => r.kind), ['read', 'input', 'never']);
+  assert.deepEqual(
+    rows.map((r) => r.kind),
+    ['read', 'input', 'never']
+  );
   assert.ok(rows[0].tools.includes('read_page'));
   assert.ok(rows[0].tools.includes('computer screenshot'));
   assert.ok(rows[0].on.includes('renderer_throttled'));
@@ -276,7 +328,13 @@ test('the retry table has a row for reads, one for inputs and one for what is ne
 // --- rendering ---------------------------------------------------------------
 
 test('the contract line names ok, effects and the id, and lists warnings', () => {
-  const line = contractLine({ ok: true, effects: 'applied', id: 'call_7', evidence: { mutations: 2 }, warnings: ['a', 'b'] });
+  const line = contractLine({
+    ok: true,
+    effects: 'applied',
+    id: 'call_7',
+    evidence: { mutations: 2 },
+    warnings: ['a', 'b'],
+  });
   assert.match(line, /ok=true/);
   assert.match(line, /effects=applied/);
   assert.match(line, /id=call_7/);
@@ -353,7 +411,14 @@ test('every tool description says what the result looks like', () => {
 // --- the merged catalogue ----------------------------------------------------
 
 test('the codes the three tracks added are in the catalogue, with no duplicates', () => {
-  for (const code of ['batch_invalid', 'element_readonly', 'not_a_form_control', 'tab_foreign', 'bad_request', 'internal']) {
+  for (const code of [
+    'batch_invalid',
+    'element_readonly',
+    'not_a_form_control',
+    'tab_foreign',
+    'bad_request',
+    'internal',
+  ]) {
     assert.ok(CODE_NAMES.includes(code), code + ' is missing');
   }
   // invalid_argument folded into bad_request, unknown_failure into internal.

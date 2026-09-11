@@ -23,6 +23,8 @@ export const COPY = join(ROOT, 'extension', 'src', 'lib', 'errors.js');
 
 if (import.meta.url === 'file:///' + process.argv[1].replace(/\\/g, '/').replace(/^\//, '')) {
   const same = bodyOf(CANONICAL) === bodyOf(COPY);
-  console.log(same ? 'ok   errors.js copy matches host/errors.js' : 'FAIL errors.js copy has drifted from host/errors.js');
+  console.log(
+    same ? 'ok   errors.js copy matches host/errors.js' : 'FAIL errors.js copy has drifted from host/errors.js'
+  );
   if (!same) process.exitCode = 1;
 }

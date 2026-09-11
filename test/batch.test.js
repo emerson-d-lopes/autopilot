@@ -12,7 +12,12 @@ const stub = installChromeStub();
 
 // The service worker registers unload handlers, which node does not have.
 globalThis.self = { addEventListener() {} };
-stub.storage.session = { async get() { return {}; }, async set() {} };
+stub.storage.session = {
+  async get() {
+    return {};
+  },
+  async set() {},
+};
 stub.runtime.onStartup = { addListener() {} };
 stub.runtime.onInstalled = { addListener() {} };
 
@@ -46,7 +51,8 @@ const item = (name, input) => ({ name, input });
 test('an unknown tool anywhere in the batch stops it before the first item runs', async () => {
   queries = 0;
   await assert.rejects(
-    () => background.runBatch([item('tabs_context', {}), item('tabs_context', {}), item('scroll_page', { tabId: 1 })], ctx),
+    () =>
+      background.runBatch([item('tabs_context', {}), item('tabs_context', {}), item('scroll_page', { tabId: 1 })], ctx),
     (err) => {
       assert.equal(err.code, 'batch_invalid');
       assert.equal(err.effects, 'none');
@@ -90,14 +96,8 @@ test('a direct call missing a required argument is refused before it runs', asyn
     },
     'navigate without a url used to drive the tab to https://undefined'
   );
-  await assert.rejects(
-    () => execute('form_input', { tabId: 1, ref: 'ref_1' }, ctx),
-    /form_input needs value/
-  );
-  await assert.rejects(
-    () => execute('computer', { action: 'left_click', ref: 'ref_1' }, ctx),
-    /computer needs tabId/
-  );
+  await assert.rejects(() => execute('form_input', { tabId: 1, ref: 'ref_1' }, ctx), /form_input needs value/);
+  await assert.rejects(() => execute('computer', { action: 'left_click', ref: 'ref_1' }, ctx), /computer needs tabId/);
 });
 
 test('a direct call carrying every required argument is not refused by the check', async () => {
@@ -148,11 +148,14 @@ test('a tab outside the session group fails the whole batch', async () => {
 });
 
 test('an empty batch is refused', async () => {
-  await assert.rejects(() => background.runBatch([], ctx), (err) => {
-    assert.equal(err.code, 'batch_invalid');
-    assert.match(err.message, /non-empty actions array/);
-    return true;
-  });
+  await assert.rejects(
+    () => background.runBatch([], ctx),
+    (err) => {
+      assert.equal(err.code, 'batch_invalid');
+      assert.match(err.message, /non-empty actions array/);
+      return true;
+    }
+  );
 });
 
 test('a valid batch passes validation and runs every item', async () => {
@@ -166,7 +169,10 @@ test('a valid batch passes validation and runs every item', async () => {
 
 test('a tabId created earlier in the same batch is accepted', async () => {
   assert.equal(
-    await background.validateBatch([item('tabs_create', { url: 'https://a.test/' }), item('read_page', { tabId: '$last' })], ctx),
+    await background.validateBatch(
+      [item('tabs_create', { url: 'https://a.test/' }), item('read_page', { tabId: '$last' })],
+      ctx
+    ),
     null
   );
   assert.equal(
@@ -178,7 +184,10 @@ test('a tabId created earlier in the same batch is accepted', async () => {
 
 test('a call written for the other extension is normalized before it is judged', async () => {
   assert.equal(
-    await background.validateBatch([item('javascript_tool', { tabId: 1, action: 'javascript_exec', text: '1+1' })], ctx),
+    await background.validateBatch(
+      [item('javascript_tool', { tabId: 1, action: 'javascript_exec', text: '1+1' })],
+      ctx
+    ),
     null
   );
   const bad = await background.validateBatch([item('javascript_tool', { tabId: 1, action: 'javascript_exec' })], ctx);
@@ -261,10 +270,7 @@ test('a ref an earlier item in the batch is about to create is not pre-validated
 
   assert.equal(
     await background.validateBatch(
-      [
-        item('read_page', { tabId: 1 }),
-        item('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' }),
-      ],
+      [item('read_page', { tabId: 1 }), item('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' })],
       ctx
     ),
     null,
@@ -288,10 +294,7 @@ test('a ref an earlier item in the batch is about to create is not pre-validated
 test('a read_page on another tab does not exempt a stale ref on this one', async () => {
   scriptRefs([]);
   const err = await background.validateBatch(
-    [
-      item('read_page', { tabId: 2 }),
-      item('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' }),
-    ],
+    [item('read_page', { tabId: 2 }), item('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' })],
     { clientId: 'default' }
   );
   // Tab 2 is outside the session, so that check fires first. Reordered, the ref

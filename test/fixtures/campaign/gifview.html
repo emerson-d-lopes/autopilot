@@ -1,48 +1,70 @@
-<!doctype html><html><head><meta charset="utf-8"><title>gif frames</title>
-<style>body{margin:0;background:#fff}canvas{display:block;border-bottom:2px solid #f0f}#n{font:12px monospace}</style>
-</head><body>
-<div id="n">loading</div>
-<div id="out"></div>
-<script>
-const q = new URLSearchParams(location.search);
-const src = q.get('src') || 'rec-on.gif';
-const from = Number(q.get('from') || 0);
-const count = Number(q.get('count') || 2);
-(async () => {
-  const buf = await (await fetch(src)).arrayBuffer();
-  const dec = new ImageDecoder({ data: buf, type: 'image/gif' });
-  await dec.tracks.ready;
-  await dec.completed;
-  const total = dec.tracks.selectedTrack.frameCount;
-  document.getElementById('n').textContent = src + ': ' + total + ' frames, showing ' + from + ' to ' + (from + count - 1);
-  const out = document.getElementById('out');
-  for (let i = from; i < Math.min(total, from + count); i++) {
-    const { image } = await dec.decode({ frameIndex: i });
-    const cv = document.createElement('canvas');
-    cv.width = image.displayWidth;
-    cv.height = image.displayHeight;
-    cv.getContext('2d').drawImage(image, 0, 0);
-    const zoom = Number(q.get('zoom') || 1);
-    if (zoom !== 1) {
-      cv.style.width = image.displayWidth * zoom + 'px';
-      cv.style.imageRendering = 'pixelated';
-    }
-    const pan = q.get('pan');
-    if (pan) {
-      const wrap = document.createElement('div');
-      wrap.style.cssText = 'overflow:hidden;width:960px;height:520px;position:relative';
-      cv.style.position = 'absolute';
-      cv.style.left = '-' + pan.split(',')[0] + 'px';
-      cv.style.top = '-' + pan.split(',')[1] + 'px';
-      wrap.appendChild(cv);
-      out.appendChild(wrap);
-      image.close();
-      continue;
-    }
-    out.appendChild(cv);
-    image.close();
-  }
-  document.title = 'frames ready';
-})().catch((err) => { document.getElementById('n').textContent = 'error: ' + err; document.title = 'error'; });
-</script>
-</body></html>
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>gif frames</title>
+    <style>
+      body {
+        margin: 0;
+        background: #fff;
+      }
+      canvas {
+        display: block;
+        border-bottom: 2px solid #f0f;
+      }
+      #n {
+        font: 12px monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="n">loading</div>
+    <div id="out"></div>
+    <script>
+      const q = new URLSearchParams(location.search);
+      const src = q.get('src') || 'rec-on.gif';
+      const from = Number(q.get('from') || 0);
+      const count = Number(q.get('count') || 2);
+      (async () => {
+        const buf = await (await fetch(src)).arrayBuffer();
+        const dec = new ImageDecoder({ data: buf, type: 'image/gif' });
+        await dec.tracks.ready;
+        await dec.completed;
+        const total = dec.tracks.selectedTrack.frameCount;
+        document.getElementById('n').textContent =
+          src + ': ' + total + ' frames, showing ' + from + ' to ' + (from + count - 1);
+        const out = document.getElementById('out');
+        for (let i = from; i < Math.min(total, from + count); i++) {
+          const { image } = await dec.decode({ frameIndex: i });
+          const cv = document.createElement('canvas');
+          cv.width = image.displayWidth;
+          cv.height = image.displayHeight;
+          cv.getContext('2d').drawImage(image, 0, 0);
+          const zoom = Number(q.get('zoom') || 1);
+          if (zoom !== 1) {
+            cv.style.width = image.displayWidth * zoom + 'px';
+            cv.style.imageRendering = 'pixelated';
+          }
+          const pan = q.get('pan');
+          if (pan) {
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'overflow:hidden;width:960px;height:520px;position:relative';
+            cv.style.position = 'absolute';
+            cv.style.left = '-' + pan.split(',')[0] + 'px';
+            cv.style.top = '-' + pan.split(',')[1] + 'px';
+            wrap.appendChild(cv);
+            out.appendChild(wrap);
+            image.close();
+            continue;
+          }
+          out.appendChild(cv);
+          image.close();
+        }
+        document.title = 'frames ready';
+      })().catch((err) => {
+        document.getElementById('n').textContent = 'error: ' + err;
+        document.title = 'error';
+      });
+    </script>
+  </body>
+</html>

@@ -697,7 +697,8 @@ test('a hidden tab asks the screencast for the target size instead of cropping i
     plain(target, method, params, done);
     if (method === 'Page.startScreencast') {
       setTimeout(
-        () => listeners.slice().forEach((fn) => fn({ tabId: 63 }, 'Page.screencastFrame', { data: 'FRAME', sessionId: 1 })),
+        () =>
+          listeners.slice().forEach((fn) => fn({ tabId: 63 }, 'Page.screencastFrame', { data: 'FRAME', sessionId: 1 })),
         1
       );
     }
@@ -746,7 +747,10 @@ test('a hidden tab whose renderer answers gets the clip and its scale, with no s
   assert.equal(call.params.fromSurface, false, 'read from the renderer, not the compositor surface');
   assert.equal(call.params.quality, 70);
   assert.deepEqual(call.params.clip, { x: 0, y: 640, width: 1600, height: 900, scale: 0.93 });
-  assert.ok(!seen.some((c) => c.method === 'Page.startScreencast'), 'no screencast is opened when the renderer answers');
+  assert.ok(
+    !seen.some((c) => c.method === 'Page.startScreencast'),
+    'no screencast is opened when the renderer answers'
+  );
   cdp.resetRendererCaptureProbe();
   await cdp.detachAll();
 });

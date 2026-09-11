@@ -24,8 +24,24 @@ function findChromeForTesting() {
     for (const candidate of [
       join(CACHE, entry, 'chrome-win64', 'chrome.exe'),
       join(CACHE, entry, 'chrome-linux64', 'chrome'),
-      join(CACHE, entry, 'chrome-mac-x64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing'),
-      join(CACHE, entry, 'chrome-mac-arm64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing'),
+      join(
+        CACHE,
+        entry,
+        'chrome-mac-x64',
+        'Google Chrome for Testing.app',
+        'Contents',
+        'MacOS',
+        'Google Chrome for Testing'
+      ),
+      join(
+        CACHE,
+        entry,
+        'chrome-mac-arm64',
+        'Google Chrome for Testing.app',
+        'Contents',
+        'MacOS',
+        'Google Chrome for Testing'
+      ),
     ]) {
       if (existsSync(candidate)) return candidate;
     }

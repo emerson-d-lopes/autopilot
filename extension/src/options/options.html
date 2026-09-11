@@ -42,31 +42,60 @@
       <h1>Autopilot</h1>
       <span class="version" id="version"></span>
     </div>
-    <p class="lede">What the agent may do in this browser. These checks run inside the extension, so a client cannot bypass them.</p>
+    <p class="lede">
+      What the agent may do in this browser. These checks run inside the extension, so a client cannot bypass them.
+    </p>
 
     <div class="section">
       <h2>Browser label</h2>
-      <p>A name for this browser profile, shown by <code>list_connected_browsers</code> and usable with <code>select_browser</code>. Useful when several profiles are connected at once, since they otherwise differ only by id.</p>
-      <input class="textarea" id="label" type="text" spellcheck="false" placeholder="Work Chrome" style="min-height: 0" />
+      <p>
+        A name for this browser profile, shown by <code>list_connected_browsers</code> and usable with
+        <code>select_browser</code>. Useful when several profiles are connected at once, since they otherwise differ
+        only by id.
+      </p>
+      <input
+        class="textarea"
+        id="label"
+        type="text"
+        spellcheck="false"
+        placeholder="Work Chrome"
+        style="min-height: 0"
+      />
     </div>
 
     <div class="section">
       <h2>Permission mode</h2>
       <label class="choice">
         <input type="radio" name="mode" value="allow" />
-        <span>Allow, with blocklist<span class="desc">Default. Any site works except the blocked hosts below.</span></span>
+        <span
+          >Allow, with blocklist<span class="desc">Default. Any site works except the blocked hosts below.</span></span
+        >
       </label>
       <label class="choice">
         <input type="radio" name="mode" value="ask" />
-        <span>Require a grant per site<span class="desc">Acting on a site needs an entry under Granted sites. Reading and localhost stay allowed.</span></span>
+        <span
+          >Require a grant per site<span class="desc"
+            >Acting on a site needs an entry under Granted sites. Reading and localhost stay allowed.</span
+          ></span
+        >
       </label>
       <label class="choice">
         <input type="radio" name="mode" value="confirm" />
-        <span>Confirm irreversible actions<span class="desc">Allow mode, plus a one-time token before a click on a control named send, post, publish, delete, pay or the like. Sites under Write allow-list are exempt.</span></span>
+        <span
+          >Confirm irreversible actions<span class="desc"
+            >Allow mode, plus a one-time token before a click on a control named send, post, publish, delete, pay or the
+            like. Sites under Write allow-list are exempt.</span
+          ></span
+        >
       </label>
       <label class="choice">
         <input type="radio" name="mode" value="plan" />
-        <span>Declared origins only<span class="desc">A session calls <code>declare_plan</code> with the sites it will use. Anything else is refused, reads included.</span></span>
+        <span
+          >Declared origins only<span class="desc"
+            >A session calls <code>declare_plan</code> with the sites it will use. Anything else is refused, reads
+            included.</span
+          ></span
+        >
       </label>
       <label class="choice">
         <input type="radio" name="mode" value="skip_all_permission_checks" />
@@ -74,33 +103,62 @@
       </label>
       <label class="choice">
         <input type="checkbox" id="confirmNotifications" />
-        <span>Ask in the browser<span class="desc">Off by default. In confirm mode, show a Chrome notification with Allow and Deny and act on the answer. No tab is activated and no window is focused. Without it, confirmation goes through the client.</span></span>
+        <span
+          >Ask in the browser<span class="desc"
+            >Off by default. In confirm mode, show a Chrome notification with Allow and Deny and act on the answer. No
+            tab is activated and no window is focused. Without it, confirmation goes through the client.</span
+          ></span
+        >
       </label>
-      <p class="warn">A confirmation toast appears at the bottom right of the screen over whatever is there, so a click meant for the window underneath can land on Allow and approve an irreversible write. Clicks in the first 1.5 seconds are ignored, an Allow that follows another click within half a second is ignored, and Allow counts once per prompt, which narrows the risk without removing it. Leave this off unless someone is at the machine to answer.</p>
+      <p class="warn">
+        A confirmation toast appears at the bottom right of the screen over whatever is there, so a click meant for the
+        window underneath can land on Allow and approve an irreversible write. Clicks in the first 1.5 seconds are
+        ignored, an Allow that follows another click within half a second is ignored, and Allow counts once per prompt,
+        which narrows the risk without removing it. Leave this off unless someone is at the machine to answer.
+      </p>
     </div>
 
     <div class="section">
       <h2>Write allow-list</h2>
-      <p>One host per line, <code>*.</code> allowed. In confirm mode these sites accept irreversible clicks with no token, for a flow you have decided is routine. The blocklist still wins.</p>
+      <p>
+        One host per line, <code>*.</code> allowed. In confirm mode these sites accept irreversible clicks with no
+        token, for a flow you have decided is routine. The blocklist still wins.
+      </p>
       <textarea class="textarea" id="writeAllowlist" spellcheck="false"></textarea>
     </div>
 
     <div class="section">
       <h2>Console capture</h2>
-      <p>Reading the console needs Chrome's <code>Runtime</code> domain, which is the signal a site checks to tell that the browser is being driven through the DevTools protocol. Nothing else needs it: clicking, typing, <code>javascript</code>, page reads and network capture all work with it off.</p>
+      <p>
+        Reading the console needs Chrome's <code>Runtime</code> domain, which is the signal a site checks to tell that
+        the browser is being driven through the DevTools protocol. Nothing else needs it: clicking, typing,
+        <code>javascript</code>, page reads and network capture all work with it off.
+      </p>
       <label class="choice">
         <input type="radio" name="consoleCapture" value="lazy" />
-        <span>Only while reading<span class="desc">Default. Turned on by the first <code>read_console_messages</code> on a tab and off again by a read that clears the buffer. Messages logged before that first read are lost, and the result says so.</span></span>
+        <span
+          >Only while reading<span class="desc"
+            >Default. Turned on by the first <code>read_console_messages</code> on a tab and off again by a read that
+            clears the buffer. Messages logged before that first read are lost, and the result says so.</span
+          ></span
+        >
       </label>
       <label class="choice">
         <input type="radio" name="consoleCapture" value="always" />
-        <span>From the moment a tab joins<span class="desc">Captures everything since page load, and leaves <code>Runtime</code> enabled for the life of the tab.</span></span>
+        <span
+          >From the moment a tab joins<span class="desc"
+            >Captures everything since page load, and leaves <code>Runtime</code> enabled for the life of the tab.</span
+          ></span
+        >
       </label>
     </div>
 
     <div class="section">
       <h2>Blocked hosts</h2>
-      <p>One host per line. A leading <code>*.</code> matches subdomains. Blocked hosts are refused for reading as well as acting.</p>
+      <p>
+        One host per line. A leading <code>*.</code> matches subdomains. Blocked hosts are refused for reading as well
+        as acting.
+      </p>
       <textarea class="textarea" id="blocked" spellcheck="false"></textarea>
     </div>
 
@@ -112,7 +170,10 @@
 
     <div class="section">
       <h2>Shortcuts</h2>
-      <p>Named quick scripts, one per block. Run them with <code>shortcuts_execute</code>. A block is a first line <code>id | name | description</code>, then the script lines. Blocks are separated by a blank line.</p>
+      <p>
+        Named quick scripts, one per block. Run them with <code>shortcuts_execute</code>. A block is a first line
+        <code>id | name | description</code>, then the script lines. Blocks are separated by a blank line.
+      </p>
       <textarea class="textarea" id="shortcuts" spellcheck="false" style="min-height: 150px"></textarea>
     </div>
 

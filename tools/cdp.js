@@ -95,8 +95,7 @@ export class CdpSession {
   }
 }
 
-const invokedDirectly =
-  process.argv[1] && import.meta.url === 'file:///' + process.argv[1].replace(/\\/g, '/');
+const invokedDirectly = process.argv[1] && import.meta.url === 'file:///' + process.argv[1].replace(/\\/g, '/');
 if (invokedDirectly) {
   const port = Number(process.env.CDP_PORT || 9333);
   const targets = await listTargets(port);

@@ -342,12 +342,26 @@ function scriptBrowser({ openTabs = [11, 12], groupId = 77 } = {}) {
   };
   stub.tabs.get = async (id) => {
     if (!grouped.has(id)) throw new Error('No tab with id ' + id);
-    return { id, url: 'https://a.test/' + id, title: 'tab ' + id, groupId: grouped.get(id), windowId: 1, status: 'complete' };
+    return {
+      id,
+      url: 'https://a.test/' + id,
+      title: 'tab ' + id,
+      groupId: grouped.get(id),
+      windowId: 1,
+      status: 'complete',
+    };
   };
   stub.tabs.query = async ({ groupId: q }) =>
     [...grouped.entries()]
       .filter(([, g]) => g === q)
-      .map(([id, g]) => ({ id, url: 'https://a.test/' + id, title: 'tab ' + id, groupId: g, windowId: 1, status: 'complete' }));
+      .map(([id, g]) => ({
+        id,
+        url: 'https://a.test/' + id,
+        title: 'tab ' + id,
+        groupId: g,
+        windowId: 1,
+        status: 'complete',
+      }));
   stub.tabs.group = async ({ tabIds, groupId: g }) => {
     const target = g === undefined ? groupId : g;
     groupCalls.push({ tabIds: [...tabIds], groupId: g });
@@ -408,7 +422,11 @@ test('a worker restart puts the tabs that still exist back in the session', asyn
 
   const context = await tabs.tabsContext('c1');
   assert.equal(context.tabGroupId, 77);
-  assert.deepEqual(context.tabs.map((t) => t.tabId), [11, 12], 'the session kept its tabs');
+  assert.deepEqual(
+    context.tabs.map((t) => t.tabId),
+    [11, 12],
+    'the session kept its tabs'
+  );
   assert.equal(context.missingTabs, undefined);
 });
 
@@ -435,7 +453,10 @@ test('a worker restart with no extension reload restores from the session area',
   assert.deepEqual(browser.activations, [], 'nothing was activated');
 
   const context = await tabs.tabsContext('c1');
-  assert.deepEqual(context.tabs.map((t) => t.tabId), [11, 12]);
+  assert.deepEqual(
+    context.tabs.map((t) => t.tabId),
+    [11, 12]
+  );
 });
 
 test('the call that wakes the worker waits for the restore before writing the table', async () => {
@@ -499,7 +520,10 @@ test('a tab that did not survive the restart is reported once', async () => {
     first.warnings.some((w) => /tab 12 did not survive the extension restart/.test(w)),
     'warnings: ' + first.warnings.join(' | ')
   );
-  assert.deepEqual(first.tabs.map((t) => t.tabId), [11]);
+  assert.deepEqual(
+    first.tabs.map((t) => t.tabId),
+    [11]
+  );
 
   const second = await tabs.tabsContext('c1');
   assert.equal(second.missingTabs, undefined, 'reported once, not on every listing');
@@ -588,7 +612,11 @@ test('a tabs_context after that restart lists the tabs under their old ids', asy
 
   const context = await tabs.tabsContext('c1');
   assert.equal(context.tabGroupId, 77, 'the group came back');
-  assert.deepEqual(context.tabs.map((t) => t.tabId), [11, 12], 'and the ids the caller is holding');
+  assert.deepEqual(
+    context.tabs.map((t) => t.tabId),
+    [11, 12],
+    'and the ids the caller is holding'
+  );
   assert.equal(context.missingTabs, undefined, 'nothing went away, so nothing is reported missing');
   assert.deepEqual(browser.activations, []);
 });

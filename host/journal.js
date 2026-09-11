@@ -300,7 +300,21 @@ export function formatMarkdown(entry) {
     : 'FAILED ' + entry.error + (entry.code ? ' (' + entry.code + ')' : '');
   const id = entry.callId ? ' id=' + entry.callId : '';
   const write = entry.write ? ' WRITE ' + formatWrite(entry.write) : '';
-  return '- ' + time + ' **' + entry.tool + '**' + where + (args ? ' `' + args + '`' : '') + ' (' + entry.ms + 'ms)' + (outcome ? ' ' + outcome : '') + write + id;
+  return (
+    '- ' +
+    time +
+    ' **' +
+    entry.tool +
+    '**' +
+    where +
+    (args ? ' `' + args + '`' : '') +
+    ' (' +
+    entry.ms +
+    'ms)' +
+    (outcome ? ' ' + outcome : '') +
+    write +
+    id
+  );
 }
 
 function dayStamp(date) {

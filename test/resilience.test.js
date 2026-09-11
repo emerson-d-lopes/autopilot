@@ -92,7 +92,10 @@ async function callTool(mcp, name, args, timeoutMs) {
   const content = response.result.content || [];
   return {
     isError: response.result.isError === true,
-    text: content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'),
+    text: content
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
+      .join('\n'),
   };
 }
 
@@ -116,7 +119,10 @@ function nativeHostPids() {
     ],
     { encoding: 'utf8' }
   );
-  return out.split('\n').map((s) => s.trim()).filter(Boolean);
+  return out
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 function killPid(pid) {

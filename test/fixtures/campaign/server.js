@@ -215,10 +215,26 @@ box.addEventListener('keydown', (e) => {
 // field, a markdown toolbar of buttons around the body, and a Create button.
 // "issue title field" used to answer with twenty toolbar buttons.
 const MARKDOWN_TOOLBAR = [
-  'Heading', 'Bold', 'Italic', 'Quote', 'Code', 'Link', 'Numbered list',
-  'Unordered list', 'Task list', 'Mention', 'Reference', 'Saved replies',
-  'Add heading text', 'Add bold text', 'Add italic text', 'Insert a quote',
-  'Insert code', 'Add a link', 'Attach files', 'Slash commands',
+  'Heading',
+  'Bold',
+  'Italic',
+  'Quote',
+  'Code',
+  'Link',
+  'Numbered list',
+  'Unordered list',
+  'Task list',
+  'Mention',
+  'Reference',
+  'Saved replies',
+  'Add heading text',
+  'Add bold text',
+  'Add italic text',
+  'Insert a quote',
+  'Insert code',
+  'Add a link',
+  'Attach files',
+  'Slash commands',
 ];
 
 const NEWISSUE_BODY = `<!doctype html><html><head><meta charset="utf-8"><title>New issue</title>
@@ -268,7 +284,8 @@ function handler(req, res) {
   const path = req.url.split('?')[0];
 
   if (req.method === 'GET') {
-    if (path === '/api/ok') return send(res, 200, JSON.stringify({ ok: true, t: Date.now() / 1000 }), 'application/json');
+    if (path === '/api/ok')
+      return send(res, 200, JSON.stringify({ ok: true, t: Date.now() / 1000 }), 'application/json');
     if (path === '/api/missing') return send(res, 404, 'not found', 'text/plain');
     if (path === '/slow') return setTimeout(() => send(res, 200, "<h1 id='slow'>slow page</h1>"), 4000);
     if (path === '/big') return send(res, 200, bigTable());
@@ -288,7 +305,7 @@ function handler(req, res) {
   }
 
   if (req.method === 'POST' && path === '/api/echo') {
-    let chunks = [];
+    const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       const body = Buffer.concat(chunks).toString('utf8');

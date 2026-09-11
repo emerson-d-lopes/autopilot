@@ -32,11 +32,26 @@ function windowsTree({ profileArg = '--profile-directory="Profile 2"', userDataA
         ppid: 900,
         name: 'chrome.exe',
         commandLine:
-          '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" ' + profileArg + ' ' + userDataArg + ' --flag-switches-begin',
+          '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" ' +
+          profileArg +
+          ' ' +
+          userDataArg +
+          ' --flag-switches-begin',
       },
     ],
-    [1100, { pid: 1100, ppid: 1000, name: 'cmd.exe', commandLine: 'C:\\WINDOWS\\system32\\cmd.exe /c ""C:\\mcp\\host.cmd""' }],
-    [1200, { pid: 1200, ppid: 1100, name: 'node.exe', commandLine: '"C:\\node\\node.exe" "C:\\mcp\\host\\native-host.js"' }],
+    [
+      1100,
+      {
+        pid: 1100,
+        ppid: 1000,
+        name: 'cmd.exe',
+        commandLine: 'C:\\WINDOWS\\system32\\cmd.exe /c ""C:\\mcp\\host.cmd""',
+      },
+    ],
+    [
+      1200,
+      { pid: 1200, ppid: 1100, name: 'node.exe', commandLine: '"C:\\node\\node.exe" "C:\\mcp\\host\\native-host.js"' },
+    ],
   ]);
 }
 
@@ -260,7 +275,12 @@ test('processTree parses a windows CIM listing and a posix ps listing', async ()
     platform: 'win32',
     run: async () =>
       JSON.stringify([
-        { ProcessId: 1000, ParentProcessId: 900, Name: 'chrome.exe', CommandLine: 'chrome.exe --profile-directory=Default' },
+        {
+          ProcessId: 1000,
+          ParentProcessId: 900,
+          Name: 'chrome.exe',
+          CommandLine: 'chrome.exe --profile-directory=Default',
+        },
         { ProcessId: 1200, ParentProcessId: 1000, Name: 'node.exe', CommandLine: 'node host.js' },
       ]),
   });

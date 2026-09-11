@@ -21,15 +21,23 @@ test('arguments are summarised without bulk', () => {
   assert.ok(args.text.length < 200 && args.text.endsWith('...'));
   assert.deepEqual(args.coordinate, [10, 20]);
   assert.equal(args.paths, '2 item(s)');
-  const batch = journal.summarizeArgs('browser_batch', { actions: [{ name: 'navigate', input: {} }, { name: 'find', input: {} }] });
+  const batch = journal.summarizeArgs('browser_batch', {
+    actions: [
+      { name: 'navigate', input: {} },
+      { name: 'find', input: {} },
+    ],
+  });
   assert.deepEqual(batch.actions, ['navigate', 'find']);
 });
 
 test('results are described, screenshots by size and errors by message', () => {
-  assert.deepEqual(journal.summarizeResult('computer', { result: { image: { width: 100, height: 50, data: 'AAAA' } } }), {
-    ok: true,
-    image: '100x50',
-  });
+  assert.deepEqual(
+    journal.summarizeResult('computer', { result: { image: { width: 100, height: 50, data: 'AAAA' } } }),
+    {
+      ok: true,
+      image: '100x50',
+    }
+  );
   assert.deepEqual(journal.summarizeResult('read_page', { result: { nodes: 42, totalChars: 900, url: 'https://a' } }), {
     ok: true,
     nodes: 42,
@@ -47,7 +55,10 @@ test('results are described, screenshots by size and errors by message', () => {
 test('an entry carries time, tab, page and outcome, and lands in both files', () => {
   const entry = journal.makeEntry({
     request: { tool: 'navigate', args: { tabId: 7, url: 'https://example.com' }, clientId: 'c1' },
-    response: { result: { url: 'https://example.com/', title: 'Example' }, tab: { id: 7, url: 'https://example.com/', title: 'Example' } },
+    response: {
+      result: { url: 'https://example.com/', title: 'Example' },
+      tab: { id: 7, url: 'https://example.com/', title: 'Example' },
+    },
     startedAt: 1000,
     finishedAt: 1250,
   });
@@ -237,7 +248,10 @@ test('a retention of zero prunes nothing', () => {
 });
 
 test('pruning a directory that does not exist is not an error', () => {
-  assert.deepEqual(journal.pruneJournal({ days: 14, dir: join(tmpdir(), 'autopilot-absent-' + process.pid) }).removed, []);
+  assert.deepEqual(
+    journal.pruneJournal({ days: 14, dir: join(tmpdir(), 'autopilot-absent-' + process.pid) }).removed,
+    []
+  );
 });
 
 test('journalSize reports the files on disk', () => {
@@ -355,7 +369,9 @@ test('the write column renders as its own field on the Markdown line', () => {
 });
 
 test('a write with no evidence after it says so rather than leaving the column empty', () => {
-  const entry = journal.makeEntry(writeCall({ control: 'Delete', origin: 'https://example.com', before: null, after: [] }));
+  const entry = journal.makeEntry(
+    writeCall({ control: 'Delete', origin: 'https://example.com', before: null, after: [] })
+  );
   assert.match(journal.formatMarkdown(entry), /before=none after=none/);
 });
 

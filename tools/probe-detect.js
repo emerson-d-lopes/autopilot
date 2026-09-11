@@ -47,7 +47,10 @@ export function asText(value) {
   if (typeof value.text === 'string') return value.text;
   const content = value.content || (value.result && value.result.content);
   if (Array.isArray(content)) {
-    return content.filter((b) => b && b.type === 'text').map((b) => b.text).join('\n');
+    return content
+      .filter((b) => b && b.type === 'text')
+      .map((b) => b.text)
+      .join('\n');
   }
   return JSON.stringify(value);
 }
@@ -147,7 +150,10 @@ function fallbackClient() {
     async call(tool, args) {
       const response = await request('tools/call', { name: tool, arguments: args });
       const result = response.result || {};
-      const text = ((result.content || []).filter((b) => b.type === 'text').map((b) => b.text)).join('\n');
+      const text = (result.content || [])
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n');
       if (result.isError) throw new Error(tool + ' failed: ' + text.split('\n')[0]);
       return text;
     },
@@ -271,8 +277,19 @@ function printCadence(times, cadence) {
   console.log('    intervals: ' + intervals.join(', '));
   const s = stats(intervals);
   console.log(
-    '    n=' + s.n + '  min=' + round(s.min) + '  max=' + round(s.max) +
-      '  mean=' + round(s.mean) + '  sd=' + round(s.sd) + '  cv=' + round(s.cv * 100) + '%'
+    '    n=' +
+      s.n +
+      '  min=' +
+      round(s.min) +
+      '  max=' +
+      round(s.max) +
+      '  mean=' +
+      round(s.mean) +
+      '  sd=' +
+      round(s.sd) +
+      '  cv=' +
+      round(s.cv * 100) +
+      '%'
   );
   console.log('    the campaign measured 0.1.7 at a 62 to 64 ms band, a cv of about 1 percent');
 }
@@ -290,8 +307,15 @@ function printPath(moves, target) {
   for (const move of moves) {
     const distance = Math.round(Math.hypot(move.x - moves[moves.length - 1].x, move.y - moves[moves.length - 1].y));
     console.log(
-      '      (' + move.x + ', ' + move.y + ')  +' + (move.at - first.at) + ' ms  ' +
-        distance + ' px from the last point'
+      '      (' +
+        move.x +
+        ', ' +
+        move.y +
+        ')  +' +
+        (move.at - first.at) +
+        ' ms  ' +
+        distance +
+        ' px from the last point'
     );
   }
   console.log('    the campaign measured 0.1.7 at 2 samples, a straight jump with no path');

@@ -305,9 +305,15 @@ export const MATCHERS = [
   [/Navigation to .* failed|showing an error page, not the site/i, 'nav_failed'],
   // Chrome's own refusals on a chrome:// or Web Store page. It phrases them
   // several ways depending on which API was called.
-  [/Chrome blocks extensions on chrome:\/\/|Cannot access a chrome:\/\/ URL|Cannot access (the )?contents of (the )?url "chrome(-untrusted)?:|restricted (page|URL)|not allowed to act on|permission denied for/i, 'origin_blocked'],
+  [
+    /Chrome blocks extensions on chrome:\/\/|Cannot access a chrome:\/\/ URL|Cannot access (the )?contents of (the )?url "chrome(-untrusted)?:|restricted (page|URL)|not allowed to act on|permission denied for/i,
+    'origin_blocked',
+  ],
   [/origin changed|navigated to another origin|origin is no longer/i, 'origin_changed'],
-  [/Cannot access a chrome-extension|Detached while handling|Inspected target navigated or closed|Not attached to|Debugger is not attached|Another extension \(/i, 'attach_refused'],
+  [
+    /Cannot access a chrome-extension|Detached while handling|Inspected target navigated or closed|Not attached to|Debugger is not attached|Another extension \(/i,
+    'attach_refused',
+  ],
   [/already attached|Cannot attach to this target|debugger is attached by another/i, 'attach_refused'],
   [/javascript dialog|alert\(\) is open|beforeunload|dialog is open/i, 'dialog_open'],
   [/renderer did not respond|renderer was throttled|throttled/i, 'renderer_throttled'],
@@ -315,10 +321,16 @@ export const MATCHERS = [
   [/needs confirmation|confirmation token|confirm(ation)? required/i, 'confirmation_required'],
   [/browsers are connected, so this session needs to pick one|several browsers match/i, 'profile_ambiguous'],
   [/No connected browser matches|Autopilot bridge is not running|no browser$/i, 'browser_unknown'],
-  [/Connection to the browser bridge closed|Failed to reach the browser|extension is not attached to the bridge|Chrome extension is not connected/i, 'host_lost'],
+  [
+    /Connection to the browser bridge closed|Failed to reach the browser|extension is not attached to the bridge|Chrome extension is not connected/i,
+    'host_lost',
+  ],
   [/did not respond within|timed out|timeout/i, 'timeout'],
   [/exceeds maximum allowed tokens|exceeds the .*limit|output was truncated/i, 'output_truncated'],
-  [/\brequires\b|\bmust be\b|needs either|unknown (computer action|tool|key)|No such file|Not a file|is not readable|non-empty/i, 'bad_request'],
+  [
+    /\brequires\b|\bmust be\b|needs either|unknown (computer action|tool|key)|No such file|Not a file|is not readable|non-empty/i,
+    'bad_request',
+  ],
 ];
 
 /** The code that fits a prose error message, or null when nothing matches. */
@@ -545,7 +557,8 @@ export function detailLine(error) {
   if (details.screenshotId) {
     lines.push(
       'to see what this would submit: computer {"action":"screenshot","tabId":<tab>,"imageId":"' +
-        details.screenshotId + '"}'
+        details.screenshotId +
+        '"}'
     );
   }
   return lines.join('\n');
@@ -559,8 +572,14 @@ export function formatError(error) {
   if (details) lines.push(details);
   if (Array.isArray(error.retries) && error.retries.length) lines.push(error.retries.join('\n'));
   lines.push(
-    '[ok=false code=' + error.code + ' effects=' + error.effects + ' retryable=' + error.retryable +
-      (error.id ? ' id=' + error.id : '') + ']'
+    '[ok=false code=' +
+      error.code +
+      ' effects=' +
+      error.effects +
+      ' retryable=' +
+      error.retryable +
+      (error.id ? ' id=' + error.id : '') +
+      ']'
   );
   return lines.join('\n');
 }
@@ -637,7 +656,11 @@ export function retryDecision({ tool, args = {}, error, attempt = 1 }) {
     // freeze out and answers ok, which hides both the timeout and the reload
     // hint from the caller. The hint is the answer, so it is returned.
     if (isRendererFrozen(error)) return no('timeout from a frozen renderer, the reload hint is the answer');
-    return { retry: true, delayMs: BACKOFF_MS[attempt - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1], reason: 'read, ' + error.code };
+    return {
+      retry: true,
+      delayMs: BACKOFF_MS[attempt - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1],
+      reason: 'read, ' + error.code,
+    };
   }
 
   if (error.effects !== 'none') return no('input with effects ' + error.effects);

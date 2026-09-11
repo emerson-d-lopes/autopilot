@@ -84,7 +84,10 @@ function resetFailures() {
 async function callTool(mcp, name, args) {
   const response = await mcp.request('tools/call', { name, arguments: args });
   const content = (response.result && response.result.content) || [];
-  const text = content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+  const text = content
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n');
   const isError = (response.result && response.result.isError) === true;
   if (isError) failures.push(name + ': ' + text.split('\n')[0].slice(0, 120));
   return { isError, text, durationMs: extractDurationMs(text) };
@@ -254,7 +257,9 @@ async function measureTyping(mcp, tabId, base) {
   tree = await callTool(mcp, 'read_page', { tabId, filter: 'interactive' });
   notesRef = refFor(tree.text, /"Notes"/i);
   await callTool(mcp, 'computer', { tabId, action: 'left_click', ref: notesRef });
-  durations.push(...(await callTool(mcp, 'computer', { tabId, action: 'type', text: text500, perKey: true })).durationMs);
+  durations.push(
+    ...(await callTool(mcp, 'computer', { tabId, action: 'type', text: text500, perKey: true })).durationMs
+  );
 
   return { durationMs: durations };
 }
@@ -344,7 +349,13 @@ async function main() {
       runRecord.measurements[m.key] = { label: m.label, wallMs, toolDurationsMs: outcome.durationMs, failures: failed };
       results[m.key].failures = (results[m.key].failures || 0) + failed.length;
       console.log(
-        '  ' + m.key + ' ' + m.label + ': ' + wallMs + ' ms' +
+        '  ' +
+          m.key +
+          ' ' +
+          m.label +
+          ': ' +
+          wallMs +
+          ' ms' +
           (toolSum !== null ? ' (tool total ' + toolSum + ' ms)' : '') +
           (failed.length ? '  [' + failed.length + ' failed: ' + failed[0] + ']' : '')
       );
@@ -362,7 +373,12 @@ async function main() {
   console.log('');
   const col = (v, w) => String(v).padEnd(w);
   console.log(
-    col('measurement', 46) + col('run 1', 10) + col('run 2', 10) + col('run 3', 10) + col('median wall', 14) + 'median tool'
+    col('measurement', 46) +
+      col('run 1', 10) +
+      col('run 2', 10) +
+      col('run 3', 10) +
+      col('median wall', 14) +
+      'median tool'
   );
   for (const m of MEASUREMENTS) {
     const r = results[m.key];
