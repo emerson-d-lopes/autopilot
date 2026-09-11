@@ -7,7 +7,7 @@
 // Pinning the key makes the ID stable across machines and checkouts.
 
 import { generateKeyPairSync, createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -32,8 +32,13 @@ export function extensionIdFromDer(der) {
 }
 
 function loadOrCreateKey() {
-  if (existsSync(KEY_PATH)) {
+  // Read first and generate only on ENOENT, rather than checking for the file
+  // and then writing it: the write uses wx, so a key another process wrote in
+  // between is kept and two concurrent keygens cannot end with different ids.
+  try {
     return readFileSync(KEY_PATH, 'utf8');
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
   }
   const { privateKey } = generateKeyPairSync('rsa', {
     modulusLength: 2048,
@@ -42,8 +47,6 @@ function loadOrCreateKey() {
   });
   mkdirSync(dirname(KEY_PATH), { recursive: true, mode: 0o700 });
   try {
-    // wx: a key written by another process between the check above and this
-    // write is kept, so two concurrent keygens cannot end with different ids.
     writeFileSync(KEY_PATH, privateKey, { mode: 0o600, flag: 'wx' });
   } catch (err) {
     if (err.code === 'EEXIST') return readFileSync(KEY_PATH, 'utf8');
