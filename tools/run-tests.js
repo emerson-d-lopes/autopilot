@@ -42,7 +42,17 @@ const EXCLUDE = [
 ];
 
 const argv = process.argv.slice(2);
-const withCoverage = argv.includes('--coverage');
+// Coverage include/exclude and thresholds arrived in Node 22 (and 20.17+ for
+// some of them, with gaps), so on older majors the flag degrades to a plain run
+// rather than failing on an unknown option.
+const nodeMajor = Number(process.versions.node.split('.')[0]);
+const coverageSupported = nodeMajor >= 22;
+const withCoverage = argv.includes('--coverage') && coverageSupported;
+if (argv.includes('--coverage') && !coverageSupported) {
+  console.log(
+    'note: coverage thresholds need Node 22 or newer, running the suite without coverage on ' + process.version
+  );
+}
 const dash = argv.indexOf('--');
 const extra = dash === -1 ? [] : argv.slice(dash + 1);
 

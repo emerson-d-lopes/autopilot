@@ -51,6 +51,10 @@ jobs:
         # <user-data-dir>/NativeMessagingHosts, so the manifest the installer
         # writes for the system profiles is copied into the test profile too.
         run: |
+          # The installer refuses to run with no browser profile on the machine, and
+          # the runner has none until Chrome for Testing starts, so the Chrome config
+          # directory it looks for is created first.
+          mkdir -p ~/.config/google-chrome
           npm run install-host
           mkdir -p .browsers/profile/NativeMessagingHosts
           cp host/com.autopilot.host.json .browsers/profile/NativeMessagingHosts/
