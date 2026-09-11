@@ -16,6 +16,10 @@ export default [
       'prefer-const': 'error',
       eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-console': 'off',
+      // `let x = []; try { x = read() } catch { return }` is the house pattern for
+      // a read that may throw. The initial value is the documented fallback, so
+      // the rule that flags it as unused is off.
+      'no-useless-assignment': 'off',
     },
   },
   {

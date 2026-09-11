@@ -47,7 +47,7 @@ async function pageCall(tabId, message, { retry = true, label } = {}) {
       /Could not establish connection/i.test(text) ||
       /no response from page agent/i.test(text);
     if (!missing || !retry) {
-      throw new Error(describePageError(text, tabId));
+      throw new Error(describePageError(text, tabId), { cause: err });
     }
     await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_SCRIPTS });
     return pageCall(tabId, message, { retry: false, label });

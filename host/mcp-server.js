@@ -346,7 +346,7 @@ async function callBridge(type, payload, timeout = 120000, callId = null) {
     // bridge, which would send the caller to the wrong fix.
     if (err instanceof ToolFailure) throw err;
     if (err && /needs to pick one/.test(err.message || '')) throw err;
-    throw new Error(NOT_RUNNING);
+    throw new Error(NOT_RUNNING, { cause: err });
   }
   // The status message arrives just after the socket opens, so a call made
   // immediately after connecting (a fresh session, or a reconnect after

@@ -362,7 +362,7 @@ export function readConsole(tabId, { onlyErrors = false, pattern = null, limit =
     try {
       re = new RegExp(pattern, 'i');
     } catch (err) {
-      throw new Error('invalid pattern: ' + err.message);
+      throw new Error('invalid pattern: ' + err.message, { cause: err });
     }
     entries = entries.filter((e) => re.test(e.text || ''));
   }
@@ -416,7 +416,7 @@ export function readNetwork(tabId, { urlPattern = null, limit = 100, clear = fal
     try {
       re = new RegExp(urlPattern, 'i');
     } catch (err) {
-      throw new Error('invalid urlPattern: ' + err.message);
+      throw new Error('invalid urlPattern: ' + err.message, { cause: err });
     }
     requests = requests.filter((r) => re.test(r.url || ''));
   }
