@@ -6,11 +6,12 @@
 // image block plus the line naming the image id and size that a later
 // upload_image or message needs.
 
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { encodeGif } from './gif.js';
 import { stepContractLine } from './errors.js';
 import { SHOT_DIR, rememberImage, saveImage } from './images.js';
+import { ensureDir } from './paths.js';
 
 export function textBlock(text) {
   return { type: 'text', text };
@@ -197,7 +198,7 @@ function formatGif(result, filename) {
     return [textBlock(JSON.stringify(result, null, 2))];
   }
   try {
-    mkdirSync(SHOT_DIR, { recursive: true });
+    ensureDir(SHOT_DIR);
     const wanted = filename ? String(filename).replace(/[\\/:*?"<>|]/g, '_') : '';
     const name = wanted
       ? /\.gif$/i.test(wanted)

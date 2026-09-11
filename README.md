@@ -119,7 +119,7 @@ Facts the user will want stated back:
 - Background mode is a design rule. Tabs open unselected, nothing is activated or focused. Hidden tabs are woken through CDP and captured through a screencast frame.
 - With several Chrome profiles open, each connects as its own browser. `select_browser` takes `browserId`, `label`, `profile`, `account` or `site` (for example `{"site": "linkedin.com"}` picks the profile signed in there), and every page tool accepts an optional `browser` argument for one call. `AUTOPILOT_BROWSER` in the server environment sets the session default.
 - Permission modes live on the extension's options page: allow (default, with a financial-site blocklist), ask per origin, confirm (an irreversible click such as Send, Post, Delete or Pay returns a token and a screenshot of what is about to be submitted, and only the tokened retry performs it), and plan (`declare_plan` once per session). The optional in-browser Allow/Deny toast is off by default.
-- Every result carries `ok`, `effects` (none, applied, unknown), `evidence` and `warnings`, and every error carries a code from `host/errors.js`, a cause, a hint and whether it is retryable. An action journal is written under `%TEMP%\autopilot-logs` and read with `npm run log`. Set `AUTOPILOT_JOURNAL_REDACT=1` to keep typed values out of it.
+- Every result carries `ok`, `effects` (none, applied, unknown), `evidence` and `warnings`, and every error carries a code from `host/errors.js`, a cause, a hint and whether it is retryable. An action journal is written under `%LOCALAPPDATA%\Autopilot\logs` (`~/Library/Application Support/Autopilot/logs` on macOS, `~/.local/state/autopilot/logs` elsewhere) and read with `npm run log`. Set `AUTOPILOT_JOURNAL_REDACT=1` to keep typed values out of it.
 - A site probing for CDP automation can detect the session. The debugger banner is visible on driven tabs.
 
 Documentation in the repository: README.md (usage and tools), CONTRIBUTING.md (working rules, scripts, the live suite), docs/STATUS.md (parity, bugs, known limits), docs/claude-in-chrome-comparison/RESULT.md (the measured comparison against Claude in Chrome and the scorecard).
@@ -194,7 +194,7 @@ It is presentation only. Input is dispatched through CDP and is byte for byte id
 
 ## Action journal
 
-Every call is recorded by the native host, which sees each request and its response. Two files per browser per day under `%TEMP%\autopilot-logs\<browser id>\` (or `AUTOPILOT_LOG_DIR`): `<date>.jsonl` with one object per call, and `<date>.md`, a timeline a person can read:
+Every call is recorded by the native host, which sees each request and its response. Two files per browser per day under `%LOCALAPPDATA%\Autopilot\logs\<browser id>\` (`~/Library/Application Support/Autopilot/logs` on macOS, `~/.local/state/autopilot/logs` elsewhere, or `AUTOPILOT_LOG_DIR`): `<date>.jsonl` with one object per call, and `<date>.md`, a timeline a person can read:
 
 ```
 - 05:48:14 **navigate** tab 12 https://httpbin.org/forms/post `url="https://httpbin.org/forms/post"` (505ms) url=https://httpbin.org/forms/post

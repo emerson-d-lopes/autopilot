@@ -5,14 +5,15 @@
 // browser lost the bind and was invisible, so Chrome and Edge could not both be
 // driven. Discovery goes through this directory instead.
 
-import { mkdirSync, writeFileSync, readdirSync, readFileSync, unlinkSync, existsSync } from 'node:fs';
+import { writeFileSync, readdirSync, readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir, hostname } from 'node:os';
+import { hostname } from 'node:os';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { probe } from './ipc.js';
 import { ToolFailure } from './errors.js';
 import { envVar } from './env.js';
+import { statePath, ensureDir, legacyTempPath } from './paths.js';
 import { registrableDomain } from '../extension/src/lib/sessions.js';
 
 /** Where the development launcher records the id of the browser it started. */
@@ -26,34 +27,53 @@ export function devBrowserId() {
   }
 }
 
-export const REGISTRY_DIR = envVar('REGISTRY_DIR') || join(tmpdir(), 'autopilot-browsers');
+export const REGISTRY_DIR = envVar('REGISTRY_DIR') || statePath('browsers');
+
+/**
+ * Where entries were written before 0.2.3. A host that Chrome started before
+ * the upgrade still writes there, so it is read until the browser restarts.
+ * Nothing is written to it, and it is ignored when the registry is overridden.
+ */
+export const LEGACY_REGISTRY_DIR = envVar('REGISTRY_DIR') ? null : legacyTempPath('browsers');
 
 function entryPath(browserId) {
   return join(REGISTRY_DIR, browserId.replace(/[^\w.-]/g, '_') + '.json');
 }
 
 export function writeEntry(entry) {
-  mkdirSync(REGISTRY_DIR, { recursive: true });
+  ensureDir(REGISTRY_DIR);
   writeFileSync(entryPath(entry.id), JSON.stringify({ ...entry, updatedAt: Date.now() }, null, 2));
 }
 
 export function removeEntry(browserId) {
-  try {
-    unlinkSync(entryPath(browserId));
-  } catch {
-    /* already gone */
+  for (const dir of [REGISTRY_DIR, LEGACY_REGISTRY_DIR]) {
+    if (!dir) continue;
+    try {
+      unlinkSync(join(dir, browserId.replace(/[^\w.-]/g, '_') + '.json'));
+    } catch {
+      /* already gone */
+    }
   }
 }
 
 function readAll() {
-  if (!existsSync(REGISTRY_DIR)) return [];
   const entries = [];
-  for (const file of readdirSync(REGISTRY_DIR)) {
-    if (!file.endsWith('.json')) continue;
-    try {
-      entries.push(JSON.parse(readFileSync(join(REGISTRY_DIR, file), 'utf8')));
-    } catch {
-      /* a half-written entry is skipped rather than fatal */
+  const seen = new Set();
+  for (const dir of [REGISTRY_DIR, LEGACY_REGISTRY_DIR]) {
+    if (!dir || !existsSync(dir)) continue;
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith('.json')) continue;
+      try {
+        const entry = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+        // The same browser can appear in both places across an upgrade. The
+        // current directory wins, since it is read first.
+        if (entry && entry.id && !seen.has(entry.id)) {
+          seen.add(entry.id);
+          entries.push(entry);
+        }
+      } catch {
+        /* a half-written entry is skipped rather than fatal */
+      }
     }
   }
   return entries;

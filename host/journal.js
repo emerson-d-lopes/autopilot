@@ -6,15 +6,19 @@
 // browser per day: a JSONL file for programs and a Markdown timeline for
 // people. Screenshots and other bulky payloads are described, not copied.
 
-import { mkdirSync, appendFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { envVar } from './env.js';
+import { statePath, ensureDir, legacyTempPath } from './paths.js';
 
-export const JOURNAL_DIR = envVar('LOG_DIR') || join(tmpdir(), 'autopilot-logs');
+export const JOURNAL_DIR = envVar('LOG_DIR') || statePath('logs');
 
-/** Where the journal lived before the rename. `npm run log` still reads it. */
-export const LEGACY_JOURNAL_DIR = join(tmpdir(), 'chrome-mcp-logs');
+/**
+ * Where the journal lived before: under the temp directory until 0.2.3, and
+ * under the chrome-mcp name before the rename. `npm run log` still reads both.
+ */
+export const LEGACY_JOURNAL_DIRS = [legacyTempPath('logs'), join(tmpdir(), 'chrome-mcp-logs')];
 
 const MAX_STRING = 160;
 
@@ -407,7 +411,7 @@ const started = new Set();
 export function record(browserId, entry) {
   try {
     const paths = journalPaths(browserId, new Date(entry.at));
-    mkdirSync(paths.dir, { recursive: true });
+    ensureDir(paths.dir);
     appendFileSync(paths.jsonl, JSON.stringify(entry) + '\n');
     if (!started.has(paths.md)) {
       started.add(paths.md);
