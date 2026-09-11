@@ -48,6 +48,18 @@ On Linux, Chrome reads native messaging manifests from `<user-data-dir>/NativeMe
 
 The live workflow is not a required check. It runs nightly, on demand, and on pull requests that touch `extension/` or `host/`. A red live run on a pull request is worth reading before merging, because the unit suite cannot see Chrome's own behaviour.
 
+## Working against a real browser
+
+Rules that came out of the build, each one from a bug or a lost hour:
+
+- **Test against reality.** Every bug in [docs/STATUS.md](docs/STATUS.md) was found by running something. When a change claims to work, say what was run. When something is untested, say so.
+- **Do not run the full suite as a gate while iterating.** It takes about five minutes with a browser up. Run the file being touched, then verify the behaviour by driving the browser through `tools/mcp-client.js`.
+- **Your own Chrome runs whatever build was last reloaded there.** After editing extension code, reload it at `chrome://extensions` and confirm with `npm run doctor`, which prints the running version. The development browser from `npm run browser` clears the compiled-script cache on launch, so a relaunch is enough there.
+- **The agent works in the background.** Tabs open unselected in the user's current window, and nothing activates a tab or focuses a window. Hidden tabs are woken through CDP and captured through the screencast path. A change that brings a tab forward is a bug.
+- **The development browser window is easy to close by accident.** It opens on the desktop. When it disappears, relaunch it with `npm run browser`. `.browsers/dev-browser-id` records which registry entry is the development browser so the suites prefer it.
+- **Patching source through a shell one-liner eats backslashes.** `node -e "..."` from an agent shell has stripped `\b` and `\S` from regexes, and the code still parsed. Edit files with an editor or a heredoc, and read the line back.
+- **`chrome.runtime.reload()` disables an unpacked extension on Chrome for Testing.** Restart the browser instead. A pending timer does not keep an MV3 service worker alive, and a connected native messaging port does, which is why the bridge stays up while a session exists.
+
 ## Rules that CI enforces
 
 - **Bump the extension version on every change under `extension/`.** Chrome caches the compiled service worker module graph per version, so a change that ships without a bump can run stale code on a machine that already had the previous version loaded. The `version-bump` job fails the pull request otherwise. Keep `package.json` at the same version.

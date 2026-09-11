@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/emerson-d-lopes/autopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/emerson-d-lopes/autopilot/actions/workflows/ci.yml) [![Live browser suite](https://github.com/emerson-d-lopes/autopilot/actions/workflows/live.yml/badge.svg)](https://github.com/emerson-d-lopes/autopilot/actions/workflows/live.yml) [![CodeQL](https://github.com/emerson-d-lopes/autopilot/actions/workflows/codeql.yml/badge.svg)](https://github.com/emerson-d-lopes/autopilot/actions/workflows/codeql.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-An MCP server that drives your real Chrome through a Manifest V3 extension and the DevTools Protocol. It works in the background, in its own tab group, and its popup shows what it is doing. Built to match the capability set documented in [SPEC.md](SPEC.md).
+An MCP server that drives your real Chrome through a Manifest V3 extension and the DevTools Protocol. It works in the background, in its own tab group, and its popup shows what it is doing. Built to match the capability set documented in [docs/claude-in-chrome-comparison/SPEC.md](docs/claude-in-chrome-comparison/SPEC.md).
 
 It works against the browser you are already signed into, so it can act on Gmail, Notion, an internal dashboard, or a localhost dev server without any API credentials.
 
@@ -122,7 +122,7 @@ Facts the user will want stated back:
 - Every result carries `ok`, `effects` (none, applied, unknown), `evidence` and `warnings`, and every error carries a code from `host/errors.js`, a cause, a hint and whether it is retryable. An action journal is written under `%TEMP%\autopilot-logs` and read with `npm run log`. Set `AUTOPILOT_JOURNAL_REDACT=1` to keep typed values out of it.
 - A site probing for CDP automation can detect the session. The debugger banner is visible on driven tabs.
 
-Documentation in the repository: README.md (usage and tools), STATUS.md (state, bugs, verification history), HANDOFF.md (working rules), docs/claude-in-chrome-comparison/RESULT.md (the measured comparison against Claude in Chrome and the scorecard).
+Documentation in the repository: README.md (usage and tools), CONTRIBUTING.md (working rules, scripts, the live suite), docs/STATUS.md (parity, bugs, known limits), docs/claude-in-chrome-comparison/RESULT.md (the measured comparison against Claude in Chrome and the scorecard).
 ````
 
 ## Tools
@@ -268,7 +268,7 @@ The recovery suite proves the parts that only fail over time: a session survives
 
 ## Status
 
-[STATUS.md](STATUS.md) has the full picture: parity against Claude Code tool by tool, what is and is not tested, the bugs found during the build, and the browser behaviours that shape the implementation. [COMPARISON.md](COMPARISON.md) sets the project against Claude in Chrome, Playwright MCP, Chrome DevTools MCP and Browser MCP, feature by feature and with measured call latencies.
+[docs/ROADMAP.md](docs/ROADMAP.md) lists the planned refactors, test work and release decisions. [docs/STATUS.md](docs/STATUS.md) has the full picture: parity against Claude Code tool by tool, what is and is not tested, the bugs found during the build, and the browser behaviours that shape the implementation. [docs/COMPARISON.md](docs/COMPARISON.md) sets the project against Claude in Chrome, Playwright MCP, Chrome DevTools MCP and Browser MCP, feature by feature and with measured call latencies.
 
 ## Known limits
 

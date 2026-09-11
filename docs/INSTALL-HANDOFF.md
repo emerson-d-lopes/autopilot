@@ -2,7 +2,7 @@ Install and connect the Autopilot MCP server on this machine. Autopilot drives t
 
 Do these steps in order and stop at the first failure, quoting the output.
 
-1. Clone or update the repository to `C:\Users\<user>\workspace\autopilot` (any path works, but every later step uses the path you chose). Run `npm install` there. Node 20 or newer is required, and on this machine Node is managed by fnm, so run the commands from a shell where `node --version` answers.
+1. Clone or update the repository to `C:\Users\<user>\workspace\autopilot` (any path works, but every later step uses the path you chose). Run `npm install` there. Node 22 or newer is required, and on this machine Node is managed by fnm, so run the commands from a shell where `node --version` answers.
 
 2. Register the native messaging host: `npm run install-host`. It writes `host\com.autopilot.host.json`, rewrites `host\native-host.bat` with the real path to the node binary, registers the host with Chrome and Edge (and Brave and Vivaldi when installed), and removes any old `com.chromemcp.host` registration from an earlier name of this project. Read its output. Do not run `npm run keygen`: the extension key is committed and pins the id `giagijohigincdlpkfolgcljkhmjdiaa`, which the host registration expects.
 
@@ -22,4 +22,4 @@ Facts the user will want stated back:
 - Every result carries `ok`, `effects` (none, applied, unknown), `evidence` and `warnings`, and every error carries a code from `host/errors.js`, a cause, a hint and whether it is retryable. An action journal is written under `%TEMP%\autopilot-logs` and read with `npm run log`. Set `AUTOPILOT_JOURNAL_REDACT=1` to keep typed values out of it.
 - A site probing for CDP automation can detect the session. The debugger banner is visible on driven tabs.
 
-Documentation in the repository: README.md (usage and tools), STATUS.md (state, bugs, verification history), HANDOFF.md (working rules), docs/claude-in-chrome-comparison/RESULT.md (the measured comparison against Claude in Chrome and the scorecard).
+Documentation in the repository: README.md (usage and tools), CONTRIBUTING.md (working rules, scripts, the live suite), docs/STATUS.md (parity, bugs, known limits), docs/claude-in-chrome-comparison/RESULT.md (the measured comparison against Claude in Chrome and the scorecard).
