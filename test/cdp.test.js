@@ -966,7 +966,11 @@ test('the path rides inside the hover gap instead of adding to it', async () => 
 
   const asked = events.waits.reduce((a, b) => a + b, 0);
   assert.ok(events.waits.length > 1, 'the wait is split across the path, not taken in one block');
-  assert.equal(asked, 100, 'and the slices add up to the gap that was already being spent');
+  // Each slice pays for its own dispatch out of the gap, so the sleeps add up
+  // to the gap minus whatever the dispatches took. On a quiet machine that is
+  // 100, on a loaded CI runner a few milliseconds less. Never more.
+  assert.ok(asked <= 100, 'the slices never add to the gap, asked ' + asked);
+  assert.ok(asked >= 80, 'and they cover most of it, asked ' + asked);
   await cdp.detachAll();
 });
 
