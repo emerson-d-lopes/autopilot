@@ -6,11 +6,10 @@ What is planned for the code base itself, as opposed to the tool set. Each item 
 
 The three largest modules grew by accretion during the build. Each already has section headers marking its seams, so the splits below move existing sections into files without changing behaviour. Every split runs the live suite before and after, and a split that needs a test assertion changed is a behaviour change and goes back to the drawing board.
 
-1. **Extract result formatting from `host/mcp-server.js`.** The "Result formatting" section (about 500 lines) is pure functions from a tool result to MCP content blocks. It becomes `host/format.js` with unit tests of its own, which the e2e suite cannot give it today because it only sees the formatted output.
-2. **Split `extension/src/lib/tools.js` along its headers.** Input verification, write actions, rich editors, and window size each become a module. `tools.js` keeps the handler table and the shared `gate` and `pageCall` helpers.
-3. **Split `extension/src/lib/cdp.js` into input, capture, and attach.** Keyboard and pointer dispatch, the screencast and screenshot path, and the attach and recovery ladder are three concerns with different failure modes. The attach ladder carries the most state and moves last.
-4. **Give `extension/src/content/agent.js` top-level functions.** It is one message handler of 2400 lines with no exported functions, which is why coverage of it is reported through `page-harness.js` only. The first step is naming the handlers so the next step can be planned.
-5. **Inject the module-level state in `tabs.js` and `sessions.js`.** Session groups and per-tab state live in module maps, so tests reset them through the chrome stub. A factory that takes storage would let each test own its state.
+1. **Split `extension/src/lib/tools.js` along its headers.** Input verification, write actions, rich editors, and window size each become a module. `tools.js` keeps the handler table and the shared `gate` and `pageCall` helpers.
+2. **Split `extension/src/lib/cdp.js` into input, capture, and attach.** Keyboard and pointer dispatch, the screencast and screenshot path, and the attach and recovery ladder are three concerns with different failure modes. The attach ladder carries the most state and moves last.
+3. **Give `extension/src/content/agent.js` top-level functions.** It is one message handler of 2400 lines with no exported functions, which is why coverage of it is reported through `page-harness.js` only. The first step is naming the handlers so the next step can be planned.
+4. **Inject the module-level state in `tabs.js` and `sessions.js`.** Session groups and per-tab state live in module maps, so tests reset them through the chrome stub. A factory that takes storage would let each test own its state.
 
 ## Tests
 
