@@ -23,14 +23,16 @@ import {
 } from './journal.js';
 import { ResponseQueue } from './response-queue.js';
 import { envVar, deprecatedEnvNames } from './env.js';
+import { stateRoot, ensureDir } from './paths.js';
 
-const LOG_PATH = path.join(os.tmpdir(), 'autopilot-host.log');
+const LOG_PATH = path.join(stateRoot(), 'host.log');
 const PING_INTERVAL = 20000;
 const REQUEST_TIMEOUT = 120000;
 
 function log(...args) {
   const line = '[' + new Date().toISOString() + '] ' + args.join(' ') + '\n';
   try {
+    ensureDir(stateRoot());
     fs.appendFileSync(LOG_PATH, line);
   } catch {
     /* logging must never take the host down */

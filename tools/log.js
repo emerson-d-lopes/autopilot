@@ -8,7 +8,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { JOURNAL_DIR, LEGACY_JOURNAL_DIR, formatWrite } from '../host/journal.js';
+import { JOURNAL_DIR, LEGACY_JOURNAL_DIRS, formatWrite } from '../host/journal.js';
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -19,9 +19,10 @@ const tail = flag('--tail') ? Number(flag('--tail')) : null;
 const date = flag('--date') || new Date().toISOString().slice(0, 10);
 const json = args.includes('--json');
 
-// The journal moved from chrome-mcp-logs to autopilot-logs with the rename, so
-// the old directory is still read and anything found there is still printed.
-const dirs = [...new Set([JOURNAL_DIR, LEGACY_JOURNAL_DIR])].filter((dir) => existsSync(dir));
+// The journal moved out of the temp directory in 0.2.3 and was renamed from
+// chrome-mcp-logs before that, so the old directories are still read and
+// anything found there is still printed.
+const dirs = [...new Set([JOURNAL_DIR, ...LEGACY_JOURNAL_DIRS])].filter((dir) => existsSync(dir));
 
 if (!dirs.length) {
   console.log('No journal yet at ' + JOURNAL_DIR + '. It is written as tools run.');

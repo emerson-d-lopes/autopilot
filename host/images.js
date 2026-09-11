@@ -5,12 +5,12 @@
 // id so upload_image can attach one later, and the paths a caller hands to
 // file_upload, checked before they reach the browser.
 
-import { statSync, accessSync, constants, writeFileSync, mkdirSync } from 'node:fs';
+import { statSync, accessSync, constants, writeFileSync } from 'node:fs';
 import { resolve as resolvePath, join as joinPath } from 'node:path';
-import { tmpdir } from 'node:os';
 import { envVar } from './env.js';
+import { statePath, ensureDir } from './paths.js';
 
-export const SHOT_DIR = envVar('SCREENSHOT_DIR') || joinPath(tmpdir(), 'autopilot-screenshots');
+export const SHOT_DIR = envVar('SCREENSHOT_DIR') || statePath('screenshots');
 
 let lastImagePath = null;
 
@@ -57,7 +57,7 @@ export function normalizeUploadFilename(name, fallback) {
 export function materializeImage(id, filename) {
   const image = capturedImages.get(id);
   if (!image) return null;
-  mkdirSync(SHOT_DIR, { recursive: true });
+  ensureDir(SHOT_DIR);
   const ext = image.mediaType === 'image/jpeg' ? '.jpg' : '.png';
   const base = normalizeUploadFilename(filename, id + ext).replace(/[:*?"<>|]/g, '_');
   const file = joinPath(SHOT_DIR, /\.(png|jpe?g)$/i.test(base) ? base : base + ext);
@@ -72,7 +72,7 @@ export function lastSavedImage() {
 
 /** Writes a captured image to disk and returns its path. */
 export function saveImage(image) {
-  mkdirSync(SHOT_DIR, { recursive: true });
+  ensureDir(SHOT_DIR);
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const file = joinPath(SHOT_DIR, 'shot-' + stamp + (image.mediaType === 'image/jpeg' ? '.jpg' : '.png'));
   writeFileSync(file, Buffer.from(image.data, 'base64'));
