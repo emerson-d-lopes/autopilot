@@ -38,7 +38,7 @@ jobs:
 
       - name: Cache Chrome for Testing
         id: chrome-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .browsers/chrome
           key: chrome-for-testing-${{ runner.os }}-stable-v1
