@@ -502,7 +502,10 @@
   function associatedLabel(el) {
     if (el.id) {
       const root = el.getRootNode();
-      const escaped = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(el.id) : el.id.replace(/"/g, '\\"');
+      const escaped =
+        typeof CSS !== 'undefined' && CSS.escape
+          ? CSS.escape(el.id)
+          : el.id.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       const label = root.querySelector && root.querySelector('label[for="' + escaped + '"]');
       if (label) return label;
     }
