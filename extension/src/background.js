@@ -647,6 +647,11 @@ async function handleMessage(message) {
         return;
       }
 
+      // The label the host stamps on every call names this session's tab
+      // group, so the group says what the session is working on. A no-op after
+      // the first call, which is the one that sets it.
+      if (message.label) await tabsLib.setSessionLabel(ctx.clientId, message.label).catch(() => {});
+
       // The page a call acted on, for the host's action journal. Read after
       // the call so a navigation is reported by where it landed.
       const tabMeta = async (tabId) => {

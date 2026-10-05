@@ -6,12 +6,19 @@
 
 import * as cdp from './cdp.js';
 
-const GROUP_TITLE = 'Autopilot';
+const DEFAULT_GROUP_TITLE = 'Autopilot';
 const STORAGE_KEY = 'tabGroups';
+const LABELS_KEY = 'sessionLabels';
 const SESSION_TABLE_KEY = 'sessionTable';
+
+/** Longest label kept. A group title is one chip in the tab strip, so it truncates anyway. */
+const MAX_LABEL_LENGTH = 40;
 
 /** @type {Map<string, number>} clientId -> tabGroupId */
 const sessionGroups = new Map();
+
+/** @type {Map<string, string>} clientId -> what the session is working on, shown in the group title */
+const sessionLabels = new Map();
 
 // ---------------------------------------------------------------------------
 // The session table, so a worker restart does not cost the session
@@ -236,7 +243,7 @@ async function reviveEntry(clientId, entry) {
     try {
       if (groupId === null) {
         groupId = await chrome.tabs.group({ tabIds: alive });
-        await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'purple' }).catch(() => {});
+        await chrome.tabGroups.update(groupId, { title: titleWithMark(clientId, ''), color: 'purple' }).catch(() => {});
       } else {
         const inGroup = new Set((await chrome.tabs.query({ groupId }).catch(() => [])).map((t) => t.id));
         const strays = alive.filter((id) => !inGroup.has(id));
@@ -312,6 +319,7 @@ export function resetSessionTable() {
   sessionTable.clear();
   goneTabs.clear();
   sessionGroups.clear();
+  sessionLabels.clear();
   restorePromise = null;
   cachedBrowserId = null;
   persistedSnapshot = null;
@@ -319,16 +327,23 @@ export function resetSessionTable() {
 }
 
 async function loadGroups() {
-  const stored = await chrome.storage.local.get(STORAGE_KEY);
+  const stored = await chrome.storage.local.get([STORAGE_KEY, LABELS_KEY]);
   const map = stored[STORAGE_KEY] || {};
   for (const [clientId, groupId] of Object.entries(map)) {
     if (!sessionGroups.has(clientId)) sessionGroups.set(clientId, groupId);
+  }
+  const labels = stored[LABELS_KEY] || {};
+  for (const [clientId, label] of Object.entries(labels)) {
+    if (!sessionLabels.has(clientId)) sessionLabels.set(clientId, label);
   }
   return sessionGroups;
 }
 
 async function persistGroups() {
-  await chrome.storage.local.set({ [STORAGE_KEY]: Object.fromEntries(sessionGroups) });
+  await chrome.storage.local.set({
+    [STORAGE_KEY]: Object.fromEntries(sessionGroups),
+    [LABELS_KEY]: Object.fromEntries(sessionLabels),
+  });
 }
 
 async function groupExists(groupId) {
@@ -365,23 +380,75 @@ const STATUS = {
   error: { mark: '\u274C', color: 'red' },
   idle: { mark: '', color: 'purple' },
 };
+
+/** The marks, so a title can be read back without guessing which leading token is one. */
+const MARKS = new Set(
+  Object.values(STATUS)
+    .map((s) => s.mark)
+    .filter(Boolean)
+);
+
+/** @type {Map<string, string>} clientId -> the dedupe key of the title last applied */
 const lastStatus = new Map();
 
+/** @type {Map<string, string>} clientId -> the status name last applied, so a label change can keep the mark */
+const lastStatusName = new Map();
+
+/** Trims a caller-supplied label and caps it. A blank or non-string label means no label. */
+function normalizeLabel(label) {
+  if (typeof label !== 'string') return null;
+  const trimmed = label.replace(/\s+/g, ' ').trim();
+  return trimmed ? trimmed.slice(0, MAX_LABEL_LENGTH) : null;
+}
+
+/** What the group title says this session is: its label, or the default when it has none. */
+function groupTitleFor(clientId) {
+  return sessionLabels.get(clientId) || DEFAULT_GROUP_TITLE;
+}
+
+function titleWithMark(clientId, mark) {
+  return (mark ? mark + ' ' : '') + groupTitleFor(clientId);
+}
+
+/**
+ * Names a session's tab group.
+ *
+ * The group title is the only thing about a session a user can read without
+ * opening anything, so it says what the session is working on rather than just
+ * that an agent owns the tabs. Clearing the label puts the default back.
+ */
+export async function setSessionLabel(clientId, label) {
+  if (!clientId) return false;
+  const next = normalizeLabel(label);
+  // Checked before the storage read so a host that stamps the same label on
+  // every call costs a map lookup rather than a read per call.
+  if (next === (sessionLabels.get(clientId) || null)) return false;
+  await loadGroups();
+  if (next) sessionLabels.set(clientId, next);
+  else sessionLabels.delete(clientId);
+  await persistGroups();
+  // The title carries the status mark, so rewriting it goes through the status
+  // path, which is the one that knows which mark is current.
+  lastStatus.delete(clientId);
+  await setGroupStatus(clientId, lastStatusName.get(clientId) || 'idle');
+  return true;
+}
+
 export async function setGroupStatus(clientId, status) {
-  const spec = STATUS[status] || STATUS.idle;
+  const name = STATUS[status] ? status : 'idle';
+  const spec = STATUS[name];
   const groupId = await getSessionGroupId(clientId);
   if (groupId === null) return false;
-  const key = groupId + ':' + status;
+  const key = groupId + ':' + name + ':' + groupTitleFor(clientId);
   if (lastStatus.get(clientId) === key) return true;
   lastStatus.set(clientId, key);
+  lastStatusName.set(clientId, name);
   try {
-    await chrome.tabGroups.update(groupId, {
-      title: (spec.mark ? spec.mark + ' ' : '') + GROUP_TITLE,
-      color: spec.color,
-    });
+    await chrome.tabGroups.update(groupId, { title: titleWithMark(clientId, spec.mark), color: spec.color });
     return true;
   } catch {
     lastStatus.delete(clientId);
+    lastStatusName.delete(clientId);
     return false;
   }
 }
@@ -404,7 +471,7 @@ export async function listSessions() {
       clientId,
       tabGroupId: groupId,
       tabs: tabs.length,
-      mark: group && /^\S+\s/.test(group.title) ? group.title.split(' ')[0] : '',
+      mark: group && MARKS.has(group.title.split(' ')[0]) ? group.title.split(' ')[0] : '',
       title: first ? first.title || first.url : '',
     });
   }
@@ -530,8 +597,11 @@ export function resumeSession(clientId) {
  * Returns the tab context for a session, creating a group and a blank tab when
  * createIfEmpty is set and none exists.
  */
-export async function tabsContext(clientId, { createIfEmpty = false } = {}) {
+export async function tabsContext(clientId, { createIfEmpty = false, label } = {}) {
   await ensureRestored();
+  // Named before the group is created, so a session's first call is enough to
+  // give its group a title that says what the work is.
+  if (label !== undefined) await setSessionLabel(clientId, label);
   let tabs = await listGroupTabs(clientId);
 
   if (!tabs.length && createIfEmpty) {
@@ -616,7 +686,11 @@ export async function createTab(clientId, { url = 'about:blank', newWindow = fal
 
   if (groupId === null) {
     groupId = await chrome.tabs.group({ tabIds: [tab.id] });
-    await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'purple', collapsed: false });
+    await chrome.tabGroups.update(groupId, {
+      title: titleWithMark(clientId, ''),
+      color: 'purple',
+      collapsed: false,
+    });
     sessionGroups.set(clientId, groupId);
     await persistGroups();
   } else {
@@ -694,7 +768,7 @@ export async function adoptTab(clientId, tabId) {
   let groupId = await getSessionGroupId(clientId);
   if (groupId === null) {
     groupId = await chrome.tabs.group({ tabIds: [tabId] });
-    await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'purple' });
+    await chrome.tabGroups.update(groupId, { title: titleWithMark(clientId, ''), color: 'purple' });
     sessionGroups.set(clientId, groupId);
     await persistGroups();
   } else {
@@ -712,12 +786,38 @@ export async function adoptTab(clientId, tabId) {
 const adoptedByOpener = new Map();
 
 /**
+ * How many actions the extension is dispatching right now.
+ *
+ * A tab that appears while one is in flight may be one it opened, so it may be
+ * adopted. A tab that appears while nothing is being dispatched is the user's
+ * own, which is the case Chrome's openerTabId cannot tell apart because it
+ * names the window's active tab rather than the tab whose renderer opened the
+ * new one.
+ */
+let dispatchesInFlight = 0;
+
+/** Opens the window in which a new tab may be claimed. Paired with endDispatch. */
+export function beginDispatch() {
+  dispatchesInFlight += 1;
+}
+
+/** Closes that window, whether the action landed or threw. */
+export function endDispatch() {
+  if (dispatchesInFlight > 0) dispatchesInFlight -= 1;
+}
+
+/**
  * Takes a tab that a session tab opened into the same session.
  *
  * A click on target="_blank" opens a tab the caller never asked for and cannot
  * name. Left alone it sits outside the group, so assertTabInSession refuses it
  * and the page the click produced is unreachable. It joins the opener's group
  * instead, unselected, and its id is held for the click result to report.
+ *
+ * Only a dispatched action may claim a tab. A tab the user opens from the new
+ * tab button or with Ctrl+T names whichever tab was on screen as its opener,
+ * so with a session tab on screen adopting on openerTabId alone swallowed the
+ * user's own tab.
  *
  * Nothing here activates the tab or focuses its window.
  *
@@ -792,7 +892,7 @@ export async function adoptOpenedTab(tab) {
   if (typeof openerTabId !== 'number' || typeof (tab && tab.id) !== 'number') return null;
 
   const found = await sessionForTab(openerTabId);
-  if (!found) {
+  if (!found || dispatchesInFlight === 0) {
     adoptedByOpener.delete(openerTabId);
     return null;
   }

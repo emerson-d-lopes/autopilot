@@ -344,31 +344,41 @@ async function readVerify(tabId, armed, { window = VERIFY_WINDOW_MS } = {}) {
  * that landed is never sent twice.
  */
 async function dispatchVerified(tabId, dispatch, { point, window, ref, retry = true } = {}) {
-  cdp.clearThrottleFlag(tabId);
-  // The capture that follows this action arrives after the verification window
-  // closes, so the paint clock is told how long that window is (R3).
-  shot.noteInput(tabId, Date.now(), { window });
-  let armed = await armVerify(tabId, point, ref);
-  await dispatch();
-  let outcome = await readVerify(tabId, armed, { window });
+  // Every action the extension dispatches goes through here, so this is the
+  // only window in which a new tab may be one the extension opened. A tab that
+  // appears while nothing is being dispatched is the user's own. Chrome's
+  // openerTabId cannot tell the two apart, because it names the window's active
+  // tab rather than the tab whose renderer opened the new one.
+  tabsLib.beginDispatch();
+  try {
+    cdp.clearThrottleFlag(tabId);
+    // The capture that follows this action arrives after the verification window
+    // closes, so the paint clock is told how long that window is (R3).
+    shot.noteInput(tabId, Date.now(), { window });
+    let armed = await armVerify(tabId, point, ref);
+    await dispatch();
+    let outcome = await readVerify(tabId, armed, { window });
 
-  // A write is never sent twice on a guess. The throttle retry exists to
-  // recover a click that provably did nothing, and a submit that provably did
-  // nothing still may have reached the server.
-  if (!retry) return outcome;
-  if (outcome.effects === 'applied' || !cdp.rendererLooksThrottled(tabId)) return outcome;
+    // A write is never sent twice on a guess. The throttle retry exists to
+    // recover a click that provably did nothing, and a submit that provably did
+    // nothing still may have reached the server.
+    if (!retry) return outcome;
+    if (outcome.effects === 'applied' || !cdp.rendererLooksThrottled(tabId)) return outcome;
 
-  await cdp.wake(tabId, { force: true }).catch(() => {});
-  cdp.clearThrottleFlag(tabId);
-  shot.noteInput(tabId, Date.now(), { window });
-  armed = await armVerify(tabId, point, ref);
-  await dispatch();
-  outcome = await readVerify(tabId, armed, { window });
-  outcome.evidence.throttledRetry = true;
-  outcome.warnings.unshift(
-    'the renderer did not acknowledge the first dispatch, so the tab was woken and it was sent once more'
-  );
-  return outcome;
+    await cdp.wake(tabId, { force: true }).catch(() => {});
+    cdp.clearThrottleFlag(tabId);
+    shot.noteInput(tabId, Date.now(), { window });
+    armed = await armVerify(tabId, point, ref);
+    await dispatch();
+    outcome = await readVerify(tabId, armed, { window });
+    outcome.evidence.throttledRetry = true;
+    outcome.warnings.unshift(
+      'the renderer did not acknowledge the first dispatch, so the tab was woken and it was sent once more'
+    );
+    return outcome;
+  } finally {
+    tabsLib.endDispatch();
+  }
 }
 
 /** Whether the tab is the one on screen in a window that is showing. */
@@ -1380,7 +1390,8 @@ async function windowBounds(windowId) {
 // ---------------------------------------------------------------------------
 
 export const handlers = {
-  tabs_context: async (ctx, input) => tabsLib.tabsContext(ctx.clientId, { createIfEmpty: input.createIfEmpty }),
+  tabs_context: async (ctx, input) =>
+    tabsLib.tabsContext(ctx.clientId, { createIfEmpty: input.createIfEmpty, label: input.label }),
 
   tabs_create: async (ctx, input) => {
     const created = await tabsLib.createTab(ctx.clientId, { url: input.url || 'about:blank' });

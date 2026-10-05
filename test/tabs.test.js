@@ -76,15 +76,15 @@ test('setGroupStatus marks the group title and colour, and only when the state c
 // ---------------------------------------------------------------------------
 
 /** A session holding one tab in group 42, ready to be replaced. */
-function scriptSession({ groupId = 43, tab = null } = {}) {
+function scriptSession({ groupId = 43, tab = null, clientId = 'sessionA' } = {}) {
   const dead = tab || { id: 11, url: 'https://x.test/home', groupId, windowId: 3, index: 2, status: 'complete' };
   const created = { id: 12, url: dead.url, windowId: dead.windowId, status: 'complete' };
-  const log = { created: null, grouped: null, removed: [] };
+  const log = { created: null, grouped: null, removed: [], titles: [] };
 
   stub.storage = {
     local: {
       async get() {
-        return { tabGroups: { sessionA: groupId } };
+        return { tabGroups: { [clientId]: groupId } };
       },
       async set() {},
     },
@@ -94,7 +94,9 @@ function scriptSession({ groupId = 43, tab = null } = {}) {
     async get() {
       return { id: groupId };
     },
-    async update() {},
+    async update(id, props) {
+      log.titles.push(props.title);
+    },
   };
   stub.tabs = {
     ...stub.tabs,
@@ -162,13 +164,38 @@ test('sessionForTab names the session holding a tab', async () => {
 test('a tab opened by a session tab joins that session group, unselected', async () => {
   const { log } = scriptSession();
 
+  tabs.beginDispatch();
   const adopted = await tabs.adoptOpenedTab({ id: 77, openerTabId: 11, groupId: -1, windowId: 3 });
+  tabs.endDispatch();
 
   assert.deepEqual(adopted, { openerTabId: 11, tabId: 77, tabGroupId: 43 });
   assert.deepEqual(log.grouped, { tabIds: [77], groupId: 43 });
   assert.equal(log.activated, undefined, 'the new tab is never activated');
   assert.deepEqual(tabs.adopted(11), [77]);
   assert.deepEqual(tabs.adopted(11), [], 'reading clears, so the next click reports only its own tabs');
+});
+
+test('a tab opened with no action running is left where Chrome put it', async () => {
+  scriptSession();
+
+  // Chrome fills openerTabId from the window's active tab, so a tab the user
+  // opens from the new tab button or with Ctrl+T names whichever tab was on
+  // screen. With a session tab on screen that is a session tab, and the group
+  // used to swallow the user's own tab.
+  const adopted = await tabs.adoptOpenedTab({ id: 84, openerTabId: 11, groupId: -1, windowId: 3 });
+
+  assert.equal(adopted, null);
+  assert.deepEqual(tabs.adopted(11), [], 'an action that never ran reports nothing');
+});
+
+test('a tab opened after the dispatch window closes is not adopted', async () => {
+  scriptSession();
+
+  tabs.beginDispatch();
+  tabs.endDispatch();
+  const adopted = await tabs.adoptOpenedTab({ id: 85, openerTabId: 11, groupId: -1, windowId: 3 });
+
+  assert.equal(adopted, null, 'the window closes when the action does');
 });
 
 test('the opener is recorded before anything is awaited', async () => {
@@ -194,14 +221,53 @@ test('a tab with no opener is not adopted', async () => {
 
 test('two tabs from one click are both reported, and a closed one is forgotten', async () => {
   scriptSession();
+  tabs.beginDispatch();
   await tabs.adoptOpenedTab({ id: 81, openerTabId: 11, groupId: -1 });
   await tabs.adoptOpenedTab({ id: 82, openerTabId: 11, groupId: -1 });
   await tabs.adoptOpenedTab({ id: 82, openerTabId: 11, groupId: -1 });
   assert.deepEqual(tabs.adopted(11), [81, 82], 'the same tab is not counted twice');
 
   await tabs.adoptOpenedTab({ id: 83, openerTabId: 11, groupId: -1 });
+  tabs.endDispatch();
   tabs.forgetAdopted(83);
   assert.deepEqual(tabs.adopted(11), []);
+});
+
+// ---------------------------------------------------------------------------
+// The group title names the session
+// ---------------------------------------------------------------------------
+
+test('a session label names the tab group, and the status mark goes in front of it', async () => {
+  const { log } = scriptSession({ clientId: 'labelled' });
+
+  await tabs.setSessionLabel('labelled', 'ENG-1234 chat share');
+  assert.equal(log.titles.at(-1), 'ENG-1234 chat share');
+
+  await tabs.setGroupStatus('labelled', 'working');
+  assert.equal(log.titles.at(-1), '\u23F3 ENG-1234 chat share');
+
+  await tabs.setSessionLabel('labelled', 'ENG-1234 listing page');
+  assert.equal(log.titles.at(-1), '\u23F3 ENG-1234 listing page', 'the mark survives a label change');
+});
+
+test('clearing the label puts the default group title back', async () => {
+  const { log } = scriptSession({ clientId: 'cleared' });
+
+  await tabs.setSessionLabel('cleared', 'ENG-1234');
+  assert.equal(log.titles.at(-1), 'ENG-1234');
+
+  await tabs.setSessionLabel('cleared', '');
+  assert.equal(log.titles.at(-1), 'Autopilot');
+});
+
+test('a label is trimmed, collapsed, and capped', async () => {
+  const { log } = scriptSession({ clientId: 'trimmed' });
+
+  await tabs.setSessionLabel('trimmed', '  ENG-1234\n  chat   share  ');
+  assert.equal(log.titles.at(-1), 'ENG-1234 chat share');
+
+  await tabs.setSessionLabel('trimmed', 'x'.repeat(200));
+  assert.equal(log.titles.at(-1).length, 40);
 });
 
 // ---------------------------------------------------------------------------
@@ -331,14 +397,18 @@ function scriptBrowser({ openTabs = [11, 12], groupId = 77 } = {}) {
     },
   });
 
+  const titles = new Map();
+
   stub.storage = { local: area(local), session: area(session), onChanged: { addListener() {} } };
   stub.tabGroups = {
     TAB_GROUP_ID_NONE: -1,
     async get(id) {
       if (![...grouped.values()].includes(id)) throw new Error('no group ' + id);
-      return { id, title: 'Autopilot' };
+      return { id, title: titles.get(id) || 'Autopilot' };
     },
-    async update() {},
+    async update(id, props) {
+      if (props && props.title !== undefined) titles.set(id, props.title);
+    },
   };
   stub.tabs.get = async (id) => {
     if (!grouped.has(id)) throw new Error('No tab with id ' + id);
@@ -377,6 +447,7 @@ function scriptBrowser({ openTabs = [11, 12], groupId = 77 } = {}) {
     session,
     groupCalls,
     activations,
+    titles,
     close: (id) => grouped.delete(id),
     ungroup: (id) => grouped.set(id, -1),
   };
@@ -398,6 +469,17 @@ test('the session table is written on every change and names the tabs, group and
     table,
     'and in local, which is what survives a reload of the extension'
   );
+});
+
+test('tabs_context names the group from its label argument', async () => {
+  tabs.resetSessionTable();
+  const browser = scriptBrowser();
+  await tabs.adoptTab('c1', 11);
+
+  const context = await tabs.tabsContext('c1', { label: 'ENG-1234 the listing page' });
+
+  assert.equal(browser.titles.get(77), 'ENG-1234 the listing page', 'the group title carries the label');
+  assert.equal(context.groupTitle, 'ENG-1234 the listing page');
 });
 
 test('a worker restart puts the tabs that still exist back in the session', async () => {

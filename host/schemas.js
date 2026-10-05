@@ -32,6 +32,13 @@ export const TOOLS = [
           type: 'boolean',
           description: 'Open a blank tab in the current window when this session has no tabs yet.',
         },
+        label: {
+          type: 'string',
+          description:
+            "Short name for this session's tab group, so the group says what the work is (a ticket id, a task). " +
+            'Pass it once per session. Defaults to the AUTOPILOT_SESSION_LABEL the server was started with, then to ' +
+            '"Autopilot".',
+        },
         browser: browserProp,
       },
     },

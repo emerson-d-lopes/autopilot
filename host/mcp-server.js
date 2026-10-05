@@ -44,6 +44,10 @@ import { envVar } from './env.js';
 
 const CLIENT_ID = envVar('CLIENT_ID') || randomUUID();
 
+// Names this session's tab group, so the group says what the work is rather
+// than just that an agent owns it. A tool call can override it per session.
+const SESSION_LABEL = envVar('SESSION_LABEL') || null;
+
 let link = null;
 let browserConnected = false;
 let connecting = null;
@@ -327,7 +331,7 @@ function callOnBrowser(target, type, payload, timeout = 120000, callId = null) {
       socket.on('close', () => finish(reject, new Error('Connection to ' + target.id + ' closed.')));
       socket.on('error', (err) => finish(reject, err));
       try {
-        socket.send({ ...payload, type, id, clientId: CLIENT_ID, callId });
+        socket.send({ ...payload, type, id, clientId: CLIENT_ID, callId, label: SESSION_LABEL });
       } catch (err) {
         finish(reject, err);
       }
@@ -369,7 +373,7 @@ async function callBridge(type, payload, timeout = 120000, callId = null) {
     pending.set(id, { resolve, reject, timer });
     // callId is the correlation id. It travels with the request so the
     // extension, the journal and the result all name the same call.
-    link.send({ ...payload, type, id, clientId: CLIENT_ID, callId });
+    link.send({ ...payload, type, id, clientId: CLIENT_ID, callId, label: SESSION_LABEL });
   });
 }
 
