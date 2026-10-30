@@ -36,7 +36,7 @@
     "test:coverage": "node tools/run-tests.js --coverage"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0"
+    "@modelcontextprotocol/sdk": "^1.32.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
